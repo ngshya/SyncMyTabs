@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SyncMyTabs - Settings</title>
+  <style>
+    body {
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      max-width: 460px;
+      margin: 40px auto;
+      padding: 0 16px;
+      color: #1a1a1a;
+    }
+    h1 { font-size: 18px; }
+    h2 { font-size: 14px; margin-top: 28px; margin-bottom: 4px; }
+    p { color: #555; font-size: 14px; line-height: 1.4; }
+    input, select {
+      width: 100%;
+      padding: 8px 10px;
+      font-size: 14px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      box-sizing: border-box;
+      background: white;
+    }
+    button {
+      margin-top: 12px;
+      padding: 8px 16px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover { background: #1d4ed8; }
+    button.secondary { background: #444; }
+    button.secondary:hover { background: #333; }
+    button.danger { background: #dc2626; }
+    button.danger:hover { background: #b91c1c; }
+    #status { margin-top: 10px; font-size: 13px; color: #16a34a; }
+    .profile-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid #eee;
+      font-size: 14px;
+    }
+    .profile-row .name { flex: 1; }
+    .profile-row .badge {
+      font-size: 11px;
+      color: #2563eb;
+      border: 1px solid #2563eb;
+      border-radius: 4px;
+      padding: 1px 6px;
+    }
+    .add-profile-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .add-profile-row input { flex: 1; }
+    .add-profile-row button { margin-top: 0; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <h1>SyncMyTabs</h1>
+  <p>
+    Assign a name to this device. It will be used to identify the
+    bookmark folder and to tell your devices apart.
+  </p>
+  <input type="text" id="deviceName" placeholder="e.g. manjaro-vivobook" />
+
+  <h2>Profiles</h2>
+  <p>
+    Organize your open tabs into separate profiles (e.g. "default",
+    "work", "school"). Only one profile is active at a time on this
+    device; open tabs are saved/restored per profile, not globally.
+  </p>
+  <div id="profileList"></div>
+  <div class="add-profile-row">
+    <input type="text" id="newProfileName" placeholder="New profile name" />
+    <button id="addProfile" class="secondary">Add profile</button>
+  </div>
+
+  <h2>Sync</h2>
+  <p>
+    How often (in minutes) to save the current tabs. Updates from
+    other devices are detected automatically as soon as they arrive
+    (event-driven), not on this timer.
+  </p>
+  <input type="number" id="intervalMinutes" min="1" step="1" value="1" />
+
+  <p style="margin-top: 18px;">
+    How many seconds to keep the restore notification visible before it
+    auto-dismisses with no action taken.
+  </p>
+  <input
+    type="number"
+    id="notificationTimeoutSeconds"
+    min="1"
+    step="1"
+    value="15"
+  />
+
+  <p style="margin-top: 18px;">
+    What to do automatically if the restore notification times out
+    without you choosing an option.
+  </p>
+  <select id="defaultTimeoutAction">
+    <option value="add">Add tabs to the current window</option>
+    <option value="replace">Replace current tabs</option>
+    <option value="none">Do nothing</option>
+  </select>
+
+  <button id="save">Save</button>
+  <div id="status"></div>
+
+  <p style="margin-top: 22px; border-top: 1px solid #eee; padding-top: 14px;">
+    Last signal received: <strong id="lastSeen">none</strong>
+  </p>
+
+  <script src="options.js"></script>
+</body>
+</html>
