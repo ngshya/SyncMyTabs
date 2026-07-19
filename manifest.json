@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SyncMyTabs",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Sync your open tabs across devices, organized by profile, using bookmarks as the transport.",
   "permissions": ["bookmarks", "tabs", "storage", "alarms", "notifications"],
   "background": {
