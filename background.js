@@ -39,10 +39,44 @@ const LAST_SYNC_URL_BASE = "https://syncmytabs.local/last-sync";
 const DEFAULT_PROFILE = "default";
 const NOTIF_PREFIX = "syncmytabs-";
 
-// "Other Bookmarks" folder in Chrome/Brave. If Firefox support is
-// ever needed, this id would have to be adapted (Firefox uses
-// different strings, e.g. "unfiled_____").
+// "Other Bookmarks" folder in Chrome/Brave. Firefox uses different
+// ids (e.g. "unfiled_____"), so instead of hardcoding "2" everywhere
+// we resolve it at runtime from the bookmark tree and only fall back
+// to this value.
 const OTHER_BOOKMARKS_PARENT_ID = "2";
+
+// Resolved lazily and cached: the id of the top-level folder under
+// which the root "SyncMyTabs" folder should live ("Other Bookmarks"
+// on Chrome/Brave, its equivalent elsewhere). Falls back to the
+// Chrome/Brave id if the tree can't be inspected.
+let cachedRootParentId = null;
+async function getRootParentId() {
+  if (cachedRootParentId) return cachedRootParentId;
+  try {
+    const tree = await chrome.bookmarks.getTree();
+    const topLevel = (tree && tree[0] && tree[0].children) || [];
+
+    // Chrome/Brave: "Other Bookmarks" has the well-known id "2".
+    const known = topLevel.find((c) => c.id === OTHER_BOOKMARKS_PARENT_ID);
+    if (known) {
+      cachedRootParentId = known.id;
+      return cachedRootParentId;
+    }
+
+    // Fallback (e.g. Firefox): the last top-level folder is
+    // conventionally the "unfiled/other" bookmarks container.
+    const folders = topLevel.filter((c) => !c.url);
+    if (folders.length > 0) {
+      cachedRootParentId = folders[folders.length - 1].id;
+      return cachedRootParentId;
+    }
+  } catch (e) {
+    // Ignore and fall through to the hardcoded default.
+  }
+
+  cachedRootParentId = OTHER_BOOKMARKS_PARENT_ID;
+  return cachedRootParentId;
+}
 
 function extractTimestampFromStatusUrl(url) {
   try {
@@ -97,8 +131,9 @@ async function getOrCreateRootFolder() {
     return canonical;
   }
 
+  const parentId = await getRootParentId();
   return chrome.bookmarks.create({
-    parentId: OTHER_BOOKMARKS_PARENT_ID,
+    parentId,
     title: ROOT_NAME,
   });
 }
@@ -153,13 +188,6 @@ async function getOrCreateSubfolder(parentId, name) {
   const existing = children.find((c) => !c.url && c.title === name);
   if (existing) return existing;
   return chrome.bookmarks.create({ parentId, title: name });
-}
-
-async function clearFolder(folderId) {
-  const children = await chrome.bookmarks.getChildren(folderId);
-  for (const child of children) {
-    await chrome.bookmarks.remove(child.id);
-  }
 }
 
 async function clearTabBookmarks(folderId) {
@@ -328,10 +356,16 @@ chrome.runtime.onInstalled.addListener(() => {
   );
 });
 
-chrome.runtime.onStartup.addListener(ensureAlarm);
+chrome.runtime.onStartup.addListener(() => {
+  ensureAlarm();
+  sweepExpiredNotifications();
+});
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === "saveTabsAlarm") {
+    // Backstop first: apply any notification timeout that elapsed
+    // while the service worker was suspended.
+    await sweepExpiredNotifications();
     await saveOpenTabs();
   }
 });
@@ -352,13 +386,76 @@ chrome.bookmarks.onCreated.addListener(async (id, node) => {
   }
 });
 
+// ------------------------------------------------------------
+// Pending-notification bookkeeping.
+//
+// A notification's timeout must survive the MV3 service worker being
+// torn down (which can happen well before a long timeout elapses), so
+// we can't rely on setTimeout alone. Each open notification is
+// recorded in storage together with the device/profile it refers to,
+// the action to apply on timeout, and when it expires. A setTimeout
+// gives an immediate response while the worker is alive; a periodic
+// "sweep" (run on every alarm and on startup) is the durable backstop
+// that applies the default action even if the worker was restarted.
+//
+// Whatever resolves a notification first — a button, a body click, the
+// setTimeout, or the sweep — uses chrome.notifications.clear() as the
+// single mutex: user interactions close the notification themselves,
+// so a later resolver sees clear() return false and stands down. That
+// removes the double-apply race the old single-slot design had.
+// ------------------------------------------------------------
+const PENDING_NOTIFS_KEY = "pendingNotifs";
+
+async function getPendingNotifs() {
+  const stored = await chrome.storage.local.get(PENDING_NOTIFS_KEY);
+  return stored[PENDING_NOTIFS_KEY] || {};
+}
+
+async function savePendingNotif(notifId, data) {
+  const map = await getPendingNotifs();
+  map[notifId] = data;
+  await chrome.storage.local.set({ [PENDING_NOTIFS_KEY]: map });
+}
+
+async function removePendingNotif(notifId) {
+  const map = await getPendingNotifs();
+  const data = map[notifId];
+  if (data) {
+    delete map[notifId];
+    await chrome.storage.local.set({ [PENDING_NOTIFS_KEY]: map });
+  }
+  return data || null;
+}
+
+async function applyNotificationAction(action, device, profile) {
+  if (!action || action === "none") return;
+  const urls = await getUrlsForDeviceProfile(device, profile);
+  if (urls.length === 0) return;
+  if (action === "replace") {
+    await performReplace(urls);
+  } else {
+    await performAdd(urls);
+  }
+}
+
 async function createUpdateNotification(remoteDevice, remoteProfile, timestamp) {
-  const { notificationTimeoutSeconds } = await chrome.storage.local.get(
-    "notificationTimeoutSeconds"
-  );
+  const { notificationTimeoutSeconds, defaultTimeoutAction } =
+    await chrome.storage.local.get([
+      "notificationTimeoutSeconds",
+      "defaultTimeoutAction",
+    ]);
   const timeoutMs = (notificationTimeoutSeconds || 15) * 1000;
+  const defaultAction = defaultTimeoutAction || "add";
 
   const notifId = `${NOTIF_PREFIX}${timestamp}`;
+
+  await savePendingNotif(notifId, {
+    device: remoteDevice,
+    profile: remoteProfile,
+    defaultAction,
+    expiresAt: Date.now() + timeoutMs,
+  });
+
   chrome.notifications.create(notifId, {
     type: "basic",
     iconUrl: "icons/icon128.png",
@@ -370,25 +467,37 @@ async function createUpdateNotification(remoteDevice, remoteProfile, timestamp) 
     requireInteraction: true,
   });
 
+  // Fast path while the worker is alive. The sweep is the backstop if
+  // the worker was already gone by the time this would have fired.
   setTimeout(async () => {
-    const stillPending = await chrome.notifications.clear(notifId);
-    if (!stillPending) return;
-
-    const { defaultTimeoutAction } = await chrome.storage.local.get(
-      "defaultTimeoutAction"
-    );
-    const action = defaultTimeoutAction || "add";
-    if (action === "none") return;
-
-    const urls = await getUrlsForDeviceProfile(remoteDevice, remoteProfile);
-    if (urls.length === 0) return;
-
-    if (action === "replace") {
-      await performReplace(urls);
-    } else {
-      await performAdd(urls);
-    }
+    const wasPresent = await chrome.notifications.clear(notifId);
+    if (!wasPresent) return; // already resolved by a click or the sweep
+    const data = await removePendingNotif(notifId);
+    if (!data) return;
+    await applyNotificationAction(data.defaultAction, data.device, data.profile);
   }, timeoutMs);
+}
+
+// Durable backstop for notification timeouts: applies the default
+// action to any pending notification whose deadline has passed. Safe
+// to call repeatedly; clear() ensures only one resolver ever acts.
+async function sweepExpiredNotifications() {
+  const now = Date.now();
+  const map = await getPendingNotifs();
+
+  for (const [notifId, data] of Object.entries(map)) {
+    if (!data || (data.expiresAt || 0) > now) continue;
+
+    const wasPresent = await chrome.notifications.clear(notifId);
+    await removePendingNotif(notifId);
+    if (wasPresent) {
+      await applyNotificationAction(
+        data.defaultAction,
+        data.device,
+        data.profile
+      );
+    }
+  }
 }
 
 async function evaluateStatusAndNotify(statusUrl) {
@@ -411,13 +520,9 @@ async function evaluateStatusAndNotify(statusUrl) {
   if (remoteDevice === deviceName) return false;
   if (lastSeenTimestamp && timestamp <= lastSeenTimestamp) return false;
 
-  await chrome.storage.local.set({
-    lastSeenTimestamp: timestamp,
-    pendingDevice: remoteDevice,
-    pendingProfile: remoteProfile,
-  });
+  await chrome.storage.local.set({ lastSeenTimestamp: timestamp });
 
-  createUpdateNotification(remoteDevice, remoteProfile, timestamp);
+  await createUpdateNotification(remoteDevice, remoteProfile, timestamp);
   return true;
 }
 
@@ -467,7 +572,16 @@ async function performReplace(urls) {
   const oldWindows = await chrome.windows.getAll({ populate: false });
   const oldWindowIds = oldWindows.map((w) => w.id);
 
-  await chrome.windows.create({ url: urls });
+  // Open the replacement window FIRST and only close the old ones if
+  // that succeeded — otherwise a failed create would leave the user
+  // with no windows at all.
+  let created;
+  try {
+    created = await chrome.windows.create({ url: urls });
+  } catch (e) {
+    created = null;
+  }
+  if (!created) return;
 
   for (const winId of oldWindowIds) {
     try {
@@ -505,28 +619,22 @@ chrome.notifications.onButtonClicked.addListener(
   async (notifId, buttonIndex) => {
     if (!notifId.startsWith(NOTIF_PREFIX)) return;
 
-    const { pendingDevice, pendingProfile } = await chrome.storage.local.get([
-      "pendingDevice",
-      "pendingProfile",
-    ]);
-    if (!pendingDevice) return;
+    // The user acted explicitly; drop the pending record so the sweep
+    // won't also fire the default action later. (Clicking a button
+    // already closes the notification, so the setTimeout/sweep paths
+    // will see clear() return false and stand down.)
+    const data = await removePendingNotif(notifId);
+    chrome.notifications.clear(notifId);
+    if (!data) return; // already resolved by a timeout/sweep
 
-    const urls = await getUrlsForDeviceProfile(
-      pendingDevice,
-      pendingProfile || DEFAULT_PROFILE
-    );
-    if (urls.length === 0) {
-      chrome.notifications.clear(notifId);
-      return;
-    }
+    const urls = await getUrlsForDeviceProfile(data.device, data.profile);
+    if (urls.length === 0) return;
 
     if (buttonIndex === 0) {
       await performReplace(urls);
     } else if (buttonIndex === 1) {
       await performAdd(urls);
     }
-
-    chrome.notifications.clear(notifId);
   }
 );
 
@@ -538,8 +646,11 @@ chrome.notifications.onButtonClicked.addListener(
 // no action at all — same outcome as letting it time out with
 // defaultTimeoutAction set to "none", but immediate.
 // ------------------------------------------------------------
-chrome.notifications.onClicked.addListener((notifId) => {
+chrome.notifications.onClicked.addListener(async (notifId) => {
   if (!notifId.startsWith(NOTIF_PREFIX)) return;
+  // "Ignore": discard the pending record so the default action never
+  // gets applied, then dismiss the notification.
+  await removePendingNotif(notifId);
   chrome.notifications.clear(notifId);
 });
 
