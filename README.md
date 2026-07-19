@@ -174,4 +174,10 @@ it, edit the files and hit **Reload** on the extension in `chrome://extensions`.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+**PolyForm Noncommercial License 1.0.0** — see [LICENSE](LICENSE).
+
+You may use, copy, modify, and distribute this software **for any
+noncommercial purpose** (personal use, hobby projects, research, education,
+nonprofits, government, etc.). **Commercial use is not permitted** — you may
+not use this codebase in a paid product or service, or otherwise for
+commercial advantage. If you need a commercial license, contact the author.
