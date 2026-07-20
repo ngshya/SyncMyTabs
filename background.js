@@ -363,14 +363,18 @@ async function saveOpenTabs() {
     } catch (e) {}
   }
 
-  // Resolve each tab to its real http(s) target — this unwraps
-  // lazy-restore placeholder tabs that haven't been opened yet, so they
-  // are saved as the page they represent rather than skipped. The first
-  // occurrence of a URL wins (including its pinned/group state).
+  // Skip unopened lazy placeholders. A placeholder restored from another
+  // device that the user hasn't actually opened is NOT part of this
+  // device's own session — saving it would echo the other device's tabs
+  // back as ours, and (with auto-Add on the other side) resurrect tabs
+  // it just closed. Once the user opens a placeholder it navigates to
+  // its real URL and stops being a placeholder, so it's saved normally.
+  // The first occurrence of a URL wins (including its pinned/group state).
   const seenUrls = new Set();
   const dedupedTabs = [];
   for (const tab of tabs) {
-    const url = realUrlOfTab(tab);
+    if (placeholderInfo(tab)) continue;
+    const url = tab.url;
     if (!url || !/^https?:\/\//.test(url)) continue;
     if (seenUrls.has(url)) continue;
     seenUrls.add(url);

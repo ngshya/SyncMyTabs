@@ -77,9 +77,14 @@ Understanding these will keep changes safe:
   (`getRootParentId`), cached, with a fallback to Chrome/Brave's `"2"`. Do not
   hardcode `"2"` in new code — go through the resolver so Firefox support stays
   reachable.
-- **No needless writes.** `saveOpenTabs` compares the current URL set with the
-  saved one (`sameUrlSet`) and does nothing if unchanged. Preserve this: every
-  bookmark write triggers the user's sync tool.
+- **No needless writes.** `saveOpenTabs` compares a signature of the current tab
+  set (URLs + pinned/group) against the saved one and does nothing if unchanged.
+  Preserve this: every bookmark write triggers the user's sync tool.
+- **Unopened placeholders are not "your" tabs.** `saveOpenTabs` skips tabs that
+  are still lazy placeholders (`placeholderInfo` non-null). Saving them would
+  re-broadcast another device's tabs as this device's session and, with auto-Add
+  on the other side, resurrect tabs it just closed. Only real/opened tabs are
+  saved; `realUrlOfTab` is still used for de-duplication when *adding* tabs.
 - **Event-driven detection.** Remote updates are noticed via
   `bookmarks.onChanged` / `onCreated` on `_status` — there is **no polling**.
 - **Lazy placeholders carry their origin.** Restored tabs (when lazy restore is

@@ -56,7 +56,11 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
   previous contents. Only `http(s)` tabs are saved, duplicate URLs are deduped,
   and if nothing changed since the last save, **nothing is touched** — no
   needless bookmark churn (which would otherwise trigger your sync tool
-  constantly). **Pinned tabs and tab groups** (title + color) are preserved:
+  constantly). Tabs restored from another device that you **haven't opened
+  yet** (lazy placeholders) don't count as part of this device's session, so
+  they're never re-broadcast back (which would otherwise echo — and resurrect —
+  the other device's tabs). **Pinned tabs and tab groups** (title + color) are
+  preserved:
   they're recorded in a tiny per-profile `_tab_meta` metadata bookmark and
   reapplied on restore.
 - **Detecting remote updates.** A single `_status` bookmark at the root is
