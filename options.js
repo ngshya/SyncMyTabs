@@ -2,6 +2,7 @@ const nameInput = document.getElementById("deviceName");
 const intervalInput = document.getElementById("intervalMinutes");
 const timeoutInput = document.getElementById("notificationTimeoutSeconds");
 const defaultActionSelect = document.getElementById("defaultTimeoutAction");
+const lazyInput = document.getElementById("openRestoredLazy");
 const status = document.getElementById("status");
 const lastSeenEl = document.getElementById("lastSeen");
 const profileListEl = document.getElementById("profileList");
@@ -114,6 +115,7 @@ chrome.storage.local.get(
     "syncIntervalMinutes",
     "notificationTimeoutSeconds",
     "defaultTimeoutAction",
+    "openRestoredLazy",
     "lastSeenTimestamp",
   ],
   ({
@@ -121,6 +123,7 @@ chrome.storage.local.get(
     syncIntervalMinutes,
     notificationTimeoutSeconds,
     defaultTimeoutAction,
+    openRestoredLazy,
     lastSeenTimestamp,
   }) => {
     if (deviceName) nameInput.value = deviceName;
@@ -128,6 +131,7 @@ chrome.storage.local.get(
     if (notificationTimeoutSeconds)
       timeoutInput.value = notificationTimeoutSeconds;
     defaultActionSelect.value = defaultTimeoutAction || "add";
+    lazyInput.checked = openRestoredLazy !== false; // default ON
     lastSeenEl.textContent = lastSeenTimestamp
       ? new Date(lastSeenTimestamp).toLocaleString()
       : "none";
@@ -163,9 +167,12 @@ document.getElementById("save").addEventListener("click", async () => {
     syncIntervalMinutes: interval,
     notificationTimeoutSeconds: notificationTimeout,
     defaultTimeoutAction: defaultAction,
+    openRestoredLazy: lazyInput.checked,
   });
 
-  status.textContent = `Saved: "${name}", checking every ${interval} min, notification timeout ${notificationTimeout}s, default action "${defaultAction}". Closing this tab...`;
+  status.textContent = `Saved: "${name}", checking every ${interval} min, notification timeout ${notificationTimeout}s, default action "${defaultAction}", lazy restore ${
+    lazyInput.checked ? "on" : "off"
+  }. Closing this tab...`;
   status.style.color = "#16a34a";
 
   setTimeout(() => {

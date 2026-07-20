@@ -568,7 +568,33 @@ async function getUrlsForDeviceProfile(deviceName, profile) {
     .map((b) => b.url);
 }
 
+// Whether restored tabs should open in the background and stay
+// unloaded until the user clicks them. Defaults to ON.
+async function openRestoredLazily() {
+  const { openRestoredLazy } = await chrome.storage.local.get(
+    "openRestoredLazy"
+  );
+  return openRestoredLazy !== false;
+}
+
+// Discard a freshly-created tab so it shows only its title/favicon and
+// isn't loaded until activated. A just-created tab may still be
+// committing its navigation and refuse to discard; in that case we
+// retry on its first update event, which aborts the rest of the load.
+// Fire-and-forget by design — never blocks the restore flow.
+function discardTabSoon(tabId) {
+  chrome.tabs.discard(tabId).catch(() => {
+    const onUpdated = (id) => {
+      if (id !== tabId) return;
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.discard(tabId).catch(() => {});
+    };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+}
+
 async function performReplace(urls) {
+  const lazy = await openRestoredLazily();
   const oldWindows = await chrome.windows.getAll({ populate: false });
   const oldWindowIds = oldWindows.map((w) => w.id);
 
@@ -583,6 +609,13 @@ async function performReplace(urls) {
   }
   if (!created) return;
 
+  // The window's active tab must stay loaded; discard the rest.
+  if (lazy && created.tabs) {
+    for (const t of created.tabs) {
+      if (!t.active) discardTabSoon(t.id);
+    }
+  }
+
   for (const winId of oldWindowIds) {
     try {
       await chrome.windows.remove(winId);
@@ -591,6 +624,7 @@ async function performReplace(urls) {
 }
 
 async function performAdd(urls) {
+  const lazy = await openRestoredLazily();
   const currentTabs = await chrome.tabs.query({});
   const alreadyOpenUrls = new Set(currentTabs.map((t) => t.url));
   const urlsToOpen = urls.filter((url) => !alreadyOpenUrls.has(url));
@@ -608,10 +642,20 @@ async function performAdd(urls) {
 
   if (targetWindow) {
     for (const url of urlsToOpen) {
-      await chrome.tabs.create({ windowId: targetWindow.id, url });
+      const tab = await chrome.tabs.create({
+        windowId: targetWindow.id,
+        url,
+        active: !lazy,
+      });
+      if (lazy) discardTabSoon(tab.id);
     }
   } else {
-    await chrome.windows.create({ url: urlsToOpen });
+    const win = await chrome.windows.create({ url: urlsToOpen });
+    if (lazy && win && win.tabs) {
+      for (const t of win.tabs) {
+        if (!t.active) discardTabSoon(t.id);
+      }
+    }
   }
 }
 

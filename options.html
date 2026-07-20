@@ -114,6 +114,18 @@
     <option value="none">Do nothing</option>
   </select>
 
+  <p style="margin-top: 18px;">
+    When restoring tabs from another device, open them in the background
+    and load each one only when you click it. Saves memory and time when
+    restoring many tabs.
+  </p>
+  <label
+    style="display: flex; gap: 8px; align-items: center; font-size: 14px; color: #1a1a1a;"
+  >
+    <input type="checkbox" id="openRestoredLazy" style="width: auto;" />
+    Open restored tabs lazily (in the background, loaded on click)
+  </label>
+
   <button id="save">Save</button>
   <div id="status"></div>
 
