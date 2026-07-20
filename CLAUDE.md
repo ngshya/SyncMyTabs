@@ -65,12 +65,14 @@ Understanding these will keep changes safe:
 
 - **Bookmark tree shape** (created under "Other Bookmarks"):
   ```
-  SyncMyTabs/<device>/<profile>/{_last_sync, …tab bookmarks…}
+  SyncMyTabs/<device>/<profile>/{_last_sync, _tab_meta, …tab bookmarks…}
   SyncMyTabs/_status
   ```
-  `_status` (root) and `_last_sync` (per profile) are **metadata bookmarks**,
-  never treated as tabs. Keep them updated **in place** — recreating them causes
-  duplicates and needless sync churn.
+  `_status` (root) and `_last_sync` / `_tab_meta` (per profile) are **metadata
+  bookmarks**, never treated as tabs (`isMetaTitle` / `isProfileMetaTitle`). Keep
+  them updated **in place** — recreating them causes duplicates and needless sync
+  churn. `_tab_meta` holds pinned/tab-group info as JSON in its URL and is
+  removed entirely when a profile has no pinned or grouped tabs.
 - **Parent folder id** is resolved at runtime from the bookmark tree
   (`getRootParentId`), cached, with a fallback to Chrome/Brave's `"2"`. Do not
   hardcode `"2"` in new code — go through the resolver so Firefox support stays

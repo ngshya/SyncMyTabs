@@ -34,6 +34,7 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
 ├── manjaro-vivobook/          ← one folder per device (you name it)
 │   ├── default/               ← one folder per profile
 │   │   ├── _last_sync         ← metadata: this profile's last save time
+│   │   ├── _tab_meta          ← metadata: pinned/tab-group info (only if used)
 │   │   └── (open-tab bookmarks…)
 │   └── work/
 │       ├── _last_sync
@@ -55,7 +56,9 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
   previous contents. Only `http(s)` tabs are saved, duplicate URLs are deduped,
   and if nothing changed since the last save, **nothing is touched** — no
   needless bookmark churn (which would otherwise trigger your sync tool
-  constantly).
+  constantly). **Pinned tabs and tab groups** (title + color) are preserved:
+  they're recorded in a tiny per-profile `_tab_meta` metadata bookmark and
+  reapplied on restore.
 - **Detecting remote updates.** A single `_status` bookmark at the root is
   updated in place with the last device/profile/timestamp that saved anything.
   Other devices notice via `bookmarks.onChanged` / `onCreated` — it's
@@ -134,7 +137,8 @@ SyncMyTabs' own initiative):
 | Permission | Why |
 |---|---|
 | `bookmarks` | Read/write the SyncMyTabs bookmark tree |
-| `tabs` | Read open tab URLs/titles; open tabs on restore |
+| `tabs` | Read open tab URLs/titles/pinned state; open tabs on restore |
+| `tabGroups` | Read tab-group title/color on save; recreate groups on restore |
 | `storage` | Store this device's settings and state |
 | `alarms` | Drive the periodic save + durable notification timeout |
 | `notifications` | Prompt you when another device has an update |

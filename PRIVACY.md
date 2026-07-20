@@ -54,7 +54,8 @@ bookmark-sync tool replicates it.
 ## Permissions
 
 The extension requests only the permissions required for the above
-functionality: `bookmarks`, `tabs`, `storage`, `alarms`, and `notifications`.
+functionality: `bookmarks`, `tabs`, `tabGroups`, `storage`, `alarms`, and
+`notifications`.
 It requests **no host permissions**, runs **no content scripts** on web pages,
 and loads **no remote code** — all code ships inside the extension package. See
 [`PERMISSIONS.md`](PERMISSIONS.md) for a per-permission justification.

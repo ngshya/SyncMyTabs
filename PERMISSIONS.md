@@ -1,7 +1,7 @@
 # Chrome Web Store — Permission Justifications
 
 Copy-paste ready answers for the "Privacy practices" tab of the Chrome Web Store
-Developer Dashboard. SyncMyTabs requests only the five permissions below, no host
+Developer Dashboard. SyncMyTabs requests only the six permissions below, no host
 permissions, no content scripts, and no remotely hosted code.
 
 ## Single purpose
@@ -22,10 +22,17 @@ permissions, no content scripts, and no remotely hosted code.
 > update, and de-duplicate these folders and bookmarks.
 
 ### `tabs`
-> The extension reads the URLs and titles of the user's open tabs in order to
-> save them under the active profile, and it opens tabs/windows when the user
-> restores a session from another device (via the "Replace" or "Add" actions).
-> Access to tab URLs and titles requires the tabs permission.
+> The extension reads the URLs, titles, and pinned state of the user's open
+> tabs in order to save them under the active profile, and it opens tabs/windows
+> (restoring pinned state and tab-group membership) when the user restores a
+> session from another device (via the "Replace" or "Add" actions). Access to
+> tab URLs and titles requires the tabs permission.
+
+### `tabGroups`
+> When saving a session the extension reads the title and color of the tab
+> groups the open tabs belong to, so that on restore it can recreate those
+> groups with tabs.group and tabGroups.update. Reading and recreating tab
+> groups requires the tabGroups permission.
 
 ### `storage`
 > Used to store this device's local configuration and state: the device name,

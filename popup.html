@@ -4,10 +4,12 @@
   <meta charset="UTF-8" />
   <title>SyncMyTabs</title>
   <style>
+    :root { color-scheme: light dark; }
     body {
       font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
       width: 260px;
       padding: 14px;
+      background: #ffffff;
       color: #1a1a1a;
     }
     .row {
@@ -70,6 +72,20 @@
       padding: 6px 10px;
       font-size: 12px;
       white-space: nowrap;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { background: #1e1f22; color: #e6e6e6; }
+      .row { color: #b8bcc4; }
+      .row strong { color: #f1f1f1; }
+      select {
+        background: #2a2b2e;
+        color: #e6e6e6;
+        border-color: #44464b;
+      }
+      .section-title { color: #9aa0a6; }
+      button:disabled { background: #2b3a63; color: #9db2e0; }
+      .secondary { background: #3a3b3f; }
+      .secondary:hover { background: #46474c; }
     }
   </style>
 </head>
