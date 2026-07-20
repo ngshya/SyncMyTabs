@@ -38,7 +38,10 @@ See `README.md` for the full user-facing description. This file is about
 | `icons/` | Extension icons (16 / 48 / 128 px) |
 
 There is **no build step and no dependencies** — the repository *is* the
-unpacked extension. There is no test suite or CI.
+unpacked extension. There is no test suite. The only CI is a **release
+workflow** (`.github/workflows/release.yml`): pushing a `v*` tag whose number
+matches `manifest.json` builds the store-ready zip and publishes it as a GitHub
+Release. Store-listing docs live in `PRIVACY.md` and `PERMISSIONS.md`.
 
 ## How to work on it
 

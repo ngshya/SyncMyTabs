@@ -170,6 +170,25 @@ SyncMyTabs' own initiative):
 There is no build step — the repository *is* the unpacked extension. To hack on
 it, edit the files and hit **Reload** on the extension in `chrome://extensions`.
 
+## Releases & packaging
+
+Packaging is automated. To cut a release:
+
+1. Bump `version` in `manifest.json` (semver) and commit.
+2. Tag it and push the tag:
+   ```bash
+   git tag v2.0.1 && git push origin v2.0.1
+   ```
+
+The [`release` workflow](.github/workflows/release.yml) then checks that the tag
+matches the manifest version, syntax-checks the JS, builds the store-ready
+`syncmytabs-<version>.zip`, and publishes it as a **GitHub Release** — the zip
+appears on the [Releases page](../../releases), ready to upload to the Chrome Web
+Store.
+
+For publishing to the store, see [`PRIVACY.md`](PRIVACY.md) (privacy policy) and
+[`PERMISSIONS.md`](PERMISSIONS.md) (per-permission justifications).
+
 ---
 
 ## License
