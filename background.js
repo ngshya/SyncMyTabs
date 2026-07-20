@@ -50,11 +50,20 @@ const NOTIF_PREFIX = "syncmytabs-";
 // fetched from the network until the user actually opens the tab.
 const LAZY_PAGE = chrome.runtime.getURL("lazy.html");
 
-function lazyUrlFor(entry) {
-  return (
+// Build the placeholder URL for an entry. `source` ({device, profile})
+// tags where the tab came from (sd/sp) so we can later mirror closes:
+// an unopened placeholder can be matched back to the remote session it
+// was restored from.
+function lazyUrlFor(entry, source) {
+  let url =
     `${LAZY_PAGE}?u=${encodeURIComponent(entry.url)}` +
-    `&t=${encodeURIComponent(entry.title || "")}`
-  );
+    `&t=${encodeURIComponent(entry.title || "")}`;
+  if (source && source.device) {
+    url +=
+      `&sd=${encodeURIComponent(source.device)}` +
+      `&sp=${encodeURIComponent(source.profile || DEFAULT_PROFILE)}`;
+  }
+  return url;
 }
 
 // The real http(s) target of a tab. For a lazy-restore placeholder tab
@@ -70,6 +79,23 @@ function realUrlOfTab(tab) {
     } catch (e) {}
   }
   return u;
+}
+
+// If `tab` is an unopened lazy placeholder, returns { real, sd, sp }
+// (real target URL and the source device/profile it was restored from);
+// otherwise null. Once the user opens a placeholder it navigates to the
+// real URL and this returns null — so it never matches an opened tab.
+function placeholderInfo(tab) {
+  const u = (tab && tab.url) || "";
+  if (!u.startsWith(LAZY_PAGE)) return null;
+  try {
+    const p = new URL(u).searchParams;
+    const real = p.get("u");
+    if (!real) return null;
+    return { real, sd: p.get("sd") || null, sp: p.get("sp") || null };
+  } catch (e) {
+    return null;
+  }
 }
 
 // "Other Bookmarks" folder in Chrome/Brave. Firefox uses different
@@ -615,10 +641,11 @@ async function applyNotificationAction(action, device, profile) {
   if (!action || action === "none") return;
   const entries = await getTabEntriesForDeviceProfile(device, profile);
   if (entries.length === 0) return;
+  const source = { device, profile };
   if (action === "replace") {
-    await performReplace(entries);
+    await performReplace(entries, source);
   } else {
-    await performAdd(entries);
+    await performAdd(entries, source);
   }
 }
 
@@ -706,6 +733,10 @@ async function evaluateStatusAndNotify(statusUrl) {
 
   await chrome.storage.local.set({ lastSeenTimestamp: timestamp });
 
+  // Close our unopened placeholders that this device has since closed,
+  // regardless of what the user does with the notification below.
+  await mirrorRemoteCloses(remoteDevice, remoteProfile);
+
   await createUpdateNotification(remoteDevice, remoteProfile, timestamp);
   return true;
 }
@@ -766,10 +797,49 @@ async function openRestoredLazily() {
   return openRestoredLazy !== false;
 }
 
+// Whether to mirror tab closes from the source device: when a remote
+// update arrives, close our own still-unopened placeholder tabs that
+// were restored from that device but are no longer in its saved set.
+// Default ON.
+async function mirrorClosesEnabled() {
+  const { mirrorRemoteCloses } = await chrome.storage.local.get(
+    "mirrorRemoteCloses"
+  );
+  return mirrorRemoteCloses !== false;
+}
+
+// When device D/profile P publishes an update, close any of our tabs
+// that are (a) still unopened lazy placeholders, (b) tagged as restored
+// from exactly D/P, and (c) no longer present in D/P's saved set — i.e.
+// tabs we received from D but never looked at, which D has since closed.
+// Opened tabs, our own tabs, and tabs from other sources are untouched.
+async function mirrorRemoteCloses(device, profile) {
+  if (!(await mirrorClosesEnabled())) return;
+
+  const entries = await getTabEntriesForDeviceProfile(device, profile);
+  const remoteUrls = new Set(entries.map((e) => e.url));
+
+  const tabs = await chrome.tabs.query({});
+  const toClose = [];
+  for (const tab of tabs) {
+    const info = placeholderInfo(tab);
+    if (!info) continue; // opened tab or not a placeholder
+    if (info.sd !== device || info.sp !== profile) continue; // other source
+    if (remoteUrls.has(info.real)) continue; // still open on the source
+    toClose.push(tab.id);
+  }
+
+  if (toClose.length) {
+    try {
+      await chrome.tabs.remove(toClose);
+    } catch (e) {}
+  }
+}
+
 // The URL to actually open a restored tab at: the lazy placeholder when
 // lazy restore is on, otherwise the real URL.
-function openUrlForEntry(entry, lazy) {
-  return lazy ? lazyUrlFor(entry) : entry.url;
+function openUrlForEntry(entry, lazy, source) {
+  return lazy ? lazyUrlFor(entry, source) : entry.url;
 }
 
 // Re-apply pinned state and tab-group membership to freshly created
@@ -820,9 +890,9 @@ async function applyPinnedAndGroups(pairs, windowId) {
   }
 }
 
-async function performReplace(entries) {
+async function performReplace(entries, source) {
   const lazy = await openRestoredLazily();
-  const openUrls = entries.map((e) => openUrlForEntry(e, lazy));
+  const openUrls = entries.map((e) => openUrlForEntry(e, lazy, source));
 
   const oldWindows = await chrome.windows.getAll({ populate: false });
   const oldWindowIds = oldWindows.map((w) => w.id);
@@ -854,7 +924,7 @@ async function performReplace(entries) {
   }
 }
 
-async function performAdd(entries) {
+async function performAdd(entries, source) {
   const lazy = await openRestoredLazily();
 
   // Resolve open tabs to their real targets (unwrapping any existing
@@ -885,7 +955,7 @@ async function performAdd(entries) {
       try {
         const tab = await chrome.tabs.create({
           windowId,
-          url: openUrlForEntry(entry, lazy),
+          url: openUrlForEntry(entry, lazy, source),
           active: !lazy,
           pinned: !!entry.pinned,
         });
@@ -894,7 +964,7 @@ async function performAdd(entries) {
     }
   } else {
     const win = await chrome.windows.create({
-      url: toOpen.map((e) => openUrlForEntry(e, lazy)),
+      url: toOpen.map((e) => openUrlForEntry(e, lazy, source)),
     });
     windowId = win && win.id;
     const createdTabs = (win && win.tabs) || [];
@@ -924,10 +994,11 @@ chrome.notifications.onButtonClicked.addListener(
     );
     if (entries.length === 0) return;
 
+    const source = { device: data.device, profile: data.profile };
     if (buttonIndex === 0) {
-      await performReplace(entries);
+      await performReplace(entries, source);
     } else if (buttonIndex === 1) {
-      await performAdd(entries);
+      await performAdd(entries, source);
     }
   }
 );
@@ -1027,18 +1098,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "MANUAL_RESTORE") {
     (async () => {
       const { device, profile, mode } = message;
+      const resolvedProfile = profile || DEFAULT_PROFILE;
       const entries = await getTabEntriesForDeviceProfile(
         device,
-        profile || DEFAULT_PROFILE
+        resolvedProfile
       );
       if (entries.length === 0) {
         sendResponse({ ok: false, reason: "no-tabs" });
         return;
       }
+      const source = { device, profile: resolvedProfile };
       if (mode === "replace") {
-        await performReplace(entries);
+        await performReplace(entries, source);
       } else {
-        await performAdd(entries);
+        await performAdd(entries, source);
       }
       sendResponse({ ok: true });
     })();

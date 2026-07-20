@@ -82,6 +82,13 @@ Understanding these will keep changes safe:
   bookmark write triggers the user's sync tool.
 - **Event-driven detection.** Remote updates are noticed via
   `bookmarks.onChanged` / `onCreated` on `_status` — there is **no polling**.
+- **Lazy placeholders carry their origin.** Restored tabs (when lazy restore is
+  on) point at `lazy.html?u=<url>&t=<title>&sd=<device>&sp=<profile>`. The
+  `sd`/`sp` tags let `mirrorRemoteCloses` match an *unopened* placeholder back to
+  the remote session it came from and close it when that session drops the URL.
+  Only unopened placeholders from that exact source are ever auto-closed — never
+  the user's own or already-opened tabs. `placeholderInfo` is the single decoder;
+  keep the tagging and matching in sync if you touch either.
 - **MV3 service worker is ephemeral.** It can be torn down at any time. Do **not**
   rely on in-memory state or bare `setTimeout` for anything that must outlive a
   suspension. The notification timeout is made durable by persisting pending

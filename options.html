@@ -146,6 +146,19 @@
     Open restored tabs lazily (load each one only when you view it)
   </label>
 
+  <p style="margin-top: 18px;">
+    Mirror tab closes from other devices: when a device you received tabs
+    from closes one, close it here too — but only if it's still a
+    placeholder you never opened. Tabs you've opened or created yourself
+    are never touched. Requires lazy restore.
+  </p>
+  <label
+    style="display: flex; gap: 8px; align-items: center; font-size: 14px;"
+  >
+    <input type="checkbox" id="mirrorRemoteCloses" style="width: auto;" />
+    Close unopened restored tabs when the source device closes them
+  </label>
+
   <button id="save">Save</button>
   <div id="status"></div>
 

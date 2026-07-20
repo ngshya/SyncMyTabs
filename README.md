@@ -78,6 +78,10 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
     the network until you actually view each tab** (each tab points at a local
     page that navigates to the real URL on first view), so restoring a large
     session costs almost nothing. This can be turned off in the settings.
+- **Mirroring closes.** When a device you received tabs from later closes one of
+  them, that close is mirrored here — but **only** for a placeholder tab you
+  never opened (it's tagged with the source device/profile, so tabs you've
+  opened or created yourself are never touched). Off-switchable in the settings.
 - **Self-healing.** Some third-party sync tools *recreate* bookmarks instead of
   updating them, producing duplicate `_status` / `_last_sync` entries or even
   duplicate root folders. SyncMyTabs detects these and merges them, keeping the
@@ -117,6 +121,7 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
 | Notification timeout | 15 seconds | How long the restore notification stays up |
 | Default timeout action | Add | What happens if the notification times out unanswered (`Add`, `Replace`, or `None`) |
 | Lazy restore | On | Open restored tabs as placeholders that don't load from the network until you view each one (saves memory/bandwidth when restoring many tabs) |
+| Mirror closes | On | When the source device closes a tab you received but never opened, close it here too (never touches tabs you've opened or created) |
 
 Removing a profile from the list only removes it from *this device's* picker —
 any tab data already saved under that name, on this or any other device, is kept
