@@ -11,10 +11,6 @@ like [Floccus](https://floccus.org/) or
 [xBrowserSync](https://www.xbrowsersync.org/). If your bookmarks sync, your
 tabs sync.
 
-> Formerly named `OpenTabSync`, formerly `Live Tabs Sync`. On startup the
-> extension automatically migrates an old-named bookmark folder in place, so
-> existing synced data is never orphaned by the rename.
-
 ---
 
 ## Why bookmarks?
