@@ -71,9 +71,10 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
   - If the notification times out unanswered, a **configurable default action**
     is applied. This timeout is durable: it is honored even if the browser
     suspended the extension's background worker in the meantime.
-  - By default, restored tabs open **in the background and stay unloaded until
-    you click them** (each tab is discarded right after creation), so restoring
-    a large session is cheap. This can be turned off in the settings.
+  - By default, restored tabs open as **lightweight placeholders that don't hit
+    the network until you actually view each tab** (each tab points at a local
+    page that navigates to the real URL on first view), so restoring a large
+    session costs almost nothing. This can be turned off in the settings.
 - **Self-healing.** Some third-party sync tools *recreate* bookmarks instead of
   updating them, producing duplicate `_status` / `_last_sync` entries or even
   duplicate root folders. SyncMyTabs detects these and merges them, keeping the
@@ -112,7 +113,7 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
 | Save interval | 1 minute | How often the active profile's tabs are saved |
 | Notification timeout | 15 seconds | How long the restore notification stays up |
 | Default timeout action | Add | What happens if the notification times out unanswered (`Add`, `Replace`, or `None`) |
-| Lazy restore | On | Open restored tabs in the background and load each one only when clicked (saves memory when restoring many tabs) |
+| Lazy restore | On | Open restored tabs as placeholders that don't load from the network until you view each one (saves memory/bandwidth when restoring many tabs) |
 
 Removing a profile from the list only removes it from *this device's* picker —
 any tab data already saved under that name, on this or any other device, is kept

@@ -43,6 +43,7 @@ jobs:
             background.js \
             popup.html popup.js \
             options.html options.js \
+            lazy.html lazy.js \
             icons \
             -x '*.DS_Store'
           unzip -l "$ZIP"

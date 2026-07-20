@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Loading…</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+        background: #f6f7f9;
+        color: #1a1a1a;
+      }
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #1e1f22;
+          color: #e6e6e6;
+        }
+      }
+      .card {
+        max-width: 520px;
+        padding: 32px 28px;
+        text-align: center;
+      }
+      .badge {
+        width: 56px;
+        height: 56px;
+        margin: 0 auto 18px;
+        border-radius: 14px;
+        background: #2563eb;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .badge svg {
+        width: 32px;
+        height: 32px;
+        fill: #fff;
+      }
+      .title {
+        font-size: 17px;
+        font-weight: 600;
+        line-height: 1.35;
+        word-break: break-word;
+      }
+      .url {
+        margin-top: 8px;
+        font-size: 13px;
+        color: #6b7280;
+        word-break: break-all;
+      }
+      @media (prefers-color-scheme: dark) {
+        .url {
+          color: #9aa0a6;
+        }
+      }
+      .hint {
+        margin-top: 22px;
+        font-size: 13px;
+        color: #2563eb;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="badge" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path
+            d="M12 4V1L8 5l4 4V6a6 6 0 0 1 6 6 6 6 0 0 1-.6 2.6l1.5 1.5A8 8 0 0 0 12 4Zm0 14a6 6 0 0 1-6-6 6 6 0 0 1 .6-2.6L5.1 7.9A8 8 0 0 0 12 20v3l4-4-4-4v3Z"
+          />
+        </svg>
+      </div>
+      <div class="title" id="title">Tab ready to load</div>
+      <div class="url" id="url"></div>
+      <div class="hint" id="hint">Click anywhere to open this tab now</div>
+    </div>
+    <script src="lazy.js"></script>
+  </body>
+</html>

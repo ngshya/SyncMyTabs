@@ -35,6 +35,7 @@ See `README.md` for the full user-facing description. This file is about
 | `background.js` | Service worker — all sync / save / restore logic |
 | `popup.html` / `popup.js` | Toolbar popup UI |
 | `options.html` / `options.js` | Settings page UI |
+| `lazy.html` / `lazy.js` | Lazy-restore placeholder page (loads the real URL only when the tab is first viewed) |
 | `icons/` | Extension icons (16 / 48 / 128 px) |
 
 There is **no build step and no dependencies** — the repository *is* the

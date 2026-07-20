@@ -39,6 +39,35 @@ const LAST_SYNC_URL_BASE = "https://syncmytabs.local/last-sync";
 const DEFAULT_PROFILE = "default";
 const NOTIF_PREFIX = "syncmytabs-";
 
+// Lazy-restore placeholder page (see lazy.html / lazy.js). When lazy
+// restore is enabled, tabs are opened pointing at this local page with
+// the real target encoded as ?u=<url>&t=<title>; the page navigates to
+// the real URL only when the tab first becomes visible, so nothing is
+// fetched from the network until the user actually opens the tab.
+const LAZY_PAGE = chrome.runtime.getURL("lazy.html");
+
+function lazyUrlFor(entry) {
+  return (
+    `${LAZY_PAGE}?u=${encodeURIComponent(entry.url)}` +
+    `&t=${encodeURIComponent(entry.title || "")}`
+  );
+}
+
+// The real http(s) target of a tab. For a lazy-restore placeholder tab
+// (still unopened) this is the encoded `u` param; for any other tab
+// it's just its URL. Lets saveOpenTabs and de-duplication treat a
+// not-yet-loaded placeholder as if it already pointed at the real page.
+function realUrlOfTab(tab) {
+  const u = (tab && (tab.url || tab.pendingUrl)) || "";
+  if (u.startsWith(LAZY_PAGE)) {
+    try {
+      const real = new URL(u).searchParams.get("u");
+      if (real) return real;
+    } catch (e) {}
+  }
+  return u;
+}
+
 // "Other Bookmarks" folder in Chrome/Brave. Firefox uses different
 // ids (e.g. "unfiled_____"), so instead of hardcoding "2" everywhere
 // we resolve it at runtime from the bookmark tree and only fall back
@@ -231,14 +260,18 @@ async function saveOpenTabs() {
   await dedupeNamedBookmark(profileFolder.id, LAST_SYNC_TITLE);
 
   const tabs = await chrome.tabs.query({});
-  const validTabs = tabs.filter((t) => t.url && /^https?:\/\//.test(t.url));
 
+  // Resolve each tab to its real http(s) target — this unwraps
+  // lazy-restore placeholder tabs that haven't been opened yet, so they
+  // are saved as the page they represent rather than skipped.
   const seenUrls = new Set();
   const dedupedTabs = [];
-  for (const tab of validTabs) {
-    if (seenUrls.has(tab.url)) continue;
-    seenUrls.add(tab.url);
-    dedupedTabs.push(tab);
+  for (const tab of tabs) {
+    const url = realUrlOfTab(tab);
+    if (!url || !/^https?:\/\//.test(url)) continue;
+    if (seenUrls.has(url)) continue;
+    seenUrls.add(url);
+    dedupedTabs.push({ url, title: tab.title });
   }
 
   const newUrls = dedupedTabs.map((t) => t.url);
@@ -429,12 +462,12 @@ async function removePendingNotif(notifId) {
 
 async function applyNotificationAction(action, device, profile) {
   if (!action || action === "none") return;
-  const urls = await getUrlsForDeviceProfile(device, profile);
-  if (urls.length === 0) return;
+  const entries = await getTabEntriesForDeviceProfile(device, profile);
+  if (entries.length === 0) return;
   if (action === "replace") {
-    await performReplace(urls);
+    await performReplace(entries);
   } else {
-    await performAdd(urls);
+    await performAdd(entries);
   }
 }
 
@@ -548,7 +581,8 @@ chrome.bookmarks.onChanged.addListener(async (id, changeInfo) => {
   await evaluateStatusAndNotify(changeInfo.url);
 });
 
-async function getUrlsForDeviceProfile(deviceName, profile) {
+// Returns the saved tabs for a device/profile as {url, title} entries.
+async function getTabEntriesForDeviceProfile(deviceName, profile) {
   const root = await getOrCreateRootFolder();
   const deviceChildren = await chrome.bookmarks.getChildren(root.id);
   const deviceFolder = deviceChildren.find(
@@ -565,11 +599,11 @@ async function getUrlsForDeviceProfile(deviceName, profile) {
   const bookmarks = await chrome.bookmarks.getChildren(profileFolder.id);
   return bookmarks
     .filter((b) => b.url && b.title !== LAST_SYNC_TITLE)
-    .map((b) => b.url);
+    .map((b) => ({ url: b.url, title: b.title }));
 }
 
-// Whether restored tabs should open in the background and stay
-// unloaded until the user clicks them. Defaults to ON.
+// Whether restored tabs should open lazily (as a placeholder that
+// doesn't hit the network until the tab is first viewed). Default ON.
 async function openRestoredLazily() {
   const { openRestoredLazy } = await chrome.storage.local.get(
     "openRestoredLazy"
@@ -577,44 +611,31 @@ async function openRestoredLazily() {
   return openRestoredLazy !== false;
 }
 
-// Discard a freshly-created tab so it shows only its title/favicon and
-// isn't loaded until activated. A just-created tab may still be
-// committing its navigation and refuse to discard; in that case we
-// retry on its first update event, which aborts the rest of the load.
-// Fire-and-forget by design — never blocks the restore flow.
-function discardTabSoon(tabId) {
-  chrome.tabs.discard(tabId).catch(() => {
-    const onUpdated = (id) => {
-      if (id !== tabId) return;
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-      chrome.tabs.discard(tabId).catch(() => {});
-    };
-    chrome.tabs.onUpdated.addListener(onUpdated);
-  });
+// The URL to actually open a restored tab at: the lazy placeholder when
+// lazy restore is on, otherwise the real URL.
+function openUrlForEntry(entry, lazy) {
+  return lazy ? lazyUrlFor(entry) : entry.url;
 }
 
-async function performReplace(urls) {
+async function performReplace(entries) {
   const lazy = await openRestoredLazily();
+  const openUrls = entries.map((e) => openUrlForEntry(e, lazy));
+
   const oldWindows = await chrome.windows.getAll({ populate: false });
   const oldWindowIds = oldWindows.map((w) => w.id);
 
   // Open the replacement window FIRST and only close the old ones if
   // that succeeded — otherwise a failed create would leave the user
-  // with no windows at all.
+  // with no windows at all. With lazy restore on, the window's active
+  // tab becomes visible and loads its real URL immediately; the rest
+  // stay as placeholders until the user views them.
   let created;
   try {
-    created = await chrome.windows.create({ url: urls });
+    created = await chrome.windows.create({ url: openUrls });
   } catch (e) {
     created = null;
   }
   if (!created) return;
-
-  // The window's active tab must stay loaded; discard the rest.
-  if (lazy && created.tabs) {
-    for (const t of created.tabs) {
-      if (!t.active) discardTabSoon(t.id);
-    }
-  }
 
   for (const winId of oldWindowIds) {
     try {
@@ -623,13 +644,16 @@ async function performReplace(urls) {
   }
 }
 
-async function performAdd(urls) {
+async function performAdd(entries) {
   const lazy = await openRestoredLazily();
-  const currentTabs = await chrome.tabs.query({});
-  const alreadyOpenUrls = new Set(currentTabs.map((t) => t.url));
-  const urlsToOpen = urls.filter((url) => !alreadyOpenUrls.has(url));
 
-  if (urlsToOpen.length === 0) return;
+  // Resolve open tabs to their real targets (unwrapping any existing
+  // placeholder tabs) so we don't re-open pages that are already there.
+  const currentTabs = await chrome.tabs.query({});
+  const alreadyOpenUrls = new Set(currentTabs.map((t) => realUrlOfTab(t)));
+  const toOpen = entries.filter((e) => !alreadyOpenUrls.has(e.url));
+
+  if (toOpen.length === 0) return;
 
   let targetWindow;
   try {
@@ -641,21 +665,19 @@ async function performAdd(urls) {
   }
 
   if (targetWindow) {
-    for (const url of urlsToOpen) {
-      const tab = await chrome.tabs.create({
+    for (const entry of toOpen) {
+      // active:false keeps the placeholder tab hidden, so it never
+      // becomes visible and never navigates until the user opens it.
+      await chrome.tabs.create({
         windowId: targetWindow.id,
-        url,
+        url: openUrlForEntry(entry, lazy),
         active: !lazy,
       });
-      if (lazy) discardTabSoon(tab.id);
     }
   } else {
-    const win = await chrome.windows.create({ url: urlsToOpen });
-    if (lazy && win && win.tabs) {
-      for (const t of win.tabs) {
-        if (!t.active) discardTabSoon(t.id);
-      }
-    }
+    await chrome.windows.create({
+      url: toOpen.map((e) => openUrlForEntry(e, lazy)),
+    });
   }
 }
 
@@ -671,13 +693,16 @@ chrome.notifications.onButtonClicked.addListener(
     chrome.notifications.clear(notifId);
     if (!data) return; // already resolved by a timeout/sweep
 
-    const urls = await getUrlsForDeviceProfile(data.device, data.profile);
-    if (urls.length === 0) return;
+    const entries = await getTabEntriesForDeviceProfile(
+      data.device,
+      data.profile
+    );
+    if (entries.length === 0) return;
 
     if (buttonIndex === 0) {
-      await performReplace(urls);
+      await performReplace(entries);
     } else if (buttonIndex === 1) {
-      await performAdd(urls);
+      await performAdd(entries);
     }
   }
 );
@@ -777,18 +802,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "MANUAL_RESTORE") {
     (async () => {
       const { device, profile, mode } = message;
-      const urls = await getUrlsForDeviceProfile(
+      const entries = await getTabEntriesForDeviceProfile(
         device,
         profile || DEFAULT_PROFILE
       );
-      if (urls.length === 0) {
+      if (entries.length === 0) {
         sendResponse({ ok: false, reason: "no-tabs" });
         return;
       }
       if (mode === "replace") {
-        await performReplace(urls);
+        await performReplace(entries);
       } else {
-        await performAdd(urls);
+        await performAdd(entries);
       }
       sendResponse({ ok: true });
     })();
