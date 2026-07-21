@@ -1,13 +1,20 @@
 name: Release
 
-# Tag a version (e.g. `git tag v2.0.1 && git push origin v2.0.1`) and this
-# workflow builds the store-ready extension zip and publishes it as a GitHub
-# Release, so the packaged .zip shows up directly on the Releases page.
+# Two ways to cut a release:
+#   1. Push a version tag:   git tag v2.2.1 && git push origin v2.2.1
+#   2. Actions tab -> "Release" -> "Run workflow" (workflow_dispatch): builds
+#      from the chosen ref and tags/releases as v<manifest version>.
+# Either way it builds the store-ready zip and publishes it as a GitHub Release.
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch/tag/SHA to release from (defaults to the selected branch)"
+        required: false
 
 permissions:
   contents: write
@@ -18,26 +25,47 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Manual runs release whatever ref you pick; the tag-push case
+          # checks out the tag automatically. Full history for release notes.
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 0
 
-      - name: Check tag matches manifest version
+      - name: Determine version and tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
           MANIFEST_VERSION="$(node -p "require('./manifest.json').version")"
-          echo "tag=v$TAG_VERSION  manifest=$MANIFEST_VERSION"
-          if [ "$TAG_VERSION" != "$MANIFEST_VERSION" ]; then
-            echo "::error::Tag v$TAG_VERSION does not match manifest.json version $MANIFEST_VERSION"
-            exit 1
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # Triggered by a pushed tag: it must match the manifest version.
+            TAG="${GITHUB_REF_NAME}"
+            if [ "${TAG#v}" != "$MANIFEST_VERSION" ]; then
+              echo "::error::Tag $TAG does not match manifest.json version $MANIFEST_VERSION"
+              exit 1
+            fi
+          else
+            # Manual run: derive the tag from the manifest and refuse to
+            # clobber an existing release (bump the version instead).
+            TAG="v$MANIFEST_VERSION"
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "::error::Release $TAG already exists — bump the version in manifest.json"
+              exit 1
+            fi
           fi
+          echo "VERSION=$MANIFEST_VERSION" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "Building $TAG (manifest $MANIFEST_VERSION) via ${{ github.event_name }}"
 
       - name: Syntax-check JavaScript
         run: |
           node --check background.js
           node --check popup.js
           node --check options.js
+          node --check lazy.js
 
       - name: Build extension zip
         run: |
-          ZIP="syncmytabs-${GITHUB_REF_NAME#v}.zip"
+          ZIP="syncmytabs-${VERSION}.zip"
           zip -r "$ZIP" \
             manifest.json \
             background.js \
@@ -53,6 +81,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" "$ZIP" \
-            --title "$GITHUB_REF_NAME" \
+          # For a manual run the tag doesn't exist yet, so create it at the
+          # commit we built; for a tag push it already exists and --target
+          # is ignored.
+          gh release create "$TAG" "$ZIP" \
+            --title "$TAG" \
+            --target "$GITHUB_SHA" \
             --generate-notes
