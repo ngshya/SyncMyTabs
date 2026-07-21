@@ -211,8 +211,8 @@ SyncMyTabs has no server and no account: it collects, transmits, sells, and
 shares **nothing**. Everything stays on your device (local extension storage and
 your bookmarks); cross-device transfer is done by your own bookmark-sync tool.
 
-- **Published privacy policy:** <https://ngshya.github.io/SyncMyTabs/>
-- Canonical Markdown source: [`PRIVACY.md`](PRIVACY.md)
+- **Privacy policy:** [`PRIVACY.md`](PRIVACY.md) — public URL for the Chrome Web
+  Store: <https://github.com/ngshya/SyncMyTabs/blob/main/PRIVACY.md>
 
 ---
 
