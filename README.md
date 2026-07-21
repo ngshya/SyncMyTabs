@@ -205,6 +205,17 @@ For publishing to the store, see [`PRIVACY.md`](PRIVACY.md) (privacy policy) and
 
 ---
 
+## Privacy
+
+SyncMyTabs has no server and no account: it collects, transmits, sells, and
+shares **nothing**. Everything stays on your device (local extension storage and
+your bookmarks); cross-device transfer is done by your own bookmark-sync tool.
+
+- **Published privacy policy:** <https://ngshya.github.io/SyncMyTabs/>
+- Canonical Markdown source: [`PRIVACY.md`](PRIVACY.md)
+
+---
+
 ## License
 
 **PolyForm Noncommercial License 1.0.0** — see [LICENSE](LICENSE).
