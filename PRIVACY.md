@@ -73,4 +73,4 @@ with a new "Last updated" date.
 ## Contact
 
 Questions about this policy? Contact the maintainer at:
-**[fill in a contact email or URL before publishing]**
+**<https://y.shuyi.it/>**
