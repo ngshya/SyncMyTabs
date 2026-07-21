@@ -11,10 +11,6 @@ like [Floccus](https://floccus.org/) or
 [xBrowserSync](https://www.xbrowsersync.org/). If your bookmarks sync, your
 tabs sync.
 
-> Formerly named `OpenTabSync`, formerly `Live Tabs Sync`. On startup the
-> extension automatically migrates an old-named bookmark folder in place, so
-> existing synced data is never orphaned by the rename.
-
 ---
 
 ## Why bookmarks?
@@ -38,6 +34,7 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
 ├── manjaro-vivobook/          ← one folder per device (you name it)
 │   ├── default/               ← one folder per profile
 │   │   ├── _last_sync         ← metadata: this profile's last save time
+│   │   ├── _tab_meta          ← metadata: pinned/tab-group info (only if used)
 │   │   └── (open-tab bookmarks…)
 │   └── work/
 │       ├── _last_sync
@@ -59,7 +56,13 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
   previous contents. Only `http(s)` tabs are saved, duplicate URLs are deduped,
   and if nothing changed since the last save, **nothing is touched** — no
   needless bookmark churn (which would otherwise trigger your sync tool
-  constantly).
+  constantly). Tabs restored from another device that you **haven't opened
+  yet** (lazy placeholders) don't count as part of this device's session, so
+  they're never re-broadcast back (which would otherwise echo — and resurrect —
+  the other device's tabs). **Pinned tabs and tab groups** (title + color) are
+  preserved:
+  they're recorded in a tiny per-profile `_tab_meta` metadata bookmark and
+  reapplied on restore.
 - **Detecting remote updates.** A single `_status` bookmark at the root is
   updated in place with the last device/profile/timestamp that saved anything.
   Other devices notice via `bookmarks.onChanged` / `onCreated` — it's
@@ -75,6 +78,14 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
   - If the notification times out unanswered, a **configurable default action**
     is applied. This timeout is durable: it is honored even if the browser
     suspended the extension's background worker in the meantime.
+  - By default, restored tabs open as **lightweight placeholders that don't hit
+    the network until you actually view each tab** (each tab points at a local
+    page that navigates to the real URL on first view), so restoring a large
+    session costs almost nothing. This can be turned off in the settings.
+- **Mirroring closes.** When a device you received tabs from later closes one of
+  them, that close is mirrored here — but **only** for a placeholder tab you
+  never opened (it's tagged with the source device/profile, so tabs you've
+  opened or created yourself are never touched). Off-switchable in the settings.
 - **Self-healing.** Some third-party sync tools *recreate* bookmarks instead of
   updating them, producing duplicate `_status` / `_last_sync` entries or even
   duplicate root folders. SyncMyTabs detects these and merges them, keeping the
@@ -113,6 +124,8 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
 | Save interval | 1 minute | How often the active profile's tabs are saved |
 | Notification timeout | 15 seconds | How long the restore notification stays up |
 | Default timeout action | Add | What happens if the notification times out unanswered (`Add`, `Replace`, or `None`) |
+| Lazy restore | On | Open restored tabs as placeholders that don't load from the network until you view each one (saves memory/bandwidth when restoring many tabs) |
+| Mirror closes | On | When the source device closes a tab you received but never opened, close it here too (never touches tabs you've opened or created) |
 
 Removing a profile from the list only removes it from *this device's* picker —
 any tab data already saved under that name, on this or any other device, is kept
@@ -133,7 +146,8 @@ SyncMyTabs' own initiative):
 | Permission | Why |
 |---|---|
 | `bookmarks` | Read/write the SyncMyTabs bookmark tree |
-| `tabs` | Read open tab URLs/titles; open tabs on restore |
+| `tabs` | Read open tab URLs/titles/pinned state; open tabs on restore |
+| `tabGroups` | Read tab-group title/color on save; recreate groups on restore |
 | `storage` | Store this device's settings and state |
 | `alarms` | Drive the periodic save + durable notification timeout |
 | `notifications` | Prompt you when another device has an update |
@@ -169,6 +183,25 @@ SyncMyTabs' own initiative):
 
 There is no build step — the repository *is* the unpacked extension. To hack on
 it, edit the files and hit **Reload** on the extension in `chrome://extensions`.
+
+## Releases & packaging
+
+Packaging is automated. To cut a release:
+
+1. Bump `version` in `manifest.json` (semver) and commit.
+2. Tag it and push the tag:
+   ```bash
+   git tag v2.0.1 && git push origin v2.0.1
+   ```
+
+The [`release` workflow](.github/workflows/release.yml) then checks that the tag
+matches the manifest version, syntax-checks the JS, builds the store-ready
+`syncmytabs-<version>.zip`, and publishes it as a **GitHub Release** — the zip
+appears on the [Releases page](../../releases), ready to upload to the Chrome Web
+Store.
+
+For publishing to the store, see [`PRIVACY.md`](PRIVACY.md) (privacy policy) and
+[`PERMISSIONS.md`](PERMISSIONS.md) (per-permission justifications).
 
 ---
 

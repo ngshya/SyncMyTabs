@@ -35,10 +35,14 @@ See `README.md` for the full user-facing description. This file is about
 | `background.js` | Service worker — all sync / save / restore logic |
 | `popup.html` / `popup.js` | Toolbar popup UI |
 | `options.html` / `options.js` | Settings page UI |
+| `lazy.html` / `lazy.js` | Lazy-restore placeholder page (loads the real URL only when the tab is first viewed) |
 | `icons/` | Extension icons (16 / 48 / 128 px) |
 
 There is **no build step and no dependencies** — the repository *is* the
-unpacked extension. There is no test suite or CI.
+unpacked extension. There is no test suite. The only CI is a **release
+workflow** (`.github/workflows/release.yml`): pushing a `v*` tag whose number
+matches `manifest.json` builds the store-ready zip and publishes it as a GitHub
+Release. Store-listing docs live in `PRIVACY.md` and `PERMISSIONS.md`.
 
 ## How to work on it
 
@@ -61,21 +65,35 @@ Understanding these will keep changes safe:
 
 - **Bookmark tree shape** (created under "Other Bookmarks"):
   ```
-  SyncMyTabs/<device>/<profile>/{_last_sync, …tab bookmarks…}
+  SyncMyTabs/<device>/<profile>/{_last_sync, _tab_meta, …tab bookmarks…}
   SyncMyTabs/_status
   ```
-  `_status` (root) and `_last_sync` (per profile) are **metadata bookmarks**,
-  never treated as tabs. Keep them updated **in place** — recreating them causes
-  duplicates and needless sync churn.
+  `_status` (root) and `_last_sync` / `_tab_meta` (per profile) are **metadata
+  bookmarks**, never treated as tabs (`isMetaTitle` / `isProfileMetaTitle`). Keep
+  them updated **in place** — recreating them causes duplicates and needless sync
+  churn. `_tab_meta` holds pinned/tab-group info as JSON in its URL and is
+  removed entirely when a profile has no pinned or grouped tabs.
 - **Parent folder id** is resolved at runtime from the bookmark tree
   (`getRootParentId`), cached, with a fallback to Chrome/Brave's `"2"`. Do not
   hardcode `"2"` in new code — go through the resolver so Firefox support stays
   reachable.
-- **No needless writes.** `saveOpenTabs` compares the current URL set with the
-  saved one (`sameUrlSet`) and does nothing if unchanged. Preserve this: every
-  bookmark write triggers the user's sync tool.
+- **No needless writes.** `saveOpenTabs` compares a signature of the current tab
+  set (URLs + pinned/group) against the saved one and does nothing if unchanged.
+  Preserve this: every bookmark write triggers the user's sync tool.
+- **Unopened placeholders are not "your" tabs.** `saveOpenTabs` skips tabs that
+  are still lazy placeholders (`placeholderInfo` non-null). Saving them would
+  re-broadcast another device's tabs as this device's session and, with auto-Add
+  on the other side, resurrect tabs it just closed. Only real/opened tabs are
+  saved; `realUrlOfTab` is still used for de-duplication when *adding* tabs.
 - **Event-driven detection.** Remote updates are noticed via
   `bookmarks.onChanged` / `onCreated` on `_status` — there is **no polling**.
+- **Lazy placeholders carry their origin.** Restored tabs (when lazy restore is
+  on) point at `lazy.html?u=<url>&t=<title>&sd=<device>&sp=<profile>`. The
+  `sd`/`sp` tags let `mirrorRemoteCloses` match an *unopened* placeholder back to
+  the remote session it came from and close it when that session drops the URL.
+  Only unopened placeholders from that exact source are ever auto-closed — never
+  the user's own or already-opened tabs. `placeholderInfo` is the single decoder;
+  keep the tagging and matching in sync if you touch either.
 - **MV3 service worker is ephemeral.** It can be torn down at any time. Do **not**
   rely on in-memory state or bare `setTimeout` for anything that must outlive a
   suspension. The notification timeout is made durable by persisting pending

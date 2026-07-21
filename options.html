@@ -4,11 +4,13 @@
   <meta charset="UTF-8" />
   <title>SyncMyTabs - Settings</title>
   <style>
+    :root { color-scheme: light dark; }
     body {
       font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
       max-width: 460px;
       margin: 40px auto;
       padding: 0 16px;
+      background: #ffffff;
       color: #1a1a1a;
     }
     h1 { font-size: 18px; }
@@ -62,6 +64,24 @@
     }
     .add-profile-row input { flex: 1; }
     .add-profile-row button { margin-top: 0; white-space: nowrap; }
+    .divider {
+      margin-top: 22px;
+      border-top: 1px solid #eee;
+      padding-top: 14px;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { background: #1e1f22; color: #e6e6e6; }
+      p { color: #b8bcc4; }
+      h1, h2 { color: #f1f1f1; }
+      input, select {
+        background: #2a2b2e;
+        color: #e6e6e6;
+        border-color: #44464b;
+      }
+      .profile-row { border-bottom-color: #333; }
+      .profile-row .badge { color: #7aa2ff; border-color: #7aa2ff; }
+      .divider { border-top-color: #333; }
+    }
   </style>
 </head>
 <body>
@@ -114,10 +134,35 @@
     <option value="none">Do nothing</option>
   </select>
 
+  <p style="margin-top: 18px;">
+    When restoring tabs from another device, open them as lightweight
+    placeholders that don't load from the network until you actually
+    view each tab. Saves memory and bandwidth when restoring many tabs.
+  </p>
+  <label
+    style="display: flex; gap: 8px; align-items: center; font-size: 14px;"
+  >
+    <input type="checkbox" id="openRestoredLazy" style="width: auto;" />
+    Open restored tabs lazily (load each one only when you view it)
+  </label>
+
+  <p style="margin-top: 18px;">
+    Mirror tab closes from other devices: when a device you received tabs
+    from closes one, close it here too — but only if it's still a
+    placeholder you never opened. Tabs you've opened or created yourself
+    are never touched. Requires lazy restore.
+  </p>
+  <label
+    style="display: flex; gap: 8px; align-items: center; font-size: 14px;"
+  >
+    <input type="checkbox" id="mirrorRemoteCloses" style="width: auto;" />
+    Close unopened restored tabs when the source device closes them
+  </label>
+
   <button id="save">Save</button>
   <div id="status"></div>
 
-  <p style="margin-top: 22px; border-top: 1px solid #eee; padding-top: 14px;">
+  <p class="divider">
     Last signal received: <strong id="lastSeen">none</strong>
   </p>
 

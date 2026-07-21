@@ -35,9 +35,68 @@ const STATUS_TITLE = "_status"; // always fixed, never holds variable data
 const STATUS_URL_BASE = "https://syncmytabs.local/status";
 const LAST_SYNC_TITLE = "_last_sync"; // per-device-profile metadata, never a tab
 const LAST_SYNC_URL_BASE = "https://syncmytabs.local/last-sync";
+// Per-profile metadata bookmark holding pinned/tab-group info as a
+// compact JSON payload (see updateTabMetaBookmark). Never a tab.
+const TAB_META_TITLE = "_tab_meta";
+const TAB_META_URL_BASE = "https://syncmytabs.local/tab-meta";
 
 const DEFAULT_PROFILE = "default";
 const NOTIF_PREFIX = "syncmytabs-";
+
+// Lazy-restore placeholder page (see lazy.html / lazy.js). When lazy
+// restore is enabled, tabs are opened pointing at this local page with
+// the real target encoded as ?u=<url>&t=<title>; the page navigates to
+// the real URL only when the tab first becomes visible, so nothing is
+// fetched from the network until the user actually opens the tab.
+const LAZY_PAGE = chrome.runtime.getURL("lazy.html");
+
+// Build the placeholder URL for an entry. `source` ({device, profile})
+// tags where the tab came from (sd/sp) so we can later mirror closes:
+// an unopened placeholder can be matched back to the remote session it
+// was restored from.
+function lazyUrlFor(entry, source) {
+  let url =
+    `${LAZY_PAGE}?u=${encodeURIComponent(entry.url)}` +
+    `&t=${encodeURIComponent(entry.title || "")}`;
+  if (source && source.device) {
+    url +=
+      `&sd=${encodeURIComponent(source.device)}` +
+      `&sp=${encodeURIComponent(source.profile || DEFAULT_PROFILE)}`;
+  }
+  return url;
+}
+
+// The real http(s) target of a tab. For a lazy-restore placeholder tab
+// (still unopened) this is the encoded `u` param; for any other tab
+// it's just its URL. Lets saveOpenTabs and de-duplication treat a
+// not-yet-loaded placeholder as if it already pointed at the real page.
+function realUrlOfTab(tab) {
+  const u = (tab && (tab.url || tab.pendingUrl)) || "";
+  if (u.startsWith(LAZY_PAGE)) {
+    try {
+      const real = new URL(u).searchParams.get("u");
+      if (real) return real;
+    } catch (e) {}
+  }
+  return u;
+}
+
+// If `tab` is an unopened lazy placeholder, returns { real, sd, sp }
+// (real target URL and the source device/profile it was restored from);
+// otherwise null. Once the user opens a placeholder it navigates to the
+// real URL and this returns null — so it never matches an opened tab.
+function placeholderInfo(tab) {
+  const u = (tab && tab.url) || "";
+  if (!u.startsWith(LAZY_PAGE)) return null;
+  try {
+    const p = new URL(u).searchParams;
+    const real = p.get("u");
+    if (!real) return null;
+    return { real, sd: p.get("sd") || null, sp: p.get("sp") || null };
+  } catch (e) {
+    return null;
+  }
+}
 
 // "Other Bookmarks" folder in Chrome/Brave. Firefox uses different
 // ids (e.g. "unfiled_____"), so instead of hardcoding "2" everywhere
@@ -158,11 +217,7 @@ async function mergeFolderInto(sourceFolderId, targetFolderId) {
       try {
         await chrome.bookmarks.remove(child.id);
       } catch (e) {}
-    } else if (
-      bothBookmarks &&
-      child.title !== STATUS_TITLE &&
-      child.title !== LAST_SYNC_TITLE
-    ) {
+    } else if (bothBookmarks && !isMetaTitle(child.title)) {
       try {
         await chrome.bookmarks.remove(child.id);
       } catch (e) {}
@@ -193,19 +248,82 @@ async function getOrCreateSubfolder(parentId, name) {
 async function clearTabBookmarks(folderId) {
   const children = await chrome.bookmarks.getChildren(folderId);
   for (const child of children) {
-    if (child.title === LAST_SYNC_TITLE) continue;
+    if (isProfileMetaTitle(child.title)) continue;
     await chrome.bookmarks.remove(child.id);
   }
 }
 
-function sameUrlSet(listA, listB) {
-  const a = new Set(listA);
-  const b = new Set(listB);
-  if (a.size !== b.size) return false;
-  for (const url of a) {
-    if (!b.has(url)) return false;
+// A metadata bookmark that lives next to a device root ("_status") or
+// inside a profile folder ("_last_sync" / "_tab_meta"). These are never
+// treated as tabs.
+function isMetaTitle(title) {
+  return (
+    title === STATUS_TITLE ||
+    title === LAST_SYNC_TITLE ||
+    title === TAB_META_TITLE
+  );
+}
+
+function isProfileMetaTitle(title) {
+  return title === LAST_SYNC_TITLE || title === TAB_META_TITLE;
+}
+
+// ------------------------------------------------------------
+// Pinned/tab-group metadata for a profile is stored in one "_tab_meta"
+// bookmark as JSON in its URL:
+//   { groups: [ {t: title, c: color}, ... ],
+//     tabs:   { "<url>": { p: 1?, g: <group index>? }, ... } }
+// Only pinned or grouped tabs appear in `tabs`, so it stays small and
+// is absent entirely when nobody uses pins/groups.
+// ------------------------------------------------------------
+function parseTabMeta(bookmark) {
+  const empty = { groups: [], tabs: {} };
+  if (!bookmark || !bookmark.url) return empty;
+  try {
+    const d = new URL(bookmark.url).searchParams.get("d");
+    if (!d) return empty;
+    const obj = JSON.parse(d);
+    return {
+      groups: Array.isArray(obj.groups) ? obj.groups : [],
+      tabs: obj.tabs && typeof obj.tabs === "object" ? obj.tabs : {},
+    };
+  } catch (e) {
+    return empty;
   }
-  return true;
+}
+
+// Build a restore-ready entry ({url, title, pinned, group, groupTitle,
+// groupColor}) from a tab bookmark plus the parsed profile metadata.
+function entryFromMeta(url, title, meta) {
+  const m = meta.tabs[url] || {};
+  const g =
+    typeof m.g === "number" && meta.groups[m.g] ? meta.groups[m.g] : null;
+  return {
+    url,
+    title,
+    pinned: !!m.p,
+    group: g ? m.g : null,
+    groupTitle: g ? g.t : null,
+    groupColor: g ? g.c : null,
+  };
+}
+
+// Order-independent signature of a tab set including pinned/group
+// identity, used to skip needless rewrites (a bookmark write triggers
+// the user's sync tool). Title is intentionally excluded, matching the
+// pre-existing "URLs only" change detection.
+function tabSignature(entries) {
+  return entries
+    .map((e) => {
+      const groupKey = e.pinned
+        ? ""
+        : e.groupTitle != null
+        ? `${e.groupTitle}\x1f${e.groupColor || ""}`
+        : "";
+      return `${e.url}\x1e${e.pinned ? 1 : 0}\x1e${groupKey}`;
+    })
+    .sort()
+    .join("\n");
 }
 
 async function getActiveProfile() {
@@ -229,38 +347,102 @@ async function saveOpenTabs() {
 
   await dedupeNamedBookmark(root.id, STATUS_TITLE);
   await dedupeNamedBookmark(profileFolder.id, LAST_SYNC_TITLE);
+  await dedupeNamedBookmark(profileFolder.id, TAB_META_TITLE);
 
   const tabs = await chrome.tabs.query({});
-  const validTabs = tabs.filter((t) => t.url && /^https?:\/\//.test(t.url));
 
-  const seenUrls = new Set();
-  const dedupedTabs = [];
-  for (const tab of validTabs) {
-    if (seenUrls.has(tab.url)) continue;
-    seenUrls.add(tab.url);
-    dedupedTabs.push(tab);
+  // Tab-group definitions (title/color) keyed by group id, if the
+  // tabGroups API is available. Missing API -> no group metadata.
+  const groupById = new Map();
+  if (chrome.tabGroups) {
+    try {
+      const allGroups = await chrome.tabGroups.query({});
+      for (const g of allGroups) {
+        groupById.set(g.id, { t: g.title || "", c: g.color });
+      }
+    } catch (e) {}
   }
 
-  const newUrls = dedupedTabs.map((t) => t.url);
+  // Skip unopened lazy placeholders. A placeholder restored from another
+  // device that the user hasn't actually opened is NOT part of this
+  // device's own session — saving it would echo the other device's tabs
+  // back as ours, and (with auto-Add on the other side) resurrect tabs
+  // it just closed. Once the user opens a placeholder it navigates to
+  // its real URL and stops being a placeholder, so it's saved normally.
+  // The first occurrence of a URL wins (including its pinned/group state).
+  const seenUrls = new Set();
+  const dedupedTabs = [];
+  for (const tab of tabs) {
+    if (placeholderInfo(tab)) continue;
+    const url = tab.url;
+    if (!url || !/^https?:\/\//.test(url)) continue;
+    if (seenUrls.has(url)) continue;
+    seenUrls.add(url);
+    dedupedTabs.push({
+      url,
+      title: tab.title,
+      pinned: !!tab.pinned,
+      groupId: typeof tab.groupId === "number" ? tab.groupId : -1,
+    });
+  }
 
+  // Assign each referenced group a compact index and build the entries.
+  const groups = [];
+  const groupIndexById = new Map();
+  const newEntries = dedupedTabs.map((t) => {
+    let group = null;
+    if (t.groupId >= 0 && groupById.has(t.groupId)) {
+      if (!groupIndexById.has(t.groupId)) {
+        groupIndexById.set(t.groupId, groups.length);
+        groups.push(groupById.get(t.groupId));
+      }
+      group = groupIndexById.get(t.groupId);
+    }
+    const def = group != null ? groups[group] : null;
+    return {
+      url: t.url,
+      title: t.title,
+      pinned: t.pinned,
+      group,
+      groupTitle: def ? def.t : null,
+      groupColor: def ? def.c : null,
+    };
+  });
+
+  // Skip the write if nothing meaningful changed (URLs + pinned/group).
   const existingBookmarks = await chrome.bookmarks.getChildren(
     profileFolder.id
   );
-  const existingUrls = existingBookmarks
-    .filter((b) => b.url && b.title !== LAST_SYNC_TITLE)
-    .map((b) => b.url);
+  const existingMeta = parseTabMeta(
+    existingBookmarks.find((b) => b.url && b.title === TAB_META_TITLE)
+  );
+  const existingEntries = existingBookmarks
+    .filter((b) => b.url && !isProfileMetaTitle(b.title))
+    .map((b) => entryFromMeta(b.url, b.title, existingMeta));
 
-  if (sameUrlSet(newUrls, existingUrls)) return;
+  if (tabSignature(newEntries) === tabSignature(existingEntries)) return;
 
   await clearTabBookmarks(profileFolder.id);
 
-  for (const tab of dedupedTabs) {
+  for (const entry of newEntries) {
     await chrome.bookmarks.create({
       parentId: profileFolder.id,
-      title: tab.title && tab.title.trim() ? tab.title : tab.url,
-      url: tab.url,
+      title: entry.title && entry.title.trim() ? entry.title : entry.url,
+      url: entry.url,
     });
   }
+
+  // Build and persist the pinned/group metadata.
+  const metaObj = { groups, tabs: {} };
+  for (const entry of newEntries) {
+    if (entry.pinned || entry.group != null) {
+      const m = {};
+      if (entry.pinned) m.p = 1;
+      if (entry.group != null) m.g = entry.group;
+      metaObj.tabs[entry.url] = m;
+    }
+  }
+  await updateTabMetaBookmark(profileFolder.id, metaObj);
 
   await updateLastSyncBookmark(profileFolder.id, deviceName, profile);
   await updateStatusBookmark(root.id, deviceName, profile);
@@ -324,6 +506,38 @@ async function updateLastSyncBookmark(profileFolderId, deviceName, profile) {
       parentId: profileFolderId,
       title: LAST_SYNC_TITLE,
       url: lastSyncUrl,
+    });
+  }
+}
+
+// Persist the pinned/group metadata for a profile. When there's nothing
+// to store (no pinned or grouped tabs) any existing metadata bookmark is
+// removed so profiles that don't use the feature stay clean.
+async function updateTabMetaBookmark(profileFolderId, metaObj) {
+  const existing = await dedupeNamedBookmark(profileFolderId, TAB_META_TITLE);
+  const hasData =
+    metaObj && metaObj.tabs && Object.keys(metaObj.tabs).length > 0;
+
+  if (!hasData) {
+    if (existing) {
+      try {
+        await chrome.bookmarks.remove(existing.id);
+      } catch (e) {}
+    }
+    return;
+  }
+
+  const url = `${TAB_META_URL_BASE}?d=${encodeURIComponent(
+    JSON.stringify(metaObj)
+  )}`;
+
+  if (existing) {
+    await chrome.bookmarks.update(existing.id, { url });
+  } else {
+    await chrome.bookmarks.create({
+      parentId: profileFolderId,
+      title: TAB_META_TITLE,
+      url,
     });
   }
 }
@@ -429,12 +643,13 @@ async function removePendingNotif(notifId) {
 
 async function applyNotificationAction(action, device, profile) {
   if (!action || action === "none") return;
-  const urls = await getUrlsForDeviceProfile(device, profile);
-  if (urls.length === 0) return;
+  const entries = await getTabEntriesForDeviceProfile(device, profile);
+  if (entries.length === 0) return;
+  const source = { device, profile };
   if (action === "replace") {
-    await performReplace(urls);
+    await performReplace(entries, source);
   } else {
-    await performAdd(urls);
+    await performAdd(entries, source);
   }
 }
 
@@ -522,6 +737,10 @@ async function evaluateStatusAndNotify(statusUrl) {
 
   await chrome.storage.local.set({ lastSeenTimestamp: timestamp });
 
+  // Close our unopened placeholders that this device has since closed,
+  // regardless of what the user does with the notification below.
+  await mirrorRemoteCloses(remoteDevice, remoteProfile);
+
   await createUpdateNotification(remoteDevice, remoteProfile, timestamp);
   return true;
 }
@@ -548,7 +767,9 @@ chrome.bookmarks.onChanged.addListener(async (id, changeInfo) => {
   await evaluateStatusAndNotify(changeInfo.url);
 });
 
-async function getUrlsForDeviceProfile(deviceName, profile) {
+// Returns the saved tabs for a device/profile as restore-ready entries
+// ({url, title, pinned, group, groupTitle, groupColor}).
+async function getTabEntriesForDeviceProfile(deviceName, profile) {
   const root = await getOrCreateRootFolder();
   const deviceChildren = await chrome.bookmarks.getChildren(root.id);
   const deviceFolder = deviceChildren.find(
@@ -563,25 +784,142 @@ async function getUrlsForDeviceProfile(deviceName, profile) {
   if (!profileFolder) return [];
 
   const bookmarks = await chrome.bookmarks.getChildren(profileFolder.id);
+  const meta = parseTabMeta(
+    bookmarks.find((b) => b.url && b.title === TAB_META_TITLE)
+  );
   return bookmarks
-    .filter((b) => b.url && b.title !== LAST_SYNC_TITLE)
-    .map((b) => b.url);
+    .filter((b) => b.url && !isProfileMetaTitle(b.title))
+    .map((b) => entryFromMeta(b.url, b.title, meta));
 }
 
-async function performReplace(urls) {
+// Whether restored tabs should open lazily (as a placeholder that
+// doesn't hit the network until the tab is first viewed). Default ON.
+async function openRestoredLazily() {
+  const { openRestoredLazy } = await chrome.storage.local.get(
+    "openRestoredLazy"
+  );
+  return openRestoredLazy !== false;
+}
+
+// Whether to mirror tab closes from the source device: when a remote
+// update arrives, close our own still-unopened placeholder tabs that
+// were restored from that device but are no longer in its saved set.
+// Default ON.
+async function mirrorClosesEnabled() {
+  const { mirrorRemoteCloses } = await chrome.storage.local.get(
+    "mirrorRemoteCloses"
+  );
+  return mirrorRemoteCloses !== false;
+}
+
+// When device D/profile P publishes an update, close any of our tabs
+// that are (a) still unopened lazy placeholders, (b) tagged as restored
+// from exactly D/P, and (c) no longer present in D/P's saved set — i.e.
+// tabs we received from D but never looked at, which D has since closed.
+// Opened tabs, our own tabs, and tabs from other sources are untouched.
+async function mirrorRemoteCloses(device, profile) {
+  if (!(await mirrorClosesEnabled())) return;
+
+  const entries = await getTabEntriesForDeviceProfile(device, profile);
+  const remoteUrls = new Set(entries.map((e) => e.url));
+
+  const tabs = await chrome.tabs.query({});
+  const toClose = [];
+  for (const tab of tabs) {
+    const info = placeholderInfo(tab);
+    if (!info) continue; // opened tab or not a placeholder
+    if (info.sd !== device || info.sp !== profile) continue; // other source
+    if (remoteUrls.has(info.real)) continue; // still open on the source
+    toClose.push(tab.id);
+  }
+
+  if (toClose.length) {
+    try {
+      await chrome.tabs.remove(toClose);
+    } catch (e) {}
+  }
+}
+
+// The URL to actually open a restored tab at: the lazy placeholder when
+// lazy restore is on, otherwise the real URL.
+function openUrlForEntry(entry, lazy, source) {
+  return lazy ? lazyUrlFor(entry, source) : entry.url;
+}
+
+// Re-apply pinned state and tab-group membership to freshly created
+// tabs. `pairs` is [{tabId, entry}] in the same window. Best-effort:
+// any failure (e.g. tabGroups API missing) is swallowed so the restore
+// itself never breaks. Pinned tabs are never grouped (Chrome forbids
+// it), so pinning takes precedence.
+async function applyPinnedAndGroups(pairs, windowId) {
+  for (const { tabId, entry } of pairs) {
+    if (entry.pinned) {
+      try {
+        await chrome.tabs.update(tabId, { pinned: true });
+      } catch (e) {}
+    }
+  }
+
+  if (!chrome.tabGroups || !chrome.tabs.group) return;
+
+  // Bucket tabs by their original group index so distinct groups stay
+  // distinct even if they share a title/color.
+  const buckets = new Map();
+  for (const { tabId, entry } of pairs) {
+    if (entry.pinned || entry.group == null) continue;
+    if (!buckets.has(entry.group)) {
+      buckets.set(entry.group, {
+        title: entry.groupTitle,
+        color: entry.groupColor,
+        ids: [],
+      });
+    }
+    buckets.get(entry.group).ids.push(tabId);
+  }
+
+  for (const { title, color, ids } of buckets.values()) {
+    if (!ids.length) continue;
+    try {
+      const groupId = await chrome.tabs.group({
+        tabIds: ids,
+        createProperties: { windowId },
+      });
+      const props = {};
+      if (title) props.title = title;
+      if (color) props.color = color;
+      if (Object.keys(props).length) {
+        await chrome.tabGroups.update(groupId, props);
+      }
+    } catch (e) {}
+  }
+}
+
+async function performReplace(entries, source) {
+  const lazy = await openRestoredLazily();
+  const openUrls = entries.map((e) => openUrlForEntry(e, lazy, source));
+
   const oldWindows = await chrome.windows.getAll({ populate: false });
   const oldWindowIds = oldWindows.map((w) => w.id);
 
   // Open the replacement window FIRST and only close the old ones if
   // that succeeded — otherwise a failed create would leave the user
-  // with no windows at all.
+  // with no windows at all. With lazy restore on, the window's active
+  // tab becomes visible and loads its real URL immediately; the rest
+  // stay as placeholders until the user views them.
   let created;
   try {
-    created = await chrome.windows.create({ url: urls });
+    created = await chrome.windows.create({ url: openUrls });
   } catch (e) {
     created = null;
   }
   if (!created) return;
+
+  const createdTabs = created.tabs || [];
+  const pairs = [];
+  for (let i = 0; i < createdTabs.length && i < entries.length; i++) {
+    pairs.push({ tabId: createdTabs[i].id, entry: entries[i] });
+  }
+  await applyPinnedAndGroups(pairs, created.id);
 
   for (const winId of oldWindowIds) {
     try {
@@ -590,12 +928,16 @@ async function performReplace(urls) {
   }
 }
 
-async function performAdd(urls) {
-  const currentTabs = await chrome.tabs.query({});
-  const alreadyOpenUrls = new Set(currentTabs.map((t) => t.url));
-  const urlsToOpen = urls.filter((url) => !alreadyOpenUrls.has(url));
+async function performAdd(entries, source) {
+  const lazy = await openRestoredLazily();
 
-  if (urlsToOpen.length === 0) return;
+  // Resolve open tabs to their real targets (unwrapping any existing
+  // placeholder tabs) so we don't re-open pages that are already there.
+  const currentTabs = await chrome.tabs.query({});
+  const alreadyOpenUrls = new Set(currentTabs.map((t) => realUrlOfTab(t)));
+  const toOpen = entries.filter((e) => !alreadyOpenUrls.has(e.url));
+
+  if (toOpen.length === 0) return;
 
   let targetWindow;
   try {
@@ -606,13 +948,36 @@ async function performAdd(urls) {
     targetWindow = null;
   }
 
+  const pairs = [];
+  let windowId = null;
+
   if (targetWindow) {
-    for (const url of urlsToOpen) {
-      await chrome.tabs.create({ windowId: targetWindow.id, url });
+    windowId = targetWindow.id;
+    for (const entry of toOpen) {
+      // active:false keeps the placeholder tab hidden, so it never
+      // becomes visible and never navigates until the user opens it.
+      try {
+        const tab = await chrome.tabs.create({
+          windowId,
+          url: openUrlForEntry(entry, lazy, source),
+          active: !lazy,
+          pinned: !!entry.pinned,
+        });
+        pairs.push({ tabId: tab.id, entry });
+      } catch (e) {}
     }
   } else {
-    await chrome.windows.create({ url: urlsToOpen });
+    const win = await chrome.windows.create({
+      url: toOpen.map((e) => openUrlForEntry(e, lazy, source)),
+    });
+    windowId = win && win.id;
+    const createdTabs = (win && win.tabs) || [];
+    for (let i = 0; i < createdTabs.length && i < toOpen.length; i++) {
+      pairs.push({ tabId: createdTabs[i].id, entry: toOpen[i] });
+    }
   }
+
+  if (windowId != null) await applyPinnedAndGroups(pairs, windowId);
 }
 
 chrome.notifications.onButtonClicked.addListener(
@@ -627,13 +992,17 @@ chrome.notifications.onButtonClicked.addListener(
     chrome.notifications.clear(notifId);
     if (!data) return; // already resolved by a timeout/sweep
 
-    const urls = await getUrlsForDeviceProfile(data.device, data.profile);
-    if (urls.length === 0) return;
+    const entries = await getTabEntriesForDeviceProfile(
+      data.device,
+      data.profile
+    );
+    if (entries.length === 0) return;
 
+    const source = { device: data.device, profile: data.profile };
     if (buttonIndex === 0) {
-      await performReplace(urls);
+      await performReplace(entries, source);
     } else if (buttonIndex === 1) {
-      await performAdd(urls);
+      await performAdd(entries, source);
     }
   }
 );
@@ -733,18 +1102,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "MANUAL_RESTORE") {
     (async () => {
       const { device, profile, mode } = message;
-      const urls = await getUrlsForDeviceProfile(
+      const resolvedProfile = profile || DEFAULT_PROFILE;
+      const entries = await getTabEntriesForDeviceProfile(
         device,
-        profile || DEFAULT_PROFILE
+        resolvedProfile
       );
-      if (urls.length === 0) {
+      if (entries.length === 0) {
         sendResponse({ ok: false, reason: "no-tabs" });
         return;
       }
+      const source = { device, profile: resolvedProfile };
       if (mode === "replace") {
-        await performReplace(urls);
+        await performReplace(entries, source);
       } else {
-        await performAdd(urls);
+        await performAdd(entries, source);
       }
       sendResponse({ ok: true });
     })();
