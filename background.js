@@ -17,11 +17,16 @@
 // - Each device/profile folder also holds a "_last_sync" bookmark
 //   (fixed title, updated in place) with that profile's last save
 //   timestamp. It's metadata only, never treated as a tab.
-// - A single "_status" bookmark at the root (fixed title, updated in
-//   place) encodes device + profile + timestamp of the last save
-//   anywhere. Other devices react to it via bookmarks.onChanged /
-//   onCreated (event-driven, no polling) and show a notification
-//   with two buttons: "Replace" / "Add". No automatic opening.
+// - Each device folder holds a "_status" bookmark (fixed title,
+//   updated in place) encoding that device's last save: device +
+//   active profile + timestamp. One per device, so devices/profiles
+//   never overwrite each other's signal. Other devices react via
+//   bookmarks.onChanged / onCreated (event-driven, no polling),
+//   tracking a per-source "last seen" timestamp so a newer update is
+//   never skipped because another source has a faster clock, and show
+//   a notification with two buttons: "Replace" / "Add". No automatic
+//   opening. (Older versions kept a single root "_status"; it's read
+//   for back-compat and each device removes its own on upgrade.)
 // ============================================================
 
 const ROOT_NAME = "SyncMyTabs";
@@ -345,7 +350,7 @@ async function saveOpenTabs() {
   const deviceFolder = await getOrCreateSubfolder(root.id, deviceName);
   const profileFolder = await getOrCreateSubfolder(deviceFolder.id, profile);
 
-  await dedupeNamedBookmark(root.id, STATUS_TITLE);
+  await dedupeNamedBookmark(deviceFolder.id, STATUS_TITLE);
   await dedupeNamedBookmark(profileFolder.id, LAST_SYNC_TITLE);
   await dedupeNamedBookmark(profileFolder.id, TAB_META_TITLE);
 
@@ -445,7 +450,12 @@ async function saveOpenTabs() {
   await updateTabMetaBookmark(profileFolder.id, metaObj);
 
   await updateLastSyncBookmark(profileFolder.id, deviceName, profile);
-  await updateStatusBookmark(root.id, deviceName, profile);
+  // Each device signals through its OWN status bookmark inside its
+  // folder, so devices/profiles never overwrite each other's signal.
+  await updateStatusBookmark(deviceFolder.id, deviceName, profile);
+  // Migrate away from the old single root "_status": drop the legacy one
+  // that belongs to this device (other devices clean up their own).
+  await removeLegacyRootStatus(root.id, deviceName);
 }
 
 async function dedupeNamedBookmark(folderId, title) {
@@ -472,22 +482,41 @@ async function dedupeNamedBookmark(folderId, title) {
   return matches[0];
 }
 
-async function updateStatusBookmark(rootId, deviceName, profile) {
+// Writes/updates this device's "_status" signal bookmark (kept inside
+// the device folder, one per device) with the last save's profile and
+// timestamp. Updated in place — never recreated — to avoid sync churn.
+async function updateStatusBookmark(deviceFolderId, deviceName, profile) {
   const timestamp = Date.now();
   const statusUrl = `${STATUS_URL_BASE}?device=${encodeURIComponent(
     deviceName
   )}&profile=${encodeURIComponent(profile)}&t=${timestamp}`;
 
-  const existing = await dedupeNamedBookmark(rootId, STATUS_TITLE);
+  const existing = await dedupeNamedBookmark(deviceFolderId, STATUS_TITLE);
 
   if (existing) {
     await chrome.bookmarks.update(existing.id, { url: statusUrl });
   } else {
     await chrome.bookmarks.create({
-      parentId: rootId,
+      parentId: deviceFolderId,
       title: STATUS_TITLE,
       url: statusUrl,
     });
+  }
+}
+
+// Legacy migration: older versions kept a single "_status" at the root.
+// Remove the one that belongs to THIS device once we've written our
+// per-device status. Other devices' legacy statuses are left alone (and
+// still read during catch-up) until those devices upgrade.
+async function removeLegacyRootStatus(rootId, deviceName) {
+  const children = await chrome.bookmarks.getChildren(rootId);
+  for (const c of children) {
+    if (!c.url || c.title !== STATUS_TITLE) continue;
+    try {
+      if (new URL(c.url).searchParams.get("device") === deviceName) {
+        await chrome.bookmarks.remove(c.id);
+      }
+    } catch (e) {}
   }
 }
 
@@ -715,11 +744,21 @@ async function sweepExpiredNotifications() {
   }
 }
 
+// Per-source "last seen" high-water marks, keyed by device+profile, so a
+// legitimately newer update from one source is never skipped just because
+// a DIFFERENT source (with a faster clock) advanced a single global mark.
+function sourceKey(device, profile) {
+  return `${device}${profile}`;
+}
+async function getLastSeenMap() {
+  const { lastSeenBySource } = await chrome.storage.local.get(
+    "lastSeenBySource"
+  );
+  return lastSeenBySource || {};
+}
+
 async function evaluateStatusAndNotify(statusUrl) {
-  const { deviceName, lastSeenTimestamp } = await chrome.storage.local.get([
-    "deviceName",
-    "lastSeenTimestamp",
-  ]);
+  const { deviceName } = await chrome.storage.local.get("deviceName");
 
   let remoteDevice, remoteProfile, timestamp;
   try {
@@ -733,9 +772,17 @@ async function evaluateStatusAndNotify(statusUrl) {
 
   if (!remoteDevice || !timestamp) return false;
   if (remoteDevice === deviceName) return false;
-  if (lastSeenTimestamp && timestamp <= lastSeenTimestamp) return false;
 
-  await chrome.storage.local.set({ lastSeenTimestamp: timestamp });
+  const key = sourceKey(remoteDevice, remoteProfile);
+  const map = await getLastSeenMap();
+  if (map[key] && timestamp <= map[key]) return false;
+
+  map[key] = timestamp;
+  await chrome.storage.local.set({
+    lastSeenBySource: map,
+    // Keep a global "most recent signal" for the popup/options display.
+    lastSeenTimestamp: Math.max(...Object.values(map)),
+  });
 
   // Close our unopened placeholders that this device has since closed,
   // regardless of what the user does with the notification below.
@@ -745,11 +792,29 @@ async function evaluateStatusAndNotify(statusUrl) {
   return true;
 }
 
+// Catch-up scan for updates missed while suspended/offline (runs on
+// "Sync now"). Reads every device's "_status" plus any leftover legacy
+// root "_status", and lets the per-source high-water marks decide what's
+// actually new. A few devices to iterate — cheap, and only on demand.
 async function checkForRemoteUpdateNow() {
   const root = await getOrCreateRootFolder();
-  const status = await dedupeNamedBookmark(root.id, STATUS_TITLE);
-  if (!status) return false;
-  return evaluateStatusAndNotify(status.url);
+  const children = await chrome.bookmarks.getChildren(root.id);
+  let found = false;
+
+  for (const child of children) {
+    if (child.url) {
+      // Legacy root-level "_status" (pre per-device migration).
+      if (child.title === STATUS_TITLE) {
+        if (await evaluateStatusAndNotify(child.url)) found = true;
+      }
+      continue;
+    }
+    // A device folder: read its own "_status".
+    const status = await dedupeNamedBookmark(child.id, STATUS_TITLE);
+    if (status && (await evaluateStatusAndNotify(status.url))) found = true;
+  }
+
+  return found;
 }
 
 chrome.bookmarks.onChanged.addListener(async (id, changeInfo) => {

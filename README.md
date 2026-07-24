@@ -32,6 +32,7 @@ The extension maintains one root folder in your bookmarks with this shape:
 ```
 SyncMyTabs/                    ← root folder (in "Other Bookmarks")
 ├── manjaro-vivobook/          ← one folder per device (you name it)
+│   ├── _status                ← this device's signal: last profile + time it saved
 │   ├── default/               ← one folder per profile
 │   │   ├── _last_sync         ← metadata: this profile's last save time
 │   │   ├── _tab_meta          ← metadata: pinned/tab-group info (only if used)
@@ -39,10 +40,10 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
 │   └── work/
 │       ├── _last_sync
 │       └── (open-tab bookmarks…)
-├── macbook-m3/
-│   └── default/
-│       └── …
-└── _status                    ← global signal: last device/profile/time saved
+└── macbook-m3/
+    ├── _status
+    └── default/
+        └── …
 ```
 
 - **Devices.** Each device names its own folder on first run
@@ -63,10 +64,12 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
   preserved:
   they're recorded in a tiny per-profile `_tab_meta` metadata bookmark and
   reapplied on restore.
-- **Detecting remote updates.** A single `_status` bookmark at the root is
-  updated in place with the last device/profile/timestamp that saved anything.
-  Other devices notice via `bookmarks.onChanged` / `onCreated` — it's
-  **fully event-driven, no polling**.
+- **Detecting remote updates.** Each device has its **own** `_status` bookmark
+  (inside its folder), updated in place with the last profile/timestamp it
+  saved — so devices and profiles never overwrite each other's signal. Other
+  devices notice via `bookmarks.onChanged` / `onCreated` — **fully event-driven,
+  no polling** — and keep a **per-source** "last seen" timestamp, so a genuinely
+  newer update is never skipped just because another device has a faster clock.
 - **Restoring.** When an update from another device is detected, a notification
   appears with **Replace** and **Add** buttons:
   - **Replace** — open the remote tabs in a fresh window and close the old ones.
@@ -164,10 +167,13 @@ SyncMyTabs' own initiative):
 - **Sync visibility.** Detection of remote updates depends entirely on your
   sync tool actually propagating bookmark changes to this device's local tree.
   SyncMyTabs has no insight into whether that underlying sync is healthy.
-- **Clock-based ordering.** "Which update is newer" is decided using each
-  device's local clock (a timestamp embedded in `_status`). If a device's clock
-  is badly wrong, a legitimately newer update could be ignored, or a stale one
-  surfaced. Keep your devices' clocks reasonably in sync (normal NTP is fine).
+- **Clock-based ordering.** "Which update is newer" for a *given* device/profile
+  is decided using that device's local clock (a timestamp embedded in its
+  `_status`). Because each source is tracked independently, one device's wrong
+  clock no longer makes another device's updates get skipped; the only remaining
+  effect is that notifications from *different* devices may surface in an order
+  that doesn't match real-world time. Keep clocks reasonably in sync (NTP is
+  fine).
 
 ---
 
