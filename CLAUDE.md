@@ -65,14 +65,23 @@ Understanding these will keep changes safe:
 
 - **Bookmark tree shape** (created under "Other Bookmarks"):
   ```
+  SyncMyTabs/<device>/_status
   SyncMyTabs/<device>/<profile>/{_last_sync, _tab_meta, …tab bookmarks…}
-  SyncMyTabs/_status
   ```
-  `_status` (root) and `_last_sync` / `_tab_meta` (per profile) are **metadata
-  bookmarks**, never treated as tabs (`isMetaTitle` / `isProfileMetaTitle`). Keep
-  them updated **in place** — recreating them causes duplicates and needless sync
-  churn. `_tab_meta` holds pinned/tab-group info as JSON in its URL and is
-  removed entirely when a profile has no pinned or grouped tabs.
+  `_status` (per device) and `_last_sync` / `_tab_meta` (per profile) are
+  **metadata bookmarks**, never treated as tabs (`isMetaTitle` /
+  `isProfileMetaTitle`). Keep them updated **in place** — recreating them causes
+  duplicates and needless sync churn. `_tab_meta` holds pinned/tab-group info as
+  JSON in its URL and is removed entirely when a profile has no pinned or grouped
+  tabs.
+- **Per-device status + per-source detection.** Each device signals through its
+  own `<device>/_status` (device + active profile + timestamp), so devices and
+  profiles never clobber a shared signal. Receivers keep a `lastSeenBySource`
+  map keyed by `sourceKey(device, profile)` (\x1f-joined), so a newer update is
+  never skipped because another source has a faster clock. Older versions used a
+  single root `_status`; it's still read during catch-up and each device removes
+  its own with `removeLegacyRootStatus`. `lastSeenTimestamp` is kept updated as
+  the max, only for the popup/options "last signal" display.
 - **Parent folder id** is resolved at runtime from the bookmark tree
   (`getRootParentId`), cached, with a fallback to Chrome/Brave's `"2"`. Do not
   hardcode `"2"` in new code — go through the resolver so Firefox support stays
@@ -116,6 +125,8 @@ Understanding these will keep changes safe:
 ## Known limitations (don't "fix" without discussion)
 
 - Chrome/Brave first; Firefox uses different bookmark-root ids and is untested.
-- Ordering of updates uses each device's local clock (timestamp in `_status`);
-  badly skewed clocks can misorder updates. This is architectural — there is no
-  shared clock — so treat it as a documented trade-off, not a bug.
+- Ordering of updates uses each device's local clock (timestamp in `_status`).
+  Per-source tracking means a skewed clock no longer makes *other* devices'
+  updates get skipped; it can only misorder notifications from *different*
+  devices. This is architectural — there is no shared clock — so treat it as a
+  documented trade-off, not a bug.
