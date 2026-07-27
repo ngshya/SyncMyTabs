@@ -1,5 +1,19 @@
 const DEFAULT_PROFILE = "default";
 
+async function refreshSyncState() {
+  const { syncEnabled } = await chrome.storage.local.get("syncEnabled");
+  const on = syncEnabled !== false; // default ON
+  document.getElementById("syncToggle").checked = on;
+  document.getElementById("pausedNote").hidden = on;
+  // "Sync now" is a sync action, so it's unavailable while paused.
+  document.getElementById("syncNow").disabled = !on;
+}
+
+document.getElementById("syncToggle").addEventListener("change", async (e) => {
+  await chrome.storage.local.set({ syncEnabled: e.target.checked });
+  await refreshSyncState();
+});
+
 async function refresh() {
   const { deviceName, syncIntervalMinutes, lastSeenTimestamp } =
     await chrome.storage.local.get([
@@ -170,6 +184,7 @@ document
   .getElementById("restoreAdd")
   .addEventListener("click", () => handleManualRestore("add"));
 
+refreshSyncState();
 refresh();
 refreshActiveProfileSelect();
 refreshDeviceList();
