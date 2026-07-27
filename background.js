@@ -813,6 +813,13 @@ async function evaluateStatusAndNotify(statusUrl) {
   if (!remoteDevice || !timestamp) return false;
   if (remoteDevice === deviceName) return false;
 
+  // Profiles are independent: only sync when the remote update is for the
+  // SAME profile this device is currently using. A device on "home"
+  // ignores another device's "work" saves, and vice versa. (Manual
+  // "Restore from device" is unaffected — it's an explicit user choice.)
+  const activeProfile = await getActiveProfile();
+  if (remoteProfile !== activeProfile) return false;
+
   const key = sourceKey(remoteDevice, remoteProfile);
   const map = await getLastSeenMap();
   if (map[key] && timestamp <= map[key]) return false;
@@ -1228,7 +1235,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "SWITCH_PROFILE_AND_SAVE") {
-    saveOpenTabs().then(() => sendResponse({ ok: true }));
+    (async () => {
+      await saveOpenTabs();
+      // Now that we're on a new profile, pick up other devices' updates
+      // for THIS profile (the automatic detection only matches the
+      // active profile, so a switch is when we re-check).
+      await checkForRemoteUpdateNow();
+      sendResponse({ ok: true });
+    })();
     return true;
   }
 

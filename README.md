@@ -51,7 +51,11 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
 - **Profiles.** A device can have several profiles (e.g. `default`, `work`,
   `school`). Exactly one is *active* at a time; the active profile's open tabs
   are what gets saved. Profiles are per-device, but a profile name created on
-  *any* device automatically becomes selectable on every device.
+  *any* device automatically becomes selectable on every device. **Profiles are
+  independent:** automatic sync only happens between devices using the **same**
+  active profile — a device on `home` ignores another device's `work` updates.
+  (Switching your active profile re-checks other devices for that profile, and
+  you can still pull any profile by hand via **Restore from device**.)
 - **Saving.** On a configurable interval (default: every 1 minute) the active
   profile's currently open tabs are written into its folder, replacing the
   previous contents. Only `http(s)` tabs are saved, duplicate URLs are deduped,
@@ -70,6 +74,8 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
   devices notice via `bookmarks.onChanged` / `onCreated` — **fully event-driven,
   no polling** — and keep a **per-source** "last seen" timestamp, so a genuinely
   newer update is never skipped just because another device has a faster clock.
+  An update is only acted on when its profile **matches this device's active
+  profile** (see Profiles above).
 - **Restoring.** When an update from another device is detected, a notification
   appears with **Replace** and **Add** buttons:
   - **Replace** — open the remote tabs in a fresh window and close the old ones.

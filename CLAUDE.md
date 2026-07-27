@@ -74,6 +74,12 @@ Understanding these will keep changes safe:
   duplicates and needless sync churn. `_tab_meta` holds pinned/tab-group info as
   JSON in its URL and is removed entirely when a profile has no pinned or grouped
   tabs.
+- **Profiles are independent.** `evaluateStatusAndNotify` ignores a remote
+  update whose profile isn't this device's **active** profile — automatic sync
+  only flows between devices on the same profile. Switching profile
+  (`SWITCH_PROFILE_AND_SAVE`) runs `checkForRemoteUpdateNow` to catch up on the
+  new profile. Manual `MANUAL_RESTORE` is intentionally NOT gated (explicit user
+  choice of device + profile).
 - **Per-device status + per-source detection.** Each device signals through its
   own `<device>/_status` (device + active profile + timestamp), so devices and
   profiles never clobber a shared signal. Receivers keep a `lastSeenBySource`
