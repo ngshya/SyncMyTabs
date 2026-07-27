@@ -96,6 +96,12 @@ Understanding these will keep changes safe:
   saved; `realUrlOfTab` is still used for de-duplication when *adding* tabs.
 - **Event-driven detection.** Remote updates are noticed via
   `bookmarks.onChanged` / `onCreated` on `_status` — there is **no polling**.
+- **Master on/off switch.** `syncEnabled` (storage, default true) pauses sync in
+  both directions: `saveOpenTabs` (outbound) and `evaluateStatusAndNotify`
+  (inbound, incl. mirror-closes) both early-return when off. The toolbar icon
+  swaps to the `icons/icon*-off.png` set plus an "OFF" badge via `updateActionIcon`,
+  driven off `chrome.storage.onChanged` so the popup toggle is the single source
+  of truth. Manual restore stays available (it's an explicit user action).
 - **Lazy placeholders carry their origin.** Restored tabs (when lazy restore is
   on) point at `lazy.html?u=<url>&t=<title>&sd=<device>&sp=<profile>`. The
   `sd`/`sp` tags let `mirrorRemoteCloses` match an *unopened* placeholder back to

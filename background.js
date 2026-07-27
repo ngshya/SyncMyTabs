@@ -341,7 +341,11 @@ async function getActiveProfile() {
 // folder for this device (<device>/<active profile>/).
 // ------------------------------------------------------------
 async function saveOpenTabs() {
-  const { deviceName } = await chrome.storage.local.get("deviceName");
+  const { deviceName, syncEnabled } = await chrome.storage.local.get([
+    "deviceName",
+    "syncEnabled",
+  ]);
+  if (syncEnabled === false) return; // sync paused: don't push (outbound)
   if (!deviceName) return; // extension not configured yet
 
   const profile = await getActiveProfile();
@@ -581,8 +585,35 @@ async function ensureAlarm() {
   chrome.alarms.create("saveTabsAlarm", { periodInMinutes: period });
 }
 
+// Master on/off switch. When paused, this device neither saves its tabs
+// (outbound) nor reacts to other devices' updates (inbound). Default ON.
+async function isSyncEnabled() {
+  const { syncEnabled } = await chrome.storage.local.get("syncEnabled");
+  return syncEnabled !== false;
+}
+
+// Reflect the on/off state in the toolbar: a distinct "paused" icon plus
+// an OFF badge, so it's obvious at a glance that sync is off.
+function updateActionIcon(enabled) {
+  const suffix = enabled ? "" : "-off";
+  chrome.action.setIcon({
+    path: {
+      16: `icons/icon16${suffix}.png`,
+      48: `icons/icon48${suffix}.png`,
+      128: `icons/icon128${suffix}.png`,
+    },
+  });
+  chrome.action.setBadgeText({ text: enabled ? "" : "OFF" });
+  chrome.action.setBadgeBackgroundColor({ color: "#64748b" });
+}
+
+async function refreshActionIcon() {
+  updateActionIcon(await isSyncEnabled());
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   ensureAlarm();
+  refreshActionIcon();
   chrome.storage.local.get(
     ["deviceName", "profiles"],
     ({ deviceName, profiles }) => {
@@ -601,6 +632,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onStartup.addListener(() => {
   ensureAlarm();
+  refreshActionIcon();
   sweepExpiredNotifications();
 });
 
@@ -614,8 +646,12 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.syncIntervalMinutes) {
+  if (area !== "local") return;
+  if (changes.syncIntervalMinutes) {
     ensureAlarm();
+  }
+  if (changes.syncEnabled) {
+    updateActionIcon(changes.syncEnabled.newValue !== false);
   }
 });
 
@@ -758,7 +794,11 @@ async function getLastSeenMap() {
 }
 
 async function evaluateStatusAndNotify(statusUrl) {
-  const { deviceName } = await chrome.storage.local.get("deviceName");
+  const { deviceName, syncEnabled } = await chrome.storage.local.get([
+    "deviceName",
+    "syncEnabled",
+  ]);
+  if (syncEnabled === false) return false; // sync paused: ignore (inbound)
 
   let remoteDevice, remoteProfile, timestamp;
   try {

@@ -112,6 +112,11 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
 
 **Popup** (toolbar icon):
 
+- **Synchronization on/off** — a switch that **pauses sync in both directions**:
+  while off, this device neither saves its tabs nor reacts to other devices'
+  updates. The toolbar icon changes to a greyed-out "paused" icon (with an
+  **OFF** badge) so the state is obvious. Manual **Restore from device** still
+  works. Sync resumes exactly where it left off when you switch it back on.
 - See this device's name, save interval, and the last signal received.
 - Switch the **active profile** and immediately save under it.
 - **Sync now** — save the current tabs and check for remote updates on demand.
