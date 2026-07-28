@@ -184,6 +184,9 @@ document
   .getElementById("restoreAdd")
   .addEventListener("click", () => handleManualRestore("add"));
 
+document.getElementById("version").textContent =
+  "v" + chrome.runtime.getManifest().version;
+
 refreshSyncState();
 refresh();
 refreshActiveProfileSelect();

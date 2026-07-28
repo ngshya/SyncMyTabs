@@ -11,6 +11,9 @@ const newProfileInput = document.getElementById("newProfileName");
 
 const DEFAULT_PROFILE = "default";
 
+document.getElementById("version").textContent =
+  "v" + chrome.runtime.getManifest().version;
+
 async function getKnownProfiles() {
   // Union of profiles that exist anywhere in the synced bookmark
   // tree (any device) plus this device's own locally-added ones.
