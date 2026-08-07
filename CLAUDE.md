@@ -56,18 +56,20 @@ Firefox.** Keep this in mind in every change:
 
 | File | Role |
 |---|---|
-| `manifest.json` | Manifest V3 definition, permissions, entry points, **version** |
-| `background.js` | Service worker — all sync / save / restore logic |
+| `manifest.json` | Manifest V3, permissions, entry points, **version**; dual background (Chrome `service_worker` + Firefox `scripts`), `options_ui`, `browser_specific_settings.gecko` |
+| `background.js` | Background logic — all sync / save / restore (uses `browser.*`; loads the polyfill via `importScripts` on Chrome) |
 | `popup.html` / `popup.js` | Toolbar popup UI |
 | `options.html` / `options.js` | Settings page UI |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page (loads the real URL only when the tab is first viewed) |
-| `icons/` | Extension icons (16 / 48 / 128 px) |
+| `browser-polyfill.min.js` | Vendored Mozilla WebExtension polyfill so `browser.*` is promise-based on Chrome too |
+| `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
 
-There is **no build step and no dependencies** — the repository *is* the
-unpacked extension. There is no test suite. The only CI is a **release
-workflow** (`.github/workflows/release.yml`): pushing a `v*` tag whose number
-matches `manifest.json` builds the store-ready zip and publishes it as a GitHub
-Release. Store-listing docs live in `PRIVACY.md` and `PERMISSIONS.md`.
+There is **no build step** — the repository *is* the unpacked extension (the
+polyfill is vendored, not built). There is no test suite. The only CI is a
+**release workflow** (`.github/workflows/release.yml`): pushing a `v*` tag whose
+number matches `manifest.json` builds the single store-ready zip (loads on both
+Chrome and Firefox), runs `web-ext lint`, and publishes it as a GitHub Release.
+Store-listing docs live in `PRIVACY.md` and `PERMISSIONS.md`.
 
 ## How to work on it
 

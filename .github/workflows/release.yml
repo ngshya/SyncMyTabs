@@ -63,12 +63,19 @@ jobs:
           node --check options.js
           node --check lazy.js
 
+      - name: Lint for Firefox (web-ext, informational)
+        run: npx --yes web-ext lint --source-dir . || true
+
       - name: Build extension zip
         run: |
+          # Single package for both stores: the manifest carries the
+          # Chrome service worker and the Firefox background scripts, so
+          # the same zip loads on Chrome/Brave and on Firefox (AMO).
           ZIP="syncmytabs-${VERSION}.zip"
           zip -r "$ZIP" \
             manifest.json \
             background.js \
+            browser-polyfill.min.js \
             popup.html popup.js \
             options.html options.js \
             lazy.html lazy.js \
