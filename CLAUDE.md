@@ -4,15 +4,40 @@ Guidance for Claude (and any AI agent) working in this repository.
 
 ## What this repository is
 
-**SyncMyTabs** is a browser extension (Manifest V3, Chrome/Brave) that syncs a
-user's open tabs across devices, organized by profile, using **bookmarks as the
-transport**. It has no server, no account, and no cloud service of its own — it
-reads/writes a structured bookmark tree and reacts to changes, relying on the
-user's existing bookmark sync (native browser sync, Floccus, xBrowserSync, …) to
-actually move data between devices.
+**SyncMyTabs** is a browser extension (Manifest V3) that syncs a user's open
+tabs across devices, organized by profile, using **bookmarks as the transport**.
+It has no server, no account, and no cloud service of its own — it reads/writes a
+structured bookmark tree and reacts to changes, relying on the user's existing
+bookmark sync (native browser sync, Floccus, xBrowserSync, …) to actually move
+data between devices.
 
 See `README.md` for the full user-facing description. This file is about
 *working on the code*.
+
+## Cross-browser support (IMPORTANT)
+
+**The extension must work on both Chromium browsers (Chrome/Brave) and
+Firefox.** Keep this in mind in every change:
+
+- Prefer APIs available on both. Any Chrome-only API (e.g. `tabGroups`, tab
+  groups) must be **feature-detected and degrade gracefully** — never assume it
+  exists.
+- Bookmark-root ids differ (Chrome `"2"` vs Firefox `"unfiled_____"` etc.):
+  always resolve through `getRootParentId`, never hardcode.
+- Firefox notifications don't support action buttons or `requireInteraction`;
+  don't rely on them being shown — keep a fallback path (default action / the
+  popup's manual restore).
+- Firefox uses `browser.*` (promise-based) and event-page backgrounds, not a
+  service worker. Cross-browser API access goes through the vendored
+  `webextension-polyfill` (or an equivalent shim) — don't reintroduce raw
+  `chrome.*` promise calls that only work on Chrome.
+- The manifest carries both backgrounds (`service_worker` for Chrome, `scripts`
+  for Firefox) and `options_ui`; `browser_specific_settings.gecko` pins the
+  Firefox id / min version. When you touch the manifest, keep both browsers
+  loadable.
+- There is no automated cross-browser test here — verify manually in **both**
+  Chrome (`chrome://extensions` → Load unpacked) and Firefox
+  (`about:debugging` → Load Temporary Add-on).
 
 ## Branch & push workflow (IMPORTANT)
 
@@ -136,7 +161,10 @@ Understanding these will keep changes safe:
 
 ## Known limitations (don't "fix" without discussion)
 
-- Chrome/Brave first; Firefox uses different bookmark-root ids and is untested.
+- Chrome/Brave and Firefox are both supported targets (see **Cross-browser
+  support** above). Firefox lacks the tab-groups API and notification buttons, so
+  those features degrade there — that's expected, not a bug to "fix" by removing
+  them on Chrome.
 - Ordering of updates uses each device's local clock (timestamp in `_status`).
   Per-source tracking means a skewed clock no longer makes *other* devices'
   updates get skipped; it can only misorder notifications from *different*
