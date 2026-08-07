@@ -234,12 +234,14 @@ Packaging is automated. To cut a release:
    ```
 
 The [`release` workflow](.github/workflows/release.yml) then checks that the tag
-matches the manifest version, syntax-checks the JS, builds the store-ready
-`syncmytabs-<version>.zip`, and publishes it as a **GitHub Release** — the zip
-appears on the [Releases page](../../releases), ready to upload to the Chrome Web
-Store.
+matches the manifest version, syntax-checks the JS, and builds **two store-ready
+zips** — `syncmytabs-<version>-chrome.zip` and `syncmytabs-<version>-firefox.zip`
+— each with a manifest tailored to its store (Chrome: service worker only;
+Firefox: background scripts, no `tabGroups`), then publishes both as a **GitHub
+Release** on the [Releases page](../../releases). Upload the Chrome zip to the
+Chrome Web Store and the Firefox zip to [AMO](https://addons.mozilla.org).
 
-For publishing to the store, see [`PRIVACY.md`](PRIVACY.md) (privacy policy) and
+For publishing, see [`PRIVACY.md`](PRIVACY.md) (privacy policy) and
 [`PERMISSIONS.md`](PERMISSIONS.md) (per-permission justifications).
 
 ---

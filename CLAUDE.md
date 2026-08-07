@@ -67,9 +67,11 @@ Firefox.** Keep this in mind in every change:
 There is **no build step** — the repository *is* the unpacked extension (the
 polyfill is vendored, not built). There is no test suite. The only CI is a
 **release workflow** (`.github/workflows/release.yml`): pushing a `v*` tag whose
-number matches `manifest.json` builds the single store-ready zip (loads on both
-Chrome and Firefox), runs `web-ext lint`, and publishes it as a GitHub Release.
-Store-listing docs live in `PRIVACY.md` and `PERMISSIONS.md`.
+number matches `manifest.json` builds **two** store-ready zips from the dual dev
+manifest — a Chrome one (`service_worker` only) and a Firefox one (`scripts`
+only, no `tabGroups`) — runs `web-ext lint` on the Firefox build, and publishes
+both as a GitHub Release. Store-listing docs live in `PRIVACY.md` and
+`PERMISSIONS.md`.
 
 ## How to work on it
 
