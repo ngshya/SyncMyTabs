@@ -102,12 +102,27 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
 
 ---
 
+SyncMyTabs runs on **Chromium browsers (Chrome / Brave)** and **Firefox**.
+
 ## Install (developer mode)
 
+**Chrome / Brave**
+
 1. Download or clone this repository.
-2. Open `brave://extensions` (or `chrome://extensions`).
+2. Open `chrome://extensions` (or `brave://extensions`).
 3. Enable **Developer mode** (top-right).
 4. Click **Load unpacked** and select this folder.
+
+**Firefox**
+
+1. Download or clone this repository.
+2. Open `about:debugging#/runtime/this-firefox`.
+3. Click **Load Temporary Add-on…** and pick this folder's `manifest.json`.
+   (Temporary add-ons are removed when Firefox restarts; a signed build from
+   [AMO](https://addons.mozilla.org) installs permanently.)
+
+Then, on either browser:
+
 5. On first run a settings tab opens — give this device a name.
 6. Repeat on every device you want to sync, and make sure your bookmark sync is
    active on each.
@@ -170,11 +185,15 @@ SyncMyTabs' own initiative):
 
 ## Known limitations
 
-- **Chrome / Brave first.** The root folder lives under "Other Bookmarks".
-  The extension resolves that folder from the bookmark tree at runtime and
-  falls back to Chrome/Brave's well-known id (`"2"`), so it isn't hardcoded —
-  but it has only been exercised on Chromium-based browsers. Firefox uses
-  different bookmark-root ids and is not officially supported yet.
+- **Firefox differences.** SyncMyTabs works on Firefox, but two Chrome-only
+  features degrade there:
+  - **Tab groups** — Firefox has no tab-groups API, so groups aren't saved or
+    recreated (pinned tabs, and everything else, still work).
+  - **Notification buttons** — Firefox notifications don't show the
+    **Replace** / **Add** buttons; make your choice from the popup's **Restore
+    from device** instead (the default timeout action still applies).
+  The bookmark-root id also differs (Chrome `"2"` vs Firefox `"unfiled_____"`) —
+  handled automatically by the runtime resolver.
 - **Sync visibility.** Detection of remote updates depends entirely on your
   sync tool actually propagating bookmark changes to this device's local tree.
   SyncMyTabs has no insight into whether that underlying sync is healthy.
@@ -192,14 +211,17 @@ SyncMyTabs' own initiative):
 
 | File | Role |
 |---|---|
-| `manifest.json` | Manifest V3 definition, permissions, entry points |
-| `background.js` | Service worker — all sync/save/restore logic |
+| `manifest.json` | Manifest V3 definition, permissions, entry points (Chrome service worker + Firefox background scripts) |
+| `background.js` | Background logic — all sync/save/restore |
 | `popup.html` / `popup.js` | Toolbar popup UI |
 | `options.html` / `options.js` | Settings page UI |
-| `icons/` | Extension icons (16 / 48 / 128 px) |
+| `lazy.html` / `lazy.js` | Lazy-restore placeholder page |
+| `browser-polyfill.min.js` | Mozilla's WebExtension polyfill (vendored) so `browser.*` works on Chrome too |
+| `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
 
 There is no build step — the repository *is* the unpacked extension. To hack on
-it, edit the files and hit **Reload** on the extension in `chrome://extensions`.
+it, edit the files and hit **Reload** on the extension (`chrome://extensions` or
+`about:debugging` on Firefox).
 
 ## Releases & packaging
 
@@ -212,12 +234,14 @@ Packaging is automated. To cut a release:
    ```
 
 The [`release` workflow](.github/workflows/release.yml) then checks that the tag
-matches the manifest version, syntax-checks the JS, builds the store-ready
-`syncmytabs-<version>.zip`, and publishes it as a **GitHub Release** — the zip
-appears on the [Releases page](../../releases), ready to upload to the Chrome Web
-Store.
+matches the manifest version, syntax-checks the JS, and builds **two store-ready
+zips** — `syncmytabs-<version>-chrome.zip` and `syncmytabs-<version>-firefox.zip`
+— each with a manifest tailored to its store (Chrome: service worker only;
+Firefox: background scripts, no `tabGroups`), then publishes both as a **GitHub
+Release** on the [Releases page](../../releases). Upload the Chrome zip to the
+Chrome Web Store and the Firefox zip to [AMO](https://addons.mozilla.org).
 
-For publishing to the store, see [`PRIVACY.md`](PRIVACY.md) (privacy policy) and
+For publishing, see [`PRIVACY.md`](PRIVACY.md) (privacy policy) and
 [`PERMISSIONS.md`](PERMISSIONS.md) (per-permission justifications).
 
 ---
