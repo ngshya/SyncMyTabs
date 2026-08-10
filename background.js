@@ -29,6 +29,16 @@
 //   for back-compat and each device removes its own on upgrade.)
 // ============================================================
 
+// Cross-browser API access: use the promise-based `browser.*` namespace
+// everywhere. On Firefox it's native; in the Chrome service worker we
+// load Mozilla's WebExtension polyfill (which defines `browser` on top of
+// `chrome`). On Firefox the polyfill is loaded via manifest
+// `background.scripts` instead, and `importScripts` doesn't exist on the
+// event page — so guard the call.
+if (typeof importScripts === "function") {
+  importScripts("browser-polyfill.min.js");
+}
+
 const ROOT_NAME = "SyncMyTabs";
 // Previous names this extension has had. If the current-name root
 // folder doesn't exist yet but one of these does, we rename it in
@@ -44,6 +54,12 @@ const LAST_SYNC_URL_BASE = "https://syncmytabs.local/last-sync";
 // compact JSON payload (see updateTabMetaBookmark). Never a tab.
 const TAB_META_TITLE = "_tab_meta";
 const TAB_META_URL_BASE = "https://syncmytabs.local/tab-meta";
+// Per-device-profile "session events" for full two-way mirror: per-URL
+// open times (o) and close tombstones (c) as JSON in the URL. Used to
+// decide, across devices, whether a URL is currently open or was closed.
+// Never a tab. See reconcileFullMirror / updateEventsBookmark.
+const EVENTS_TITLE = "_events";
+const EVENTS_URL_BASE = "https://syncmytabs.local/events";
 
 const DEFAULT_PROFILE = "default";
 const NOTIF_PREFIX = "syncmytabs-";
@@ -53,7 +69,7 @@ const NOTIF_PREFIX = "syncmytabs-";
 // the real target encoded as ?u=<url>&t=<title>; the page navigates to
 // the real URL only when the tab first becomes visible, so nothing is
 // fetched from the network until the user actually opens the tab.
-const LAZY_PAGE = chrome.runtime.getURL("lazy.html");
+const LAZY_PAGE = browser.runtime.getURL("lazy.html");
 
 // Build the placeholder URL for an entry. `source` ({device, profile})
 // tags where the tab came from (sd/sp) so we can later mirror closes:
@@ -103,11 +119,11 @@ function placeholderInfo(tab) {
   }
 }
 
-// "Other Bookmarks" folder in Chrome/Brave. Firefox uses different
-// ids (e.g. "unfiled_____"), so instead of hardcoding "2" everywhere
-// we resolve it at runtime from the bookmark tree and only fall back
-// to this value.
+// "Other Bookmarks" folder id: "2" on Chrome/Brave, "unfiled_____" on
+// Firefox. We resolve it at runtime from the bookmark tree rather than
+// hardcoding, and only fall back to these known ids.
 const OTHER_BOOKMARKS_PARENT_ID = "2";
+const FIREFOX_UNFILED_ID = "unfiled_____";
 
 // Resolved lazily and cached: the id of the top-level folder under
 // which the root "SyncMyTabs" folder should live ("Other Bookmarks"
@@ -117,18 +133,22 @@ let cachedRootParentId = null;
 async function getRootParentId() {
   if (cachedRootParentId) return cachedRootParentId;
   try {
-    const tree = await chrome.bookmarks.getTree();
+    const tree = await browser.bookmarks.getTree();
     const topLevel = (tree && tree[0] && tree[0].children) || [];
 
-    // Chrome/Brave: "Other Bookmarks" has the well-known id "2".
-    const known = topLevel.find((c) => c.id === OTHER_BOOKMARKS_PARENT_ID);
+    // Known "Other/Unfiled Bookmarks" ids: "2" (Chrome/Brave),
+    // "unfiled_____" (Firefox).
+    const known = topLevel.find(
+      (c) =>
+        c.id === OTHER_BOOKMARKS_PARENT_ID || c.id === FIREFOX_UNFILED_ID
+    );
     if (known) {
       cachedRootParentId = known.id;
       return cachedRootParentId;
     }
 
-    // Fallback (e.g. Firefox): the last top-level folder is
-    // conventionally the "unfiled/other" bookmarks container.
+    // Last-ditch fallback: the last top-level folder is conventionally
+    // the "unfiled/other" bookmarks container.
     const folders = topLevel.filter((c) => !c.url);
     if (folders.length > 0) {
       cachedRootParentId = folders[folders.length - 1].id;
@@ -163,7 +183,7 @@ function extractTimestampFromStatusUrl(url) {
 // - Otherwise, a new folder is created.
 // ------------------------------------------------------------
 async function getOrCreateRootFolder() {
-  const results = await chrome.bookmarks.search({ title: ROOT_NAME });
+  const results = await browser.bookmarks.search({ title: ROOT_NAME });
   const folders = results.filter((b) => !b.url); // folders have no "url"
 
   if (folders.length > 0) {
@@ -180,7 +200,7 @@ async function getOrCreateRootFolder() {
   // No folder with the current name yet: look for a legacy-named one
   // to migrate instead of starting fresh.
   for (const legacyName of LEGACY_ROOT_NAMES) {
-    const legacyResults = await chrome.bookmarks.search({
+    const legacyResults = await browser.bookmarks.search({
       title: legacyName,
     });
     const legacyFolders = legacyResults.filter((b) => !b.url);
@@ -191,12 +211,12 @@ async function getOrCreateRootFolder() {
     for (const dup of duplicates) {
       await mergeFolderInto(dup.id, canonical.id);
     }
-    await chrome.bookmarks.update(canonical.id, { title: ROOT_NAME });
+    await browser.bookmarks.update(canonical.id, { title: ROOT_NAME });
     return canonical;
   }
 
   const parentId = await getRootParentId();
-  return chrome.bookmarks.create({
+  return browser.bookmarks.create({
     parentId,
     title: ROOT_NAME,
   });
@@ -209,8 +229,8 @@ async function getOrCreateRootFolder() {
 // care how deep it's nesting) instead of leaving duplicates around.
 // ------------------------------------------------------------
 async function mergeFolderInto(sourceFolderId, targetFolderId) {
-  const children = await chrome.bookmarks.getChildren(sourceFolderId);
-  const targetChildren = await chrome.bookmarks.getChildren(targetFolderId);
+  const children = await browser.bookmarks.getChildren(sourceFolderId);
+  const targetChildren = await browser.bookmarks.getChildren(targetFolderId);
 
   for (const child of children) {
     const match = targetChildren.find((t) => t.title === child.title);
@@ -220,21 +240,21 @@ async function mergeFolderInto(sourceFolderId, targetFolderId) {
     if (bothFolders) {
       await mergeFolderInto(child.id, match.id);
       try {
-        await chrome.bookmarks.remove(child.id);
+        await browser.bookmarks.remove(child.id);
       } catch (e) {}
     } else if (bothBookmarks && !isMetaTitle(child.title)) {
       try {
-        await chrome.bookmarks.remove(child.id);
+        await browser.bookmarks.remove(child.id);
       } catch (e) {}
     } else {
       try {
-        await chrome.bookmarks.move(child.id, { parentId: targetFolderId });
+        await browser.bookmarks.move(child.id, { parentId: targetFolderId });
       } catch (e) {}
     }
   }
 
   try {
-    await chrome.bookmarks.removeTree(sourceFolderId);
+    await browser.bookmarks.removeTree(sourceFolderId);
   } catch (e) {}
 }
 
@@ -244,17 +264,17 @@ async function mergeFolderInto(sourceFolderId, targetFolderId) {
 // (under a device folder) — same logic, different parent.
 // ------------------------------------------------------------
 async function getOrCreateSubfolder(parentId, name) {
-  const children = await chrome.bookmarks.getChildren(parentId);
+  const children = await browser.bookmarks.getChildren(parentId);
   const existing = children.find((c) => !c.url && c.title === name);
   if (existing) return existing;
-  return chrome.bookmarks.create({ parentId, title: name });
+  return browser.bookmarks.create({ parentId, title: name });
 }
 
 async function clearTabBookmarks(folderId) {
-  const children = await chrome.bookmarks.getChildren(folderId);
+  const children = await browser.bookmarks.getChildren(folderId);
   for (const child of children) {
     if (isProfileMetaTitle(child.title)) continue;
-    await chrome.bookmarks.remove(child.id);
+    await browser.bookmarks.remove(child.id);
   }
 }
 
@@ -265,12 +285,17 @@ function isMetaTitle(title) {
   return (
     title === STATUS_TITLE ||
     title === LAST_SYNC_TITLE ||
-    title === TAB_META_TITLE
+    title === TAB_META_TITLE ||
+    title === EVENTS_TITLE
   );
 }
 
 function isProfileMetaTitle(title) {
-  return title === LAST_SYNC_TITLE || title === TAB_META_TITLE;
+  return (
+    title === LAST_SYNC_TITLE ||
+    title === TAB_META_TITLE ||
+    title === EVENTS_TITLE
+  );
 }
 
 // ------------------------------------------------------------
@@ -332,8 +357,216 @@ function tabSignature(entries) {
 }
 
 async function getActiveProfile() {
-  const { activeProfile } = await chrome.storage.local.get("activeProfile");
+  const { activeProfile } = await browser.storage.local.get("activeProfile");
   return activeProfile || DEFAULT_PROFILE;
+}
+
+// ============================================================
+// Full two-way session mirror (opt-out; default ON).
+//
+// For devices on the SAME profile, opening/closing a tab on one device
+// is reflected on the others. Each device records, per profile, per-URL
+// OPEN times and CLOSE tombstones in an "_events" bookmark. Across all
+// devices, a URL is considered open iff its newest open time is newer
+// than its newest close time:
+//   open(url)  <=>  max(openTime) > max(closeTime)
+// Reconciliation then closes local tabs no longer open, and opens ones
+// that are. See reconcileFullMirror.
+// ============================================================
+async function fullMirrorEnabled() {
+  const { fullSessionMirror } = await browser.storage.local.get(
+    "fullSessionMirror"
+  );
+  return fullSessionMirror !== false; // default ON
+}
+
+function parseEvents(bookmark) {
+  const empty = { o: {}, c: {} };
+  if (!bookmark || !bookmark.url) return empty;
+  try {
+    const d = new URL(bookmark.url).searchParams.get("d");
+    if (!d) return empty;
+    const obj = JSON.parse(d);
+    return {
+      o: obj.o && typeof obj.o === "object" ? obj.o : {},
+      c: obj.c && typeof obj.c === "object" ? obj.c : {},
+    };
+  } catch (e) {
+    return empty;
+  }
+}
+
+async function updateEventsBookmark(profileFolderId, eventsObj) {
+  const existing = await dedupeNamedBookmark(profileFolderId, EVENTS_TITLE);
+  const hasData =
+    eventsObj &&
+    (Object.keys(eventsObj.o || {}).length ||
+      Object.keys(eventsObj.c || {}).length);
+  if (!hasData) {
+    if (existing) {
+      try {
+        await browser.bookmarks.remove(existing.id);
+      } catch (e) {}
+    }
+    return;
+  }
+  const url = `${EVENTS_URL_BASE}?d=${encodeURIComponent(
+    JSON.stringify(eventsObj)
+  )}`;
+  if (existing) {
+    await browser.bookmarks.update(existing.id, { url });
+  } else {
+    await browser.bookmarks.create({
+      parentId: profileFolderId,
+      title: EVENTS_TITLE,
+      url,
+    });
+  }
+}
+
+// Pure: given each device's {o,c} events, the set of URLs currently open
+// (newest open strictly newer than newest close).
+function computeEffectiveOpen(perDeviceEvents) {
+  const openT = {};
+  const closeT = {};
+  for (const ev of perDeviceEvents) {
+    for (const [u, t] of Object.entries(ev.o || {})) {
+      openT[u] = Math.max(openT[u] || 0, t);
+    }
+    for (const [u, t] of Object.entries(ev.c || {})) {
+      closeT[u] = Math.max(closeT[u] || 0, t);
+    }
+  }
+  const present = new Set();
+  const known = new Set([...Object.keys(openT), ...Object.keys(closeT)]);
+  for (const u of Object.keys(openT)) {
+    if (openT[u] > (closeT[u] || 0)) present.add(u);
+  }
+  return { present, known };
+}
+
+// Pending close tombstones recorded locally (by tab-close events),
+// keyed by profile then URL, flushed into "_events" on the next save.
+async function addLocalCloseTime(profile, url, t) {
+  const { localCloseTimes } = await browser.storage.local.get(
+    "localCloseTimes"
+  );
+  const map = localCloseTimes || {};
+  map[profile] = map[profile] || {};
+  map[profile][url] = t;
+  await browser.storage.local.set({ localCloseTimes: map });
+}
+async function takeLocalCloseTimes(profile) {
+  const { localCloseTimes } = await browser.storage.local.get(
+    "localCloseTimes"
+  );
+  const map = localCloseTimes || {};
+  const forProfile = map[profile] || {};
+  if (map[profile]) {
+    delete map[profile];
+    await browser.storage.local.set({ localCloseTimes: map });
+  }
+  return forProfile;
+}
+
+// In-memory (persisted) tabId -> URL map, so a tab close can be resolved
+// to its URL (onRemoved gives only the id). Rebuilt on startup.
+const tabUrlById = new Map();
+async function rememberTabUrl(tabId, url) {
+  if (!/^https?:\/\//.test(url || "")) return;
+  tabUrlById.set(tabId, url);
+  const { tabUrlMap } = await browser.storage.local.get("tabUrlMap");
+  const m = tabUrlMap || {};
+  m[tabId] = url;
+  await browser.storage.local.set({ tabUrlMap: m });
+}
+async function recallTabUrl(tabId) {
+  if (tabUrlById.has(tabId)) return tabUrlById.get(tabId);
+  const { tabUrlMap } = await browser.storage.local.get("tabUrlMap");
+  return (tabUrlMap && tabUrlMap[tabId]) || null;
+}
+async function forgetTabUrl(tabId) {
+  tabUrlById.delete(tabId);
+  const { tabUrlMap } = await browser.storage.local.get("tabUrlMap");
+  if (tabUrlMap && tabUrlMap[tabId] != null) {
+    delete tabUrlMap[tabId];
+    await browser.storage.local.set({ tabUrlMap });
+  }
+}
+
+// Tab ids WE are about to close during reconciliation, so their
+// onRemoved doesn't get mistaken for a user close (which would tombstone).
+const selfClosingTabIds = new Set();
+
+// Bring this device's open tabs in line with the shared session for the
+// active profile: close tabs the session no longer has, open ones it
+// gained. Only runs for the active profile and only when enabled.
+async function reconcileFullMirror(profileArg) {
+  if (!(await fullMirrorEnabled())) return;
+  if (!(await isSyncEnabled())) return;
+  const active = await getActiveProfile();
+  const profile = profileArg || active;
+  if (profile !== active) return; // only mirror the profile we're on
+
+  // Flush our own current state first, so a tab we just opened counts as
+  // "open" and isn't closed by a stale tombstone before we've saved it.
+  await saveOpenTabs();
+
+  // Gather every device's session events (and a title per URL) for this
+  // profile.
+  const root = await getOrCreateRootFolder();
+  const deviceFolders = await browser.bookmarks.getChildren(root.id);
+  const perDevice = [];
+  const titleByUrl = {};
+  for (const dev of deviceFolders) {
+    if (dev.url) continue;
+    const profFolders = await browser.bookmarks.getChildren(dev.id);
+    const pf = profFolders.find((c) => !c.url && c.title === profile);
+    if (!pf) continue;
+    const children = await browser.bookmarks.getChildren(pf.id);
+    perDevice.push(
+      parseEvents(children.find((b) => b.url && b.title === EVENTS_TITLE))
+    );
+    for (const b of children) {
+      if (b.url && !isProfileMetaTitle(b.title)) titleByUrl[b.url] = b.title;
+    }
+  }
+  const { present, known } = computeEffectiveOpen(perDevice);
+
+  // Index local tabs by their real URL.
+  const localByUrl = new Map();
+  for (const t of await browser.tabs.query({})) {
+    const u = realUrlOfTab(t);
+    if (!/^https?:\/\//.test(u)) continue;
+    if (!localByUrl.has(u)) localByUrl.set(u, []);
+    localByUrl.get(u).push(t);
+  }
+
+  // Close local tabs whose URL is session-known but no longer open.
+  // Brand-new local tabs (not yet known to the session) are left alone.
+  const toClose = [];
+  for (const [u, list] of localByUrl) {
+    if (known.has(u) && !present.has(u)) {
+      for (const t of list) toClose.push(t.id);
+    }
+  }
+  if (toClose.length) {
+    for (const id of toClose) selfClosingTabIds.add(id);
+    try {
+      await browser.tabs.remove(toClose);
+    } catch (e) {
+      for (const id of toClose) selfClosingTabIds.delete(id);
+    }
+  }
+
+  // Open URLs that should be present but aren't open here.
+  const toOpen = [];
+  for (const u of present) {
+    if (!localByUrl.has(u)) toOpen.push({ url: u, title: titleByUrl[u] || u });
+  }
+  if (toOpen.length) {
+    await performAdd(toOpen, { profile });
+  }
 }
 
 // ------------------------------------------------------------
@@ -341,7 +574,7 @@ async function getActiveProfile() {
 // folder for this device (<device>/<active profile>/).
 // ------------------------------------------------------------
 async function saveOpenTabs() {
-  const { deviceName, syncEnabled } = await chrome.storage.local.get([
+  const { deviceName, syncEnabled } = await browser.storage.local.get([
     "deviceName",
     "syncEnabled",
   ]);
@@ -358,14 +591,14 @@ async function saveOpenTabs() {
   await dedupeNamedBookmark(profileFolder.id, LAST_SYNC_TITLE);
   await dedupeNamedBookmark(profileFolder.id, TAB_META_TITLE);
 
-  const tabs = await chrome.tabs.query({});
+  const tabs = await browser.tabs.query({});
 
   // Tab-group definitions (title/color) keyed by group id, if the
   // tabGroups API is available. Missing API -> no group metadata.
   const groupById = new Map();
-  if (chrome.tabGroups) {
+  if (browser.tabGroups) {
     try {
-      const allGroups = await chrome.tabGroups.query({});
+      const allGroups = await browser.tabGroups.query({});
       for (const g of allGroups) {
         groupById.set(g.id, { t: g.title || "", c: g.color });
       }
@@ -419,7 +652,7 @@ async function saveOpenTabs() {
   });
 
   // Skip the write if nothing meaningful changed (URLs + pinned/group).
-  const existingBookmarks = await chrome.bookmarks.getChildren(
+  const existingBookmarks = await browser.bookmarks.getChildren(
     profileFolder.id
   );
   const existingMeta = parseTabMeta(
@@ -434,7 +667,7 @@ async function saveOpenTabs() {
   await clearTabBookmarks(profileFolder.id);
 
   for (const entry of newEntries) {
-    await chrome.bookmarks.create({
+    await browser.bookmarks.create({
       parentId: profileFolder.id,
       title: entry.title && entry.title.trim() ? entry.title : entry.url,
       url: entry.url,
@@ -453,6 +686,26 @@ async function saveOpenTabs() {
   }
   await updateTabMetaBookmark(profileFolder.id, metaObj);
 
+  // Full-mirror session events: preserve each open URL's original open
+  // time, fold in any pending local close tombstones, and GC tombstones
+  // for URLs we've since reopened.
+  if (await fullMirrorEnabled()) {
+    const existingEvents = parseEvents(
+      existingBookmarks.find((b) => b.url && b.title === EVENTS_TITLE)
+    );
+    const now = Date.now();
+    const o = {};
+    for (const entry of newEntries) {
+      o[entry.url] = existingEvents.o[entry.url] || now;
+    }
+    const pendingCloses = await takeLocalCloseTimes(profile);
+    const c = { ...existingEvents.c, ...pendingCloses };
+    for (const url of Object.keys(c)) {
+      if (o[url] && o[url] >= c[url]) delete c[url]; // reopened -> drop tombstone
+    }
+    await updateEventsBookmark(profileFolder.id, { o, c });
+  }
+
   await updateLastSyncBookmark(profileFolder.id, deviceName, profile);
   // Each device signals through its OWN status bookmark inside its
   // folder, so devices/profiles never overwrite each other's signal.
@@ -463,7 +716,7 @@ async function saveOpenTabs() {
 }
 
 async function dedupeNamedBookmark(folderId, title) {
-  const children = await chrome.bookmarks.getChildren(folderId);
+  const children = await browser.bookmarks.getChildren(folderId);
   const matches = children.filter((c) => c.url && c.title === title);
 
   if (matches.length === 0) return null;
@@ -477,7 +730,7 @@ async function dedupeNamedBookmark(folderId, title) {
     const [keep, ...duplicates] = matches;
     for (const dup of duplicates) {
       try {
-        await chrome.bookmarks.remove(dup.id);
+        await browser.bookmarks.remove(dup.id);
       } catch (e) {}
     }
     return keep;
@@ -498,9 +751,9 @@ async function updateStatusBookmark(deviceFolderId, deviceName, profile) {
   const existing = await dedupeNamedBookmark(deviceFolderId, STATUS_TITLE);
 
   if (existing) {
-    await chrome.bookmarks.update(existing.id, { url: statusUrl });
+    await browser.bookmarks.update(existing.id, { url: statusUrl });
   } else {
-    await chrome.bookmarks.create({
+    await browser.bookmarks.create({
       parentId: deviceFolderId,
       title: STATUS_TITLE,
       url: statusUrl,
@@ -513,12 +766,12 @@ async function updateStatusBookmark(deviceFolderId, deviceName, profile) {
 // per-device status. Other devices' legacy statuses are left alone (and
 // still read during catch-up) until those devices upgrade.
 async function removeLegacyRootStatus(rootId, deviceName) {
-  const children = await chrome.bookmarks.getChildren(rootId);
+  const children = await browser.bookmarks.getChildren(rootId);
   for (const c of children) {
     if (!c.url || c.title !== STATUS_TITLE) continue;
     try {
       if (new URL(c.url).searchParams.get("device") === deviceName) {
-        await chrome.bookmarks.remove(c.id);
+        await browser.bookmarks.remove(c.id);
       }
     } catch (e) {}
   }
@@ -533,9 +786,9 @@ async function updateLastSyncBookmark(profileFolderId, deviceName, profile) {
   const existing = await dedupeNamedBookmark(profileFolderId, LAST_SYNC_TITLE);
 
   if (existing) {
-    await chrome.bookmarks.update(existing.id, { url: lastSyncUrl });
+    await browser.bookmarks.update(existing.id, { url: lastSyncUrl });
   } else {
-    await chrome.bookmarks.create({
+    await browser.bookmarks.create({
       parentId: profileFolderId,
       title: LAST_SYNC_TITLE,
       url: lastSyncUrl,
@@ -554,7 +807,7 @@ async function updateTabMetaBookmark(profileFolderId, metaObj) {
   if (!hasData) {
     if (existing) {
       try {
-        await chrome.bookmarks.remove(existing.id);
+        await browser.bookmarks.remove(existing.id);
       } catch (e) {}
     }
     return;
@@ -565,9 +818,9 @@ async function updateTabMetaBookmark(profileFolderId, metaObj) {
   )}`;
 
   if (existing) {
-    await chrome.bookmarks.update(existing.id, { url });
+    await browser.bookmarks.update(existing.id, { url });
   } else {
-    await chrome.bookmarks.create({
+    await browser.bookmarks.create({
       parentId: profileFolderId,
       title: TAB_META_TITLE,
       url,
@@ -578,17 +831,17 @@ async function updateTabMetaBookmark(profileFolderId, metaObj) {
 const DEFAULT_INTERVAL_MINUTES = 1;
 
 async function ensureAlarm() {
-  const { syncIntervalMinutes } = await chrome.storage.local.get(
+  const { syncIntervalMinutes } = await browser.storage.local.get(
     "syncIntervalMinutes"
   );
   const period = syncIntervalMinutes || DEFAULT_INTERVAL_MINUTES;
-  chrome.alarms.create("saveTabsAlarm", { periodInMinutes: period });
+  browser.alarms.create("saveTabsAlarm", { periodInMinutes: period });
 }
 
 // Master on/off switch. When paused, this device neither saves its tabs
 // (outbound) nor reacts to other devices' updates (inbound). Default ON.
 async function isSyncEnabled() {
-  const { syncEnabled } = await chrome.storage.local.get("syncEnabled");
+  const { syncEnabled } = await browser.storage.local.get("syncEnabled");
   return syncEnabled !== false;
 }
 
@@ -596,56 +849,77 @@ async function isSyncEnabled() {
 // an OFF badge, so it's obvious at a glance that sync is off.
 function updateActionIcon(enabled) {
   const suffix = enabled ? "" : "-off";
-  chrome.action.setIcon({
+  browser.action.setIcon({
     path: {
       16: `icons/icon16${suffix}.png`,
       48: `icons/icon48${suffix}.png`,
       128: `icons/icon128${suffix}.png`,
     },
   });
-  chrome.action.setBadgeText({ text: enabled ? "" : "OFF" });
-  chrome.action.setBadgeBackgroundColor({ color: "#64748b" });
+  browser.action.setBadgeText({ text: enabled ? "" : "OFF" });
+  browser.action.setBadgeBackgroundColor({ color: "#64748b" });
 }
 
 async function refreshActionIcon() {
   updateActionIcon(await isSyncEnabled());
 }
 
-chrome.runtime.onInstalled.addListener(() => {
+browser.runtime.onInstalled.addListener(async () => {
   ensureAlarm();
   refreshActionIcon();
-  chrome.storage.local.get(
-    ["deviceName", "profiles"],
-    ({ deviceName, profiles }) => {
-      if (!profiles || profiles.length === 0) {
-        chrome.storage.local.set({
-          profiles: [DEFAULT_PROFILE],
-          activeProfile: DEFAULT_PROFILE,
-        });
-      }
-      if (!deviceName) {
-        chrome.runtime.openOptionsPage();
-      }
-    }
-  );
+  await rebuildTabUrlMap();
+  const { deviceName, profiles } = await browser.storage.local.get([
+    "deviceName",
+    "profiles",
+  ]);
+  if (!profiles || profiles.length === 0) {
+    await browser.storage.local.set({
+      profiles: [DEFAULT_PROFILE],
+      activeProfile: DEFAULT_PROFILE,
+    });
+  }
+  if (!deviceName) {
+    browser.runtime.openOptionsPage();
+  }
 });
 
-chrome.runtime.onStartup.addListener(() => {
+browser.runtime.onStartup.addListener(async () => {
   ensureAlarm();
   refreshActionIcon();
   sweepExpiredNotifications();
+  await rebuildTabUrlMap();
+  await reconcileFullMirror();
 });
 
-chrome.alarms.onAlarm.addListener(async (alarm) => {
+// Rebuild the tabId -> URL map from the currently open tabs (their ids
+// don't survive a browser restart, and the in-memory map is lost when
+// the worker suspends).
+async function rebuildTabUrlMap() {
+  const m = {};
+  try {
+    for (const t of await browser.tabs.query({})) {
+      const u = realUrlOfTab(t);
+      if (/^https?:\/\//.test(u)) {
+        tabUrlById.set(t.id, u);
+        m[t.id] = u;
+      }
+    }
+    await browser.storage.local.set({ tabUrlMap: m });
+  } catch (e) {}
+}
+
+browser.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === "saveTabsAlarm") {
     // Backstop first: apply any notification timeout that elapsed
     // while the service worker was suspended.
     await sweepExpiredNotifications();
     await saveOpenTabs();
+    // Catch-up reconcile in case an event was missed while suspended.
+    await reconcileFullMirror();
   }
 });
 
-chrome.storage.onChanged.addListener((changes, area) => {
+browser.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (changes.syncIntervalMinutes) {
     ensureAlarm();
@@ -655,7 +929,47 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-chrome.bookmarks.onCreated.addListener(async (id, node) => {
+// --- Full-mirror tab tracking ---------------------------------------
+// Keep a tabId -> real-URL map so a close can be resolved to its URL.
+browser.tabs.onCreated.addListener((tab) => {
+  const u = realUrlOfTab(tab);
+  if (/^https?:\/\//.test(u)) rememberTabUrl(tab.id, u);
+});
+
+browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (!changeInfo.url) return; // only on actual navigations
+  const u = realUrlOfTab(tab);
+  if (/^https?:\/\//.test(u)) rememberTabUrl(tabId, u);
+});
+
+// A user-initiated tab close: record a close tombstone so the URL closes
+// on the other devices too. Never on window/browser close (that would
+// wipe the session everywhere), never for our own reconcile-driven
+// closes, and never if the URL is still open in another tab.
+browser.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
+  const url = await recallTabUrl(tabId);
+  await forgetTabUrl(tabId);
+
+  if (removeInfo && removeInfo.isWindowClosing) return;
+  if (selfClosingTabIds.has(tabId)) {
+    selfClosingTabIds.delete(tabId);
+    return;
+  }
+  if (!url) return; // unknown (e.g. worker was cold) -> best-effort skip
+  if (!(await fullMirrorEnabled())) return;
+  if (!(await isSyncEnabled())) return;
+
+  const stillOpen = (await browser.tabs.query({})).some(
+    (t) => realUrlOfTab(t) === url
+  );
+  if (stillOpen) return;
+
+  const profile = await getActiveProfile();
+  await addLocalCloseTime(profile, url, Date.now());
+  await saveOpenTabs(); // flush the tombstone + bump status so peers reconcile
+});
+
+browser.bookmarks.onCreated.addListener(async (id, node) => {
   if (!node || !node.url) return;
   if (node.title !== STATUS_TITLE && node.title !== LAST_SYNC_TITLE) return;
 
@@ -678,7 +992,7 @@ chrome.bookmarks.onCreated.addListener(async (id, node) => {
 // that applies the default action even if the worker was restarted.
 //
 // Whatever resolves a notification first — a button, a body click, the
-// setTimeout, or the sweep — uses chrome.notifications.clear() as the
+// setTimeout, or the sweep — uses browser.notifications.clear() as the
 // single mutex: user interactions close the notification themselves,
 // so a later resolver sees clear() return false and stands down. That
 // removes the double-apply race the old single-slot design had.
@@ -686,14 +1000,14 @@ chrome.bookmarks.onCreated.addListener(async (id, node) => {
 const PENDING_NOTIFS_KEY = "pendingNotifs";
 
 async function getPendingNotifs() {
-  const stored = await chrome.storage.local.get(PENDING_NOTIFS_KEY);
+  const stored = await browser.storage.local.get(PENDING_NOTIFS_KEY);
   return stored[PENDING_NOTIFS_KEY] || {};
 }
 
 async function savePendingNotif(notifId, data) {
   const map = await getPendingNotifs();
   map[notifId] = data;
-  await chrome.storage.local.set({ [PENDING_NOTIFS_KEY]: map });
+  await browser.storage.local.set({ [PENDING_NOTIFS_KEY]: map });
 }
 
 async function removePendingNotif(notifId) {
@@ -701,7 +1015,7 @@ async function removePendingNotif(notifId) {
   const data = map[notifId];
   if (data) {
     delete map[notifId];
-    await chrome.storage.local.set({ [PENDING_NOTIFS_KEY]: map });
+    await browser.storage.local.set({ [PENDING_NOTIFS_KEY]: map });
   }
   return data || null;
 }
@@ -720,7 +1034,7 @@ async function applyNotificationAction(action, device, profile) {
 
 async function createUpdateNotification(remoteDevice, remoteProfile, timestamp) {
   const { notificationTimeoutSeconds, defaultTimeoutAction } =
-    await chrome.storage.local.get([
+    await browser.storage.local.get([
       "notificationTimeoutSeconds",
       "defaultTimeoutAction",
     ]);
@@ -736,7 +1050,7 @@ async function createUpdateNotification(remoteDevice, remoteProfile, timestamp) 
     expiresAt: Date.now() + timeoutMs,
   });
 
-  chrome.notifications.create(notifId, {
+  browser.notifications.create(notifId, {
     type: "basic",
     iconUrl: "icons/icon128.png",
     title: "SyncMyTabs",
@@ -750,7 +1064,7 @@ async function createUpdateNotification(remoteDevice, remoteProfile, timestamp) 
   // Fast path while the worker is alive. The sweep is the backstop if
   // the worker was already gone by the time this would have fired.
   setTimeout(async () => {
-    const wasPresent = await chrome.notifications.clear(notifId);
+    const wasPresent = await browser.notifications.clear(notifId);
     if (!wasPresent) return; // already resolved by a click or the sweep
     const data = await removePendingNotif(notifId);
     if (!data) return;
@@ -768,7 +1082,7 @@ async function sweepExpiredNotifications() {
   for (const [notifId, data] of Object.entries(map)) {
     if (!data || (data.expiresAt || 0) > now) continue;
 
-    const wasPresent = await chrome.notifications.clear(notifId);
+    const wasPresent = await browser.notifications.clear(notifId);
     await removePendingNotif(notifId);
     if (wasPresent) {
       await applyNotificationAction(
@@ -787,14 +1101,14 @@ function sourceKey(device, profile) {
   return `${device}${profile}`;
 }
 async function getLastSeenMap() {
-  const { lastSeenBySource } = await chrome.storage.local.get(
+  const { lastSeenBySource } = await browser.storage.local.get(
     "lastSeenBySource"
   );
   return lastSeenBySource || {};
 }
 
 async function evaluateStatusAndNotify(statusUrl) {
-  const { deviceName, syncEnabled } = await chrome.storage.local.get([
+  const { deviceName, syncEnabled } = await browser.storage.local.get([
     "deviceName",
     "syncEnabled",
   ]);
@@ -825,16 +1139,22 @@ async function evaluateStatusAndNotify(statusUrl) {
   if (map[key] && timestamp <= map[key]) return false;
 
   map[key] = timestamp;
-  await chrome.storage.local.set({
+  await browser.storage.local.set({
     lastSeenBySource: map,
     // Keep a global "most recent signal" for the popup/options display.
     lastSeenTimestamp: Math.max(...Object.values(map)),
   });
 
-  // Close our unopened placeholders that this device has since closed,
-  // regardless of what the user does with the notification below.
-  await mirrorRemoteCloses(remoteDevice, remoteProfile);
+  // Full two-way mirror handles opening AND closing automatically for
+  // the shared profile, so it replaces the notify+Add/Replace flow.
+  if (await fullMirrorEnabled()) {
+    await reconcileFullMirror(remoteProfile);
+    return true;
+  }
 
+  // Otherwise (mirror off): close our unopened placeholders that this
+  // device has since closed, and prompt with the notification.
+  await mirrorRemoteCloses(remoteDevice, remoteProfile);
   await createUpdateNotification(remoteDevice, remoteProfile, timestamp);
   return true;
 }
@@ -845,7 +1165,7 @@ async function evaluateStatusAndNotify(statusUrl) {
 // actually new. A few devices to iterate — cheap, and only on demand.
 async function checkForRemoteUpdateNow() {
   const root = await getOrCreateRootFolder();
-  const children = await chrome.bookmarks.getChildren(root.id);
+  const children = await browser.bookmarks.getChildren(root.id);
   let found = false;
 
   for (const child of children) {
@@ -864,12 +1184,12 @@ async function checkForRemoteUpdateNow() {
   return found;
 }
 
-chrome.bookmarks.onChanged.addListener(async (id, changeInfo) => {
+browser.bookmarks.onChanged.addListener(async (id, changeInfo) => {
   if (!changeInfo.url) return;
 
   let node;
   try {
-    const results = await chrome.bookmarks.get(id);
+    const results = await browser.bookmarks.get(id);
     node = results[0];
   } catch (e) {
     return;
@@ -883,19 +1203,19 @@ chrome.bookmarks.onChanged.addListener(async (id, changeInfo) => {
 // ({url, title, pinned, group, groupTitle, groupColor}).
 async function getTabEntriesForDeviceProfile(deviceName, profile) {
   const root = await getOrCreateRootFolder();
-  const deviceChildren = await chrome.bookmarks.getChildren(root.id);
+  const deviceChildren = await browser.bookmarks.getChildren(root.id);
   const deviceFolder = deviceChildren.find(
     (c) => !c.url && c.title === deviceName
   );
   if (!deviceFolder) return [];
 
-  const profileChildren = await chrome.bookmarks.getChildren(deviceFolder.id);
+  const profileChildren = await browser.bookmarks.getChildren(deviceFolder.id);
   const profileFolder = profileChildren.find(
     (c) => !c.url && c.title === profile
   );
   if (!profileFolder) return [];
 
-  const bookmarks = await chrome.bookmarks.getChildren(profileFolder.id);
+  const bookmarks = await browser.bookmarks.getChildren(profileFolder.id);
   const meta = parseTabMeta(
     bookmarks.find((b) => b.url && b.title === TAB_META_TITLE)
   );
@@ -907,7 +1227,7 @@ async function getTabEntriesForDeviceProfile(deviceName, profile) {
 // Whether restored tabs should open lazily (as a placeholder that
 // doesn't hit the network until the tab is first viewed). Default ON.
 async function openRestoredLazily() {
-  const { openRestoredLazy } = await chrome.storage.local.get(
+  const { openRestoredLazy } = await browser.storage.local.get(
     "openRestoredLazy"
   );
   return openRestoredLazy !== false;
@@ -918,7 +1238,7 @@ async function openRestoredLazily() {
 // were restored from that device but are no longer in its saved set.
 // Default ON.
 async function mirrorClosesEnabled() {
-  const { mirrorRemoteCloses } = await chrome.storage.local.get(
+  const { mirrorRemoteCloses } = await browser.storage.local.get(
     "mirrorRemoteCloses"
   );
   return mirrorRemoteCloses !== false;
@@ -935,7 +1255,7 @@ async function mirrorRemoteCloses(device, profile) {
   const entries = await getTabEntriesForDeviceProfile(device, profile);
   const remoteUrls = new Set(entries.map((e) => e.url));
 
-  const tabs = await chrome.tabs.query({});
+  const tabs = await browser.tabs.query({});
   const toClose = [];
   for (const tab of tabs) {
     const info = placeholderInfo(tab);
@@ -947,7 +1267,7 @@ async function mirrorRemoteCloses(device, profile) {
 
   if (toClose.length) {
     try {
-      await chrome.tabs.remove(toClose);
+      await browser.tabs.remove(toClose);
     } catch (e) {}
   }
 }
@@ -967,12 +1287,12 @@ async function applyPinnedAndGroups(pairs, windowId) {
   for (const { tabId, entry } of pairs) {
     if (entry.pinned) {
       try {
-        await chrome.tabs.update(tabId, { pinned: true });
+        await browser.tabs.update(tabId, { pinned: true });
       } catch (e) {}
     }
   }
 
-  if (!chrome.tabGroups || !chrome.tabs.group) return;
+  if (!browser.tabGroups || !browser.tabs.group) return;
 
   // Bucket tabs by their original group index so distinct groups stay
   // distinct even if they share a title/color.
@@ -992,7 +1312,7 @@ async function applyPinnedAndGroups(pairs, windowId) {
   for (const { title, color, ids } of buckets.values()) {
     if (!ids.length) continue;
     try {
-      const groupId = await chrome.tabs.group({
+      const groupId = await browser.tabs.group({
         tabIds: ids,
         createProperties: { windowId },
       });
@@ -1000,7 +1320,7 @@ async function applyPinnedAndGroups(pairs, windowId) {
       if (title) props.title = title;
       if (color) props.color = color;
       if (Object.keys(props).length) {
-        await chrome.tabGroups.update(groupId, props);
+        await browser.tabGroups.update(groupId, props);
       }
     } catch (e) {}
   }
@@ -1010,7 +1330,7 @@ async function performReplace(entries, source) {
   const lazy = await openRestoredLazily();
   const openUrls = entries.map((e) => openUrlForEntry(e, lazy, source));
 
-  const oldWindows = await chrome.windows.getAll({ populate: false });
+  const oldWindows = await browser.windows.getAll({ populate: false });
   const oldWindowIds = oldWindows.map((w) => w.id);
 
   // Open the replacement window FIRST and only close the old ones if
@@ -1020,7 +1340,7 @@ async function performReplace(entries, source) {
   // stay as placeholders until the user views them.
   let created;
   try {
-    created = await chrome.windows.create({ url: openUrls });
+    created = await browser.windows.create({ url: openUrls });
   } catch (e) {
     created = null;
   }
@@ -1035,7 +1355,7 @@ async function performReplace(entries, source) {
 
   for (const winId of oldWindowIds) {
     try {
-      await chrome.windows.remove(winId);
+      await browser.windows.remove(winId);
     } catch (e) {}
   }
 }
@@ -1045,7 +1365,7 @@ async function performAdd(entries, source) {
 
   // Resolve open tabs to their real targets (unwrapping any existing
   // placeholder tabs) so we don't re-open pages that are already there.
-  const currentTabs = await chrome.tabs.query({});
+  const currentTabs = await browser.tabs.query({});
   const alreadyOpenUrls = new Set(currentTabs.map((t) => realUrlOfTab(t)));
   const toOpen = entries.filter((e) => !alreadyOpenUrls.has(e.url));
 
@@ -1053,7 +1373,7 @@ async function performAdd(entries, source) {
 
   let targetWindow;
   try {
-    targetWindow = await chrome.windows.getLastFocused({
+    targetWindow = await browser.windows.getLastFocused({
       windowTypes: ["normal"],
     });
   } catch (e) {
@@ -1069,7 +1389,7 @@ async function performAdd(entries, source) {
       // active:false keeps the placeholder tab hidden, so it never
       // becomes visible and never navigates until the user opens it.
       try {
-        const tab = await chrome.tabs.create({
+        const tab = await browser.tabs.create({
           windowId,
           url: openUrlForEntry(entry, lazy, source),
           active: !lazy,
@@ -1079,7 +1399,7 @@ async function performAdd(entries, source) {
       } catch (e) {}
     }
   } else {
-    const win = await chrome.windows.create({
+    const win = await browser.windows.create({
       url: toOpen.map((e) => openUrlForEntry(e, lazy, source)),
     });
     windowId = win && win.id;
@@ -1092,7 +1412,7 @@ async function performAdd(entries, source) {
   if (windowId != null) await applyPinnedAndGroups(pairs, windowId);
 }
 
-chrome.notifications.onButtonClicked.addListener(
+browser.notifications.onButtonClicked.addListener(
   async (notifId, buttonIndex) => {
     if (!notifId.startsWith(NOTIF_PREFIX)) return;
 
@@ -1101,7 +1421,7 @@ chrome.notifications.onButtonClicked.addListener(
     // already closes the notification, so the setTimeout/sweep paths
     // will see clear() return false and stand down.)
     const data = await removePendingNotif(notifId);
-    chrome.notifications.clear(notifId);
+    browser.notifications.clear(notifId);
     if (!data) return; // already resolved by a timeout/sweep
 
     const entries = await getTabEntriesForDeviceProfile(
@@ -1120,35 +1440,35 @@ chrome.notifications.onButtonClicked.addListener(
 );
 
 // ------------------------------------------------------------
-// chrome.notifications only supports 2 buttons, so there's no room
+// browser.notifications only supports 2 buttons, so there's no room
 // for a literal third "Ignore" button alongside "Replace"/"Add".
 // Clicking the notification body itself (not a button) is the
 // closest equivalent: it just dismisses the notification, applying
 // no action at all — same outcome as letting it time out with
 // defaultTimeoutAction set to "none", but immediate.
 // ------------------------------------------------------------
-chrome.notifications.onClicked.addListener(async (notifId) => {
+browser.notifications.onClicked.addListener(async (notifId) => {
   if (!notifId.startsWith(NOTIF_PREFIX)) return;
   // "Ignore": discard the pending record so the default action never
   // gets applied, then dismiss the notification.
   await removePendingNotif(notifId);
-  chrome.notifications.clear(notifId);
+  browser.notifications.clear(notifId);
 });
 
 async function listAvailableDevices() {
   const root = await getOrCreateRootFolder();
-  const children = await chrome.bookmarks.getChildren(root.id);
+  const children = await browser.bookmarks.getChildren(root.id);
   return children.filter((c) => !c.url).map((c) => c.title);
 }
 
 async function listProfilesForDevice(deviceName) {
   const root = await getOrCreateRootFolder();
-  const deviceChildren = await chrome.bookmarks.getChildren(root.id);
+  const deviceChildren = await browser.bookmarks.getChildren(root.id);
   const deviceFolder = deviceChildren.find(
     (c) => !c.url && c.title === deviceName
   );
   if (!deviceFolder) return [];
-  const children = await chrome.bookmarks.getChildren(deviceFolder.id);
+  const children = await browser.bookmarks.getChildren(deviceFolder.id);
   return children.filter((c) => !c.url).map((c) => c.title);
 }
 
@@ -1164,12 +1484,12 @@ async function listProfilesForDevice(deviceName) {
 // ------------------------------------------------------------
 async function listAllKnownProfiles() {
   const root = await getOrCreateRootFolder();
-  const deviceFolders = await chrome.bookmarks.getChildren(root.id);
+  const deviceFolders = await browser.bookmarks.getChildren(root.id);
 
   const found = new Set();
   for (const deviceFolder of deviceFolders) {
     if (deviceFolder.url) continue; // skip "_status"
-    const profileFolders = await chrome.bookmarks.getChildren(
+    const profileFolders = await browser.bookmarks.getChildren(
       deviceFolder.id
     );
     for (const pf of profileFolders) {
@@ -1177,14 +1497,14 @@ async function listAllKnownProfiles() {
     }
   }
 
-  const { profiles } = await chrome.storage.local.get("profiles");
+  const { profiles } = await browser.storage.local.get("profiles");
   for (const p of profiles || []) found.add(p);
   found.add(DEFAULT_PROFILE);
 
   return Array.from(found).sort();
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "SYNC_NOW") {
     (async () => {
       await saveOpenTabs();
@@ -1248,12 +1568,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "ADD_PROFILE") {
     (async () => {
-      const { profiles } = await chrome.storage.local.get("profiles");
+      const { profiles } = await browser.storage.local.get("profiles");
       const list = profiles && profiles.length ? profiles : [DEFAULT_PROFILE];
       const name = message.name.trim();
       const exists = list.some((p) => p.toLowerCase() === name.toLowerCase());
       if (!exists) {
-        await chrome.storage.local.set({ profiles: [...list, name] });
+        await browser.storage.local.set({ profiles: [...list, name] });
       }
       sendResponse({ ok: true });
     })();

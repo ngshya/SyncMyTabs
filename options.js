@@ -4,6 +4,7 @@ const timeoutInput = document.getElementById("notificationTimeoutSeconds");
 const defaultActionSelect = document.getElementById("defaultTimeoutAction");
 const lazyInput = document.getElementById("openRestoredLazy");
 const mirrorInput = document.getElementById("mirrorRemoteCloses");
+const fullMirrorInput = document.getElementById("fullSessionMirror");
 const status = document.getElementById("status");
 const lastSeenEl = document.getElementById("lastSeen");
 const profileListEl = document.getElementById("profileList");
@@ -12,19 +13,19 @@ const newProfileInput = document.getElementById("newProfileName");
 const DEFAULT_PROFILE = "default";
 
 document.getElementById("version").textContent =
-  "v" + chrome.runtime.getManifest().version;
+  "v" + browser.runtime.getManifest().version;
 
 async function getKnownProfiles() {
   // Union of profiles that exist anywhere in the synced bookmark
   // tree (any device) plus this device's own locally-added ones.
-  const { profiles } = await chrome.runtime.sendMessage({
+  const { profiles } = await browser.runtime.sendMessage({
     type: "GET_ALL_KNOWN_PROFILES",
   });
   return profiles && profiles.length ? profiles : [DEFAULT_PROFILE];
 }
 
 async function getActiveProfile() {
-  const { activeProfile } = await chrome.storage.local.get("activeProfile");
+  const { activeProfile } = await browser.storage.local.get("activeProfile");
   return activeProfile || DEFAULT_PROFILE;
 }
 
@@ -77,10 +78,10 @@ async function renderProfiles() {
 }
 
 async function setActiveProfile(name) {
-  await chrome.storage.local.set({ activeProfile: name });
+  await browser.storage.local.set({ activeProfile: name });
   // Immediately save tabs under the newly active profile, instead of
   // waiting for the next alarm cycle.
-  await chrome.runtime.sendMessage({ type: "SWITCH_PROFILE_AND_SAVE" });
+  await browser.runtime.sendMessage({ type: "SWITCH_PROFILE_AND_SAVE" });
   await renderProfiles();
 }
 
@@ -90,10 +91,10 @@ async function removeProfileFromLocalList(name) {
   // still exists as a folder on any device (this one or another)
   // will keep showing up here too, since the picker is the union of
   // local + synced names.
-  const { profiles } = await chrome.storage.local.get("profiles");
+  const { profiles } = await browser.storage.local.get("profiles");
   const list = profiles && profiles.length ? profiles : [DEFAULT_PROFILE];
   const remaining = list.filter((p) => p !== name);
-  await chrome.storage.local.set({
+  await browser.storage.local.set({
     profiles: remaining.length ? remaining : [DEFAULT_PROFILE],
   });
   await renderProfiles();
@@ -103,7 +104,7 @@ document.getElementById("addProfile").addEventListener("click", async () => {
   const raw = newProfileInput.value.trim();
   if (!raw) return;
 
-  await chrome.runtime.sendMessage({ type: "ADD_PROFILE", name: raw });
+  await browser.runtime.sendMessage({ type: "ADD_PROFILE", name: raw });
   newProfileInput.value = "";
   await renderProfiles();
 });
@@ -113,37 +114,41 @@ newProfileInput.addEventListener("keydown", (e) => {
 });
 
 // Preload existing values, if any
-chrome.storage.local.get(
-  [
+browser.storage.local
+  .get([
     "deviceName",
     "syncIntervalMinutes",
     "notificationTimeoutSeconds",
     "defaultTimeoutAction",
     "openRestoredLazy",
     "mirrorRemoteCloses",
+    "fullSessionMirror",
     "lastSeenTimestamp",
-  ],
-  ({
-    deviceName,
-    syncIntervalMinutes,
-    notificationTimeoutSeconds,
-    defaultTimeoutAction,
-    openRestoredLazy,
-    mirrorRemoteCloses,
-    lastSeenTimestamp,
-  }) => {
-    if (deviceName) nameInput.value = deviceName;
-    if (syncIntervalMinutes) intervalInput.value = syncIntervalMinutes;
-    if (notificationTimeoutSeconds)
-      timeoutInput.value = notificationTimeoutSeconds;
-    defaultActionSelect.value = defaultTimeoutAction || "add";
-    lazyInput.checked = openRestoredLazy !== false; // default ON
-    mirrorInput.checked = mirrorRemoteCloses !== false; // default ON
-    lastSeenEl.textContent = lastSeenTimestamp
-      ? new Date(lastSeenTimestamp).toLocaleString()
-      : "none";
-  }
-);
+  ])
+  .then(
+    ({
+      deviceName,
+      syncIntervalMinutes,
+      notificationTimeoutSeconds,
+      defaultTimeoutAction,
+      openRestoredLazy,
+      mirrorRemoteCloses,
+      fullSessionMirror,
+      lastSeenTimestamp,
+    }) => {
+      if (deviceName) nameInput.value = deviceName;
+      if (syncIntervalMinutes) intervalInput.value = syncIntervalMinutes;
+      if (notificationTimeoutSeconds)
+        timeoutInput.value = notificationTimeoutSeconds;
+      defaultActionSelect.value = defaultTimeoutAction || "add";
+      lazyInput.checked = openRestoredLazy !== false; // default ON
+      mirrorInput.checked = mirrorRemoteCloses !== false; // default ON
+      fullMirrorInput.checked = fullSessionMirror !== false; // default ON
+      lastSeenEl.textContent = lastSeenTimestamp
+        ? new Date(lastSeenTimestamp).toLocaleString()
+        : "none";
+    }
+  );
 
 renderProfiles();
 
@@ -169,13 +174,14 @@ document.getElementById("save").addEventListener("click", async () => {
     return;
   }
 
-  await chrome.storage.local.set({
+  await browser.storage.local.set({
     deviceName: name,
     syncIntervalMinutes: interval,
     notificationTimeoutSeconds: notificationTimeout,
     defaultTimeoutAction: defaultAction,
     openRestoredLazy: lazyInput.checked,
     mirrorRemoteCloses: mirrorInput.checked,
+    fullSessionMirror: fullMirrorInput.checked,
   });
 
   status.textContent = `Saved: "${name}", checking every ${interval} min, notification timeout ${notificationTimeout}s, default action "${defaultAction}", lazy restore ${
@@ -184,9 +190,9 @@ document.getElementById("save").addEventListener("click", async () => {
   status.style.color = "#16a34a";
 
   setTimeout(() => {
-    chrome.tabs.getCurrent((tab) => {
+    browser.tabs.getCurrent().then((tab) => {
       if (tab && tab.id !== undefined) {
-        chrome.tabs.remove(tab.id);
+        browser.tabs.remove(tab.id);
       }
     });
   }, 900);

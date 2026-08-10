@@ -1,7 +1,7 @@
 const DEFAULT_PROFILE = "default";
 
 async function refreshSyncState() {
-  const { syncEnabled } = await chrome.storage.local.get("syncEnabled");
+  const { syncEnabled } = await browser.storage.local.get("syncEnabled");
   const on = syncEnabled !== false; // default ON
   document.getElementById("syncToggle").checked = on;
   document.getElementById("pausedNote").hidden = on;
@@ -10,13 +10,13 @@ async function refreshSyncState() {
 }
 
 document.getElementById("syncToggle").addEventListener("change", async (e) => {
-  await chrome.storage.local.set({ syncEnabled: e.target.checked });
+  await browser.storage.local.set({ syncEnabled: e.target.checked });
   await refreshSyncState();
 });
 
 async function refresh() {
   const { deviceName, syncIntervalMinutes, lastSeenTimestamp } =
-    await chrome.storage.local.get([
+    await browser.storage.local.get([
       "deviceName",
       "syncIntervalMinutes",
       "lastSeenTimestamp",
@@ -33,10 +33,10 @@ async function refresh() {
 }
 
 async function refreshActiveProfileSelect() {
-  const { activeProfile } = await chrome.storage.local.get("activeProfile");
+  const { activeProfile } = await browser.storage.local.get("activeProfile");
   const active = activeProfile || DEFAULT_PROFILE;
 
-  const { profiles } = await chrome.runtime.sendMessage({
+  const { profiles } = await browser.runtime.sendMessage({
     type: "GET_ALL_KNOWN_PROFILES",
   });
   const list = profiles && profiles.length ? profiles : [DEFAULT_PROFILE];
@@ -62,8 +62,8 @@ document
     btn.textContent = "...";
     btn.disabled = true;
 
-    await chrome.storage.local.set({ activeProfile: chosen });
-    await chrome.runtime.sendMessage({ type: "SWITCH_PROFILE_AND_SAVE" });
+    await browser.storage.local.set({ activeProfile: chosen });
+    await browser.runtime.sendMessage({ type: "SWITCH_PROFILE_AND_SAVE" });
 
     btn.textContent = "Done ✓";
     setTimeout(() => {
@@ -74,7 +74,7 @@ document
 
 async function refreshDeviceList() {
   const select = document.getElementById("deviceSelect");
-  const { devices } = await chrome.runtime.sendMessage({
+  const { devices } = await browser.runtime.sendMessage({
     type: "GET_DEVICES",
   });
 
@@ -108,7 +108,7 @@ async function refreshProfileList(deviceName) {
   profileSelect.innerHTML = "";
   if (!deviceName) return;
 
-  const { profiles } = await chrome.runtime.sendMessage({
+  const { profiles } = await browser.runtime.sendMessage({
     type: "GET_PROFILES_FOR_DEVICE",
     device: deviceName,
   });
@@ -139,7 +139,7 @@ document.getElementById("syncNow").addEventListener("click", async () => {
   btn.textContent = "Syncing...";
   btn.disabled = true;
 
-  const result = await chrome.runtime.sendMessage({ type: "SYNC_NOW" });
+  const result = await browser.runtime.sendMessage({ type: "SYNC_NOW" });
 
   btn.textContent = result?.updateFound ? "Update found ✓" : "No update found";
 
@@ -159,7 +159,7 @@ async function handleManualRestore(mode) {
   if (!device || !profile) return;
 
   statusEl.textContent = "Opening tabs...";
-  const result = await chrome.runtime.sendMessage({
+  const result = await browser.runtime.sendMessage({
     type: "MANUAL_RESTORE",
     device,
     profile,
@@ -185,7 +185,7 @@ document
   .addEventListener("click", () => handleManualRestore("add"));
 
 document.getElementById("version").textContent =
-  "v" + chrome.runtime.getManifest().version;
+  "v" + browser.runtime.getManifest().version;
 
 refreshSyncState();
 refresh();

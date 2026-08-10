@@ -63,19 +63,41 @@ jobs:
           node --check options.js
           node --check lazy.js
 
-      - name: Build extension zip
+      - name: Build store-specific zips (Chrome + Firefox)
         run: |
-          ZIP="syncmytabs-${VERSION}.zip"
-          zip -r "$ZIP" \
-            manifest.json \
-            background.js \
-            popup.html popup.js \
-            options.html options.js \
-            lazy.html lazy.js \
-            icons \
-            -x '*.DS_Store'
-          unzip -l "$ZIP"
-          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+          # The repo manifest is "dual" (loads on both for dev). Here we
+          # emit a tailored manifest per store so neither shows warnings:
+          #  - Chrome: service worker only, no gecko settings.
+          #  - Firefox: background scripts only, minus the Chrome-only
+          #    tabGroups permission (feature-detected at runtime anyway).
+          node -e '
+            const fs = require("fs");
+            const m = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+            const chrome = JSON.parse(JSON.stringify(m));
+            delete chrome.background.scripts;
+            delete chrome.browser_specific_settings;
+            fs.writeFileSync("manifest.chrome.json", JSON.stringify(chrome, null, 2));
+            const firefox = JSON.parse(JSON.stringify(m));
+            delete firefox.background.service_worker;
+            firefox.permissions = (firefox.permissions || []).filter((p) => p !== "tabGroups");
+            fs.writeFileSync("manifest.firefox.json", JSON.stringify(firefox, null, 2));
+          '
+
+          COMMON="background.js browser-polyfill.min.js popup.html popup.js options.html options.js lazy.html lazy.js icons"
+          mkdir -p build/chrome build/firefox
+          cp -r $COMMON build/chrome/ && cp manifest.chrome.json build/chrome/manifest.json
+          cp -r $COMMON build/firefox/ && cp manifest.firefox.json build/firefox/manifest.json
+
+          CHROME_ZIP="syncmytabs-${VERSION}-chrome.zip"
+          FIREFOX_ZIP="syncmytabs-${VERSION}-firefox.zip"
+          (cd build/chrome && zip -r "../../$CHROME_ZIP" . -x '*.DS_Store')
+          (cd build/firefox && zip -r "../../$FIREFOX_ZIP" . -x '*.DS_Store')
+          unzip -l "$CHROME_ZIP"; unzip -l "$FIREFOX_ZIP"
+          echo "CHROME_ZIP=$CHROME_ZIP" >> "$GITHUB_ENV"
+          echo "FIREFOX_ZIP=$FIREFOX_ZIP" >> "$GITHUB_ENV"
+
+      - name: Lint the Firefox build (web-ext, informational)
+        run: npx --yes web-ext lint --source-dir build/firefox || true
 
       - name: Publish GitHub Release
         env:
@@ -84,7 +106,7 @@ jobs:
           # For a manual run the tag doesn't exist yet, so create it at the
           # commit we built; for a tag push it already exists and --target
           # is ignored.
-          gh release create "$TAG" "$ZIP" \
+          gh release create "$TAG" "$CHROME_ZIP" "$FIREFOX_ZIP" \
             --title "$TAG" \
             --target "$GITHUB_SHA" \
             --generate-notes

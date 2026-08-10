@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SyncMyTabs",
-  "version": "2.4.2",
+  "version": "2.6.0",
   "description": "Sync your open tabs across devices, organized by profile, using bookmarks as the transport.",
   "permissions": [
     "bookmarks",
@@ -12,9 +12,13 @@
     "notifications"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "scripts": ["browser-polyfill.min.js", "background.js"]
   },
-  "options_page": "options.html",
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
   "action": {
     "default_popup": "popup.html",
     "default_title": "SyncMyTabs",
@@ -28,5 +32,11 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "syncmytabs@shuyi.it",
+      "strict_min_version": "128.0"
+    }
   }
 }

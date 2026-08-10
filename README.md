@@ -91,10 +91,18 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
     the network until you actually view each tab** (each tab points at a local
     page that navigates to the real URL on first view), so restoring a large
     session costs almost nothing. This can be turned off in the settings.
-- **Mirroring closes.** When a device you received tabs from later closes one of
-  them, that close is mirrored here — but **only** for a placeholder tab you
-  never opened (it's tagged with the source device/profile, so tabs you've
-  opened or created yourself are never touched). Off-switchable in the settings.
+- **Full session mirror** (default on). For devices on the **same profile**, the
+  tab set is kept in sync **both ways**: open a tab on one device and it appears
+  on the others; **close it anywhere and it closes everywhere**. Each device
+  records per-URL open times and close "tombstones" (in a small `_events`
+  metadata bookmark), and a URL is considered open when its newest open is newer
+  than its newest close. Safety rails: closing a **whole window or quitting** the
+  browser never propagates (only closing individual tabs does), and a device's
+  own reconcile-driven closes never loop back. Turn it off in the settings to
+  fall back to the milder placeholder-only mirror below.
+- **Mirroring closes (mild).** When full mirror is *off*: a close is mirrored
+  here **only** for a placeholder tab you never opened (tagged with the source
+  device/profile, so tabs you've opened or created yourself are never touched).
 - **Self-healing.** Some third-party sync tools *recreate* bookmarks instead of
   updating them, producing duplicate `_status` / `_last_sync` entries or even
   duplicate root folders. SyncMyTabs detects these and merges them, keeping the
@@ -102,12 +110,27 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
 
 ---
 
+SyncMyTabs runs on **Chromium browsers (Chrome / Brave)** and **Firefox**.
+
 ## Install (developer mode)
 
+**Chrome / Brave**
+
 1. Download or clone this repository.
-2. Open `brave://extensions` (or `chrome://extensions`).
+2. Open `chrome://extensions` (or `brave://extensions`).
 3. Enable **Developer mode** (top-right).
 4. Click **Load unpacked** and select this folder.
+
+**Firefox**
+
+1. Download or clone this repository.
+2. Open `about:debugging#/runtime/this-firefox`.
+3. Click **Load Temporary Add-on…** and pick this folder's `manifest.json`.
+   (Temporary add-ons are removed when Firefox restarts; a signed build from
+   [AMO](https://addons.mozilla.org) installs permanently.)
+
+Then, on either browser:
+
 5. On first run a settings tab opens — give this device a name.
 6. Repeat on every device you want to sync, and make sure your bookmark sync is
    active on each.
@@ -139,7 +162,8 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
 | Notification timeout | 15 seconds | How long the restore notification stays up |
 | Default timeout action | Add | What happens if the notification times out unanswered (`Add`, `Replace`, or `None`) |
 | Lazy restore | On | Open restored tabs as placeholders that don't load from the network until you view each one (saves memory/bandwidth when restoring many tabs) |
-| Mirror closes | On | When the source device closes a tab you received but never opened, close it here too (never touches tabs you've opened or created) |
+| Full session mirror | On | Keep the profile's tabs in sync **both ways** across your devices — open/close on one device reflects on the others. When on, it replaces the Add/Replace notification with automatic sync |
+| Mirror closes | On | Only when **full session mirror is off**: close tabs you received but never opened when the source device closes them (placeholders only) |
 
 Removing a profile from the list only removes it from *this device's* picker —
 any tab data already saved under that name, on this or any other device, is kept
@@ -170,11 +194,15 @@ SyncMyTabs' own initiative):
 
 ## Known limitations
 
-- **Chrome / Brave first.** The root folder lives under "Other Bookmarks".
-  The extension resolves that folder from the bookmark tree at runtime and
-  falls back to Chrome/Brave's well-known id (`"2"`), so it isn't hardcoded —
-  but it has only been exercised on Chromium-based browsers. Firefox uses
-  different bookmark-root ids and is not officially supported yet.
+- **Firefox differences.** SyncMyTabs works on Firefox, but two Chrome-only
+  features degrade there:
+  - **Tab groups** — Firefox has no tab-groups API, so groups aren't saved or
+    recreated (pinned tabs, and everything else, still work).
+  - **Notification buttons** — Firefox notifications don't show the
+    **Replace** / **Add** buttons; make your choice from the popup's **Restore
+    from device** instead (the default timeout action still applies).
+  The bookmark-root id also differs (Chrome `"2"` vs Firefox `"unfiled_____"`) —
+  handled automatically by the runtime resolver.
 - **Sync visibility.** Detection of remote updates depends entirely on your
   sync tool actually propagating bookmark changes to this device's local tree.
   SyncMyTabs has no insight into whether that underlying sync is healthy.
@@ -185,6 +213,13 @@ SyncMyTabs' own initiative):
   effect is that notifications from *different* devices may surface in an order
   that doesn't match real-world time. Keep clocks reasonably in sync (NTP is
   fine).
+- **Full session mirror caveats.** Open/close ordering of the *same* URL across
+  devices also relies on those clocks, so badly skewed clocks can misjudge
+  whether a URL is open or closed. Because it's eventually-consistent over your
+  bookmark sync, a close can take a moment to propagate. Closing a whole window
+  or quitting the browser deliberately does **not** propagate (a safety choice so
+  a shutdown never wipes the session everywhere). Turn the feature off in the
+  settings if you'd rather each device keep an independent tab set.
 
 ---
 
@@ -192,14 +227,17 @@ SyncMyTabs' own initiative):
 
 | File | Role |
 |---|---|
-| `manifest.json` | Manifest V3 definition, permissions, entry points |
-| `background.js` | Service worker — all sync/save/restore logic |
+| `manifest.json` | Manifest V3 definition, permissions, entry points (Chrome service worker + Firefox background scripts) |
+| `background.js` | Background logic — all sync/save/restore |
 | `popup.html` / `popup.js` | Toolbar popup UI |
 | `options.html` / `options.js` | Settings page UI |
-| `icons/` | Extension icons (16 / 48 / 128 px) |
+| `lazy.html` / `lazy.js` | Lazy-restore placeholder page |
+| `browser-polyfill.min.js` | Mozilla's WebExtension polyfill (vendored) so `browser.*` works on Chrome too |
+| `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
 
 There is no build step — the repository *is* the unpacked extension. To hack on
-it, edit the files and hit **Reload** on the extension in `chrome://extensions`.
+it, edit the files and hit **Reload** on the extension (`chrome://extensions` or
+`about:debugging` on Firefox).
 
 ## Releases & packaging
 
@@ -212,12 +250,14 @@ Packaging is automated. To cut a release:
    ```
 
 The [`release` workflow](.github/workflows/release.yml) then checks that the tag
-matches the manifest version, syntax-checks the JS, builds the store-ready
-`syncmytabs-<version>.zip`, and publishes it as a **GitHub Release** — the zip
-appears on the [Releases page](../../releases), ready to upload to the Chrome Web
-Store.
+matches the manifest version, syntax-checks the JS, and builds **two store-ready
+zips** — `syncmytabs-<version>-chrome.zip` and `syncmytabs-<version>-firefox.zip`
+— each with a manifest tailored to its store (Chrome: service worker only;
+Firefox: background scripts, no `tabGroups`), then publishes both as a **GitHub
+Release** on the [Releases page](../../releases). Upload the Chrome zip to the
+Chrome Web Store and the Firefox zip to [AMO](https://addons.mozilla.org).
 
-For publishing to the store, see [`PRIVACY.md`](PRIVACY.md) (privacy policy) and
+For publishing, see [`PRIVACY.md`](PRIVACY.md) (privacy policy) and
 [`PERMISSIONS.md`](PERMISSIONS.md) (per-permission justifications).
 
 ---
