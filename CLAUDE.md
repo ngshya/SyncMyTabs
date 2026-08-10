@@ -95,14 +95,26 @@ Understanding these will keep changes safe:
 - **Bookmark tree shape** (created under "Other Bookmarks"):
   ```
   SyncMyTabs/<device>/_status
-  SyncMyTabs/<device>/<profile>/{_last_sync, _tab_meta, …tab bookmarks…}
+  SyncMyTabs/<device>/<profile>/{_last_sync, _tab_meta, _events, …tab bookmarks…}
   ```
-  `_status` (per device) and `_last_sync` / `_tab_meta` (per profile) are
-  **metadata bookmarks**, never treated as tabs (`isMetaTitle` /
+  `_status` (per device) and `_last_sync` / `_tab_meta` / `_events` (per profile)
+  are **metadata bookmarks**, never treated as tabs (`isMetaTitle` /
   `isProfileMetaTitle`). Keep them updated **in place** — recreating them causes
   duplicates and needless sync churn. `_tab_meta` holds pinned/tab-group info as
   JSON in its URL and is removed entirely when a profile has no pinned or grouped
-  tabs.
+  tabs. `_events` holds full-mirror session state (see below).
+- **Full session mirror** (`fullSessionMirror`, default on). Same-profile devices
+  keep a two-way-synced tab set. Each device writes per-URL open times `o` and
+  close tombstones `c` into `<device>/<profile>/_events`; `computeEffectiveOpen`
+  says a URL is open iff its newest `o` > newest `c` across devices.
+  `reconcileFullMirror` (run on same-profile `_status` changes, on the alarm, and
+  on startup) closes local tabs no longer open and opens ones that are — it
+  **replaces** the notify+Add/Replace flow while on. A user tab-close is turned
+  into a tombstone via `tabs.onRemoved`, resolved to a URL through the persisted
+  `tabUrlById` map. **Critical safety:** never tombstone on `isWindowClosing`
+  (shutdown), never on our own reconcile closes (`selfClosingTabIds`), never if
+  the URL is still open in another tab. When off, the milder `mirrorRemoteCloses`
+  (placeholder-only) applies instead.
 - **Profiles are independent.** `evaluateStatusAndNotify` ignores a remote
   update whose profile isn't this device's **active** profile — automatic sync
   only flows between devices on the same profile. Switching profile

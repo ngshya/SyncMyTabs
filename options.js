@@ -4,6 +4,7 @@ const timeoutInput = document.getElementById("notificationTimeoutSeconds");
 const defaultActionSelect = document.getElementById("defaultTimeoutAction");
 const lazyInput = document.getElementById("openRestoredLazy");
 const mirrorInput = document.getElementById("mirrorRemoteCloses");
+const fullMirrorInput = document.getElementById("fullSessionMirror");
 const status = document.getElementById("status");
 const lastSeenEl = document.getElementById("lastSeen");
 const profileListEl = document.getElementById("profileList");
@@ -121,6 +122,7 @@ browser.storage.local
     "defaultTimeoutAction",
     "openRestoredLazy",
     "mirrorRemoteCloses",
+    "fullSessionMirror",
     "lastSeenTimestamp",
   ])
   .then(
@@ -131,6 +133,7 @@ browser.storage.local
       defaultTimeoutAction,
       openRestoredLazy,
       mirrorRemoteCloses,
+      fullSessionMirror,
       lastSeenTimestamp,
     }) => {
       if (deviceName) nameInput.value = deviceName;
@@ -140,6 +143,7 @@ browser.storage.local
       defaultActionSelect.value = defaultTimeoutAction || "add";
       lazyInput.checked = openRestoredLazy !== false; // default ON
       mirrorInput.checked = mirrorRemoteCloses !== false; // default ON
+      fullMirrorInput.checked = fullSessionMirror !== false; // default ON
       lastSeenEl.textContent = lastSeenTimestamp
         ? new Date(lastSeenTimestamp).toLocaleString()
         : "none";
@@ -177,6 +181,7 @@ document.getElementById("save").addEventListener("click", async () => {
     defaultTimeoutAction: defaultAction,
     openRestoredLazy: lazyInput.checked,
     mirrorRemoteCloses: mirrorInput.checked,
+    fullSessionMirror: fullMirrorInput.checked,
   });
 
   status.textContent = `Saved: "${name}", checking every ${interval} min, notification timeout ${notificationTimeout}s, default action "${defaultAction}", lazy restore ${

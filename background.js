@@ -54,6 +54,12 @@ const LAST_SYNC_URL_BASE = "https://syncmytabs.local/last-sync";
 // compact JSON payload (see updateTabMetaBookmark). Never a tab.
 const TAB_META_TITLE = "_tab_meta";
 const TAB_META_URL_BASE = "https://syncmytabs.local/tab-meta";
+// Per-device-profile "session events" for full two-way mirror: per-URL
+// open times (o) and close tombstones (c) as JSON in the URL. Used to
+// decide, across devices, whether a URL is currently open or was closed.
+// Never a tab. See reconcileFullMirror / updateEventsBookmark.
+const EVENTS_TITLE = "_events";
+const EVENTS_URL_BASE = "https://syncmytabs.local/events";
 
 const DEFAULT_PROFILE = "default";
 const NOTIF_PREFIX = "syncmytabs-";
@@ -279,12 +285,17 @@ function isMetaTitle(title) {
   return (
     title === STATUS_TITLE ||
     title === LAST_SYNC_TITLE ||
-    title === TAB_META_TITLE
+    title === TAB_META_TITLE ||
+    title === EVENTS_TITLE
   );
 }
 
 function isProfileMetaTitle(title) {
-  return title === LAST_SYNC_TITLE || title === TAB_META_TITLE;
+  return (
+    title === LAST_SYNC_TITLE ||
+    title === TAB_META_TITLE ||
+    title === EVENTS_TITLE
+  );
 }
 
 // ------------------------------------------------------------
@@ -348,6 +359,214 @@ function tabSignature(entries) {
 async function getActiveProfile() {
   const { activeProfile } = await browser.storage.local.get("activeProfile");
   return activeProfile || DEFAULT_PROFILE;
+}
+
+// ============================================================
+// Full two-way session mirror (opt-out; default ON).
+//
+// For devices on the SAME profile, opening/closing a tab on one device
+// is reflected on the others. Each device records, per profile, per-URL
+// OPEN times and CLOSE tombstones in an "_events" bookmark. Across all
+// devices, a URL is considered open iff its newest open time is newer
+// than its newest close time:
+//   open(url)  <=>  max(openTime) > max(closeTime)
+// Reconciliation then closes local tabs no longer open, and opens ones
+// that are. See reconcileFullMirror.
+// ============================================================
+async function fullMirrorEnabled() {
+  const { fullSessionMirror } = await browser.storage.local.get(
+    "fullSessionMirror"
+  );
+  return fullSessionMirror !== false; // default ON
+}
+
+function parseEvents(bookmark) {
+  const empty = { o: {}, c: {} };
+  if (!bookmark || !bookmark.url) return empty;
+  try {
+    const d = new URL(bookmark.url).searchParams.get("d");
+    if (!d) return empty;
+    const obj = JSON.parse(d);
+    return {
+      o: obj.o && typeof obj.o === "object" ? obj.o : {},
+      c: obj.c && typeof obj.c === "object" ? obj.c : {},
+    };
+  } catch (e) {
+    return empty;
+  }
+}
+
+async function updateEventsBookmark(profileFolderId, eventsObj) {
+  const existing = await dedupeNamedBookmark(profileFolderId, EVENTS_TITLE);
+  const hasData =
+    eventsObj &&
+    (Object.keys(eventsObj.o || {}).length ||
+      Object.keys(eventsObj.c || {}).length);
+  if (!hasData) {
+    if (existing) {
+      try {
+        await browser.bookmarks.remove(existing.id);
+      } catch (e) {}
+    }
+    return;
+  }
+  const url = `${EVENTS_URL_BASE}?d=${encodeURIComponent(
+    JSON.stringify(eventsObj)
+  )}`;
+  if (existing) {
+    await browser.bookmarks.update(existing.id, { url });
+  } else {
+    await browser.bookmarks.create({
+      parentId: profileFolderId,
+      title: EVENTS_TITLE,
+      url,
+    });
+  }
+}
+
+// Pure: given each device's {o,c} events, the set of URLs currently open
+// (newest open strictly newer than newest close).
+function computeEffectiveOpen(perDeviceEvents) {
+  const openT = {};
+  const closeT = {};
+  for (const ev of perDeviceEvents) {
+    for (const [u, t] of Object.entries(ev.o || {})) {
+      openT[u] = Math.max(openT[u] || 0, t);
+    }
+    for (const [u, t] of Object.entries(ev.c || {})) {
+      closeT[u] = Math.max(closeT[u] || 0, t);
+    }
+  }
+  const present = new Set();
+  const known = new Set([...Object.keys(openT), ...Object.keys(closeT)]);
+  for (const u of Object.keys(openT)) {
+    if (openT[u] > (closeT[u] || 0)) present.add(u);
+  }
+  return { present, known };
+}
+
+// Pending close tombstones recorded locally (by tab-close events),
+// keyed by profile then URL, flushed into "_events" on the next save.
+async function addLocalCloseTime(profile, url, t) {
+  const { localCloseTimes } = await browser.storage.local.get(
+    "localCloseTimes"
+  );
+  const map = localCloseTimes || {};
+  map[profile] = map[profile] || {};
+  map[profile][url] = t;
+  await browser.storage.local.set({ localCloseTimes: map });
+}
+async function takeLocalCloseTimes(profile) {
+  const { localCloseTimes } = await browser.storage.local.get(
+    "localCloseTimes"
+  );
+  const map = localCloseTimes || {};
+  const forProfile = map[profile] || {};
+  if (map[profile]) {
+    delete map[profile];
+    await browser.storage.local.set({ localCloseTimes: map });
+  }
+  return forProfile;
+}
+
+// In-memory (persisted) tabId -> URL map, so a tab close can be resolved
+// to its URL (onRemoved gives only the id). Rebuilt on startup.
+const tabUrlById = new Map();
+async function rememberTabUrl(tabId, url) {
+  if (!/^https?:\/\//.test(url || "")) return;
+  tabUrlById.set(tabId, url);
+  const { tabUrlMap } = await browser.storage.local.get("tabUrlMap");
+  const m = tabUrlMap || {};
+  m[tabId] = url;
+  await browser.storage.local.set({ tabUrlMap: m });
+}
+async function recallTabUrl(tabId) {
+  if (tabUrlById.has(tabId)) return tabUrlById.get(tabId);
+  const { tabUrlMap } = await browser.storage.local.get("tabUrlMap");
+  return (tabUrlMap && tabUrlMap[tabId]) || null;
+}
+async function forgetTabUrl(tabId) {
+  tabUrlById.delete(tabId);
+  const { tabUrlMap } = await browser.storage.local.get("tabUrlMap");
+  if (tabUrlMap && tabUrlMap[tabId] != null) {
+    delete tabUrlMap[tabId];
+    await browser.storage.local.set({ tabUrlMap });
+  }
+}
+
+// Tab ids WE are about to close during reconciliation, so their
+// onRemoved doesn't get mistaken for a user close (which would tombstone).
+const selfClosingTabIds = new Set();
+
+// Bring this device's open tabs in line with the shared session for the
+// active profile: close tabs the session no longer has, open ones it
+// gained. Only runs for the active profile and only when enabled.
+async function reconcileFullMirror(profileArg) {
+  if (!(await fullMirrorEnabled())) return;
+  if (!(await isSyncEnabled())) return;
+  const active = await getActiveProfile();
+  const profile = profileArg || active;
+  if (profile !== active) return; // only mirror the profile we're on
+
+  // Flush our own current state first, so a tab we just opened counts as
+  // "open" and isn't closed by a stale tombstone before we've saved it.
+  await saveOpenTabs();
+
+  // Gather every device's session events (and a title per URL) for this
+  // profile.
+  const root = await getOrCreateRootFolder();
+  const deviceFolders = await browser.bookmarks.getChildren(root.id);
+  const perDevice = [];
+  const titleByUrl = {};
+  for (const dev of deviceFolders) {
+    if (dev.url) continue;
+    const profFolders = await browser.bookmarks.getChildren(dev.id);
+    const pf = profFolders.find((c) => !c.url && c.title === profile);
+    if (!pf) continue;
+    const children = await browser.bookmarks.getChildren(pf.id);
+    perDevice.push(
+      parseEvents(children.find((b) => b.url && b.title === EVENTS_TITLE))
+    );
+    for (const b of children) {
+      if (b.url && !isProfileMetaTitle(b.title)) titleByUrl[b.url] = b.title;
+    }
+  }
+  const { present, known } = computeEffectiveOpen(perDevice);
+
+  // Index local tabs by their real URL.
+  const localByUrl = new Map();
+  for (const t of await browser.tabs.query({})) {
+    const u = realUrlOfTab(t);
+    if (!/^https?:\/\//.test(u)) continue;
+    if (!localByUrl.has(u)) localByUrl.set(u, []);
+    localByUrl.get(u).push(t);
+  }
+
+  // Close local tabs whose URL is session-known but no longer open.
+  // Brand-new local tabs (not yet known to the session) are left alone.
+  const toClose = [];
+  for (const [u, list] of localByUrl) {
+    if (known.has(u) && !present.has(u)) {
+      for (const t of list) toClose.push(t.id);
+    }
+  }
+  if (toClose.length) {
+    for (const id of toClose) selfClosingTabIds.add(id);
+    try {
+      await browser.tabs.remove(toClose);
+    } catch (e) {
+      for (const id of toClose) selfClosingTabIds.delete(id);
+    }
+  }
+
+  // Open URLs that should be present but aren't open here.
+  const toOpen = [];
+  for (const u of present) {
+    if (!localByUrl.has(u)) toOpen.push({ url: u, title: titleByUrl[u] || u });
+  }
+  if (toOpen.length) {
+    await performAdd(toOpen, { profile });
+  }
 }
 
 // ------------------------------------------------------------
@@ -466,6 +685,26 @@ async function saveOpenTabs() {
     }
   }
   await updateTabMetaBookmark(profileFolder.id, metaObj);
+
+  // Full-mirror session events: preserve each open URL's original open
+  // time, fold in any pending local close tombstones, and GC tombstones
+  // for URLs we've since reopened.
+  if (await fullMirrorEnabled()) {
+    const existingEvents = parseEvents(
+      existingBookmarks.find((b) => b.url && b.title === EVENTS_TITLE)
+    );
+    const now = Date.now();
+    const o = {};
+    for (const entry of newEntries) {
+      o[entry.url] = existingEvents.o[entry.url] || now;
+    }
+    const pendingCloses = await takeLocalCloseTimes(profile);
+    const c = { ...existingEvents.c, ...pendingCloses };
+    for (const url of Object.keys(c)) {
+      if (o[url] && o[url] >= c[url]) delete c[url]; // reopened -> drop tombstone
+    }
+    await updateEventsBookmark(profileFolder.id, { o, c });
+  }
 
   await updateLastSyncBookmark(profileFolder.id, deviceName, profile);
   // Each device signals through its OWN status bookmark inside its
@@ -628,6 +867,7 @@ async function refreshActionIcon() {
 browser.runtime.onInstalled.addListener(async () => {
   ensureAlarm();
   refreshActionIcon();
+  await rebuildTabUrlMap();
   const { deviceName, profiles } = await browser.storage.local.get([
     "deviceName",
     "profiles",
@@ -643,11 +883,30 @@ browser.runtime.onInstalled.addListener(async () => {
   }
 });
 
-browser.runtime.onStartup.addListener(() => {
+browser.runtime.onStartup.addListener(async () => {
   ensureAlarm();
   refreshActionIcon();
   sweepExpiredNotifications();
+  await rebuildTabUrlMap();
+  await reconcileFullMirror();
 });
+
+// Rebuild the tabId -> URL map from the currently open tabs (their ids
+// don't survive a browser restart, and the in-memory map is lost when
+// the worker suspends).
+async function rebuildTabUrlMap() {
+  const m = {};
+  try {
+    for (const t of await browser.tabs.query({})) {
+      const u = realUrlOfTab(t);
+      if (/^https?:\/\//.test(u)) {
+        tabUrlById.set(t.id, u);
+        m[t.id] = u;
+      }
+    }
+    await browser.storage.local.set({ tabUrlMap: m });
+  } catch (e) {}
+}
 
 browser.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === "saveTabsAlarm") {
@@ -655,6 +914,8 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
     // while the service worker was suspended.
     await sweepExpiredNotifications();
     await saveOpenTabs();
+    // Catch-up reconcile in case an event was missed while suspended.
+    await reconcileFullMirror();
   }
 });
 
@@ -666,6 +927,46 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (changes.syncEnabled) {
     updateActionIcon(changes.syncEnabled.newValue !== false);
   }
+});
+
+// --- Full-mirror tab tracking ---------------------------------------
+// Keep a tabId -> real-URL map so a close can be resolved to its URL.
+browser.tabs.onCreated.addListener((tab) => {
+  const u = realUrlOfTab(tab);
+  if (/^https?:\/\//.test(u)) rememberTabUrl(tab.id, u);
+});
+
+browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (!changeInfo.url) return; // only on actual navigations
+  const u = realUrlOfTab(tab);
+  if (/^https?:\/\//.test(u)) rememberTabUrl(tabId, u);
+});
+
+// A user-initiated tab close: record a close tombstone so the URL closes
+// on the other devices too. Never on window/browser close (that would
+// wipe the session everywhere), never for our own reconcile-driven
+// closes, and never if the URL is still open in another tab.
+browser.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
+  const url = await recallTabUrl(tabId);
+  await forgetTabUrl(tabId);
+
+  if (removeInfo && removeInfo.isWindowClosing) return;
+  if (selfClosingTabIds.has(tabId)) {
+    selfClosingTabIds.delete(tabId);
+    return;
+  }
+  if (!url) return; // unknown (e.g. worker was cold) -> best-effort skip
+  if (!(await fullMirrorEnabled())) return;
+  if (!(await isSyncEnabled())) return;
+
+  const stillOpen = (await browser.tabs.query({})).some(
+    (t) => realUrlOfTab(t) === url
+  );
+  if (stillOpen) return;
+
+  const profile = await getActiveProfile();
+  await addLocalCloseTime(profile, url, Date.now());
+  await saveOpenTabs(); // flush the tombstone + bump status so peers reconcile
 });
 
 browser.bookmarks.onCreated.addListener(async (id, node) => {
@@ -844,10 +1145,16 @@ async function evaluateStatusAndNotify(statusUrl) {
     lastSeenTimestamp: Math.max(...Object.values(map)),
   });
 
-  // Close our unopened placeholders that this device has since closed,
-  // regardless of what the user does with the notification below.
-  await mirrorRemoteCloses(remoteDevice, remoteProfile);
+  // Full two-way mirror handles opening AND closing automatically for
+  // the shared profile, so it replaces the notify+Add/Replace flow.
+  if (await fullMirrorEnabled()) {
+    await reconcileFullMirror(remoteProfile);
+    return true;
+  }
 
+  // Otherwise (mirror off): close our unopened placeholders that this
+  // device has since closed, and prompt with the notification.
+  await mirrorRemoteCloses(remoteDevice, remoteProfile);
   await createUpdateNotification(remoteDevice, remoteProfile, timestamp);
   return true;
 }

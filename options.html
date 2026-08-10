@@ -146,11 +146,25 @@
     Open restored tabs lazily (load each one only when you view it)
   </label>
 
+  <h2>Session mirror</h2>
+  <p>
+    <strong>Full session mirror</strong> keeps the tabs of this profile the
+    same across all your devices: open a tab on one device and it appears on
+    the others; <strong>close it anywhere and it closes everywhere</strong>.
+    Closing a whole window (or quitting the browser) never propagates — only
+    closing individual tabs does.
+  </p>
+  <label
+    style="display: flex; gap: 8px; align-items: center; font-size: 14px;"
+  >
+    <input type="checkbox" id="fullSessionMirror" style="width: auto;" />
+    Full session mirror (two-way open/close across devices on this profile)
+  </label>
+
   <p style="margin-top: 18px;">
-    Mirror tab closes from other devices: when a device you received tabs
-    from closes one, close it here too — but only if it's still a
-    placeholder you never opened. Tabs you've opened or created yourself
-    are never touched. Requires lazy restore.
+    When full session mirror is <em>off</em>, this milder option instead just
+    closes tabs you received but never opened, when the source device closes
+    them (placeholders only; requires lazy restore).
   </p>
   <label
     style="display: flex; gap: 8px; align-items: center; font-size: 14px;"
