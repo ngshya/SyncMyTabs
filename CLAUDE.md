@@ -110,10 +110,11 @@ Understanding these will keep changes safe:
   `reconcileFullMirror` (run on same-profile `_status` changes, on the alarm, and
   on startup) closes local tabs no longer open and opens ones that are — it
   **replaces** the notify+Add/Replace flow while on. A user tab-close is turned
-  into a tombstone via `tabs.onRemoved`, resolved to a URL through the persisted
-  `tabUrlById` map. **Critical safety:** never tombstone on `isWindowClosing`
-  (shutdown), never on our own reconcile closes (`selfClosingTabIds`), never if
-  the URL is still open in another tab. When off, the milder `mirrorRemoteCloses`
+  into a tombstone in `tabs.onRemoved` by **diffing** this device's saved open
+  set against the live tabs (robust — no fragile tabId→URL map). **Critical
+  safety:** never tombstone on `isWindowClosing` (shutdown/window close), never
+  on our own reconcile closes (`selfClosingTabIds`); a URL still open in another
+  tab stays in the live set so duplicates don't tombstone. When off, the milder `mirrorRemoteCloses`
   (placeholder-only) applies instead.
 - **Profiles are independent.** `evaluateStatusAndNotify` ignores a remote
   update whose profile isn't this device's **active** profile — automatic sync

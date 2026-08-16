@@ -469,29 +469,15 @@ async function takeLocalCloseTimes(profile) {
   return forProfile;
 }
 
-// In-memory (persisted) tabId -> URL map, so a tab close can be resolved
-// to its URL (onRemoved gives only the id). Rebuilt on startup.
-const tabUrlById = new Map();
-async function rememberTabUrl(tabId, url) {
-  if (!/^https?:\/\//.test(url || "")) return;
-  tabUrlById.set(tabId, url);
-  const { tabUrlMap } = await browser.storage.local.get("tabUrlMap");
-  const m = tabUrlMap || {};
-  m[tabId] = url;
-  await browser.storage.local.set({ tabUrlMap: m });
-}
-async function recallTabUrl(tabId) {
-  if (tabUrlById.has(tabId)) return tabUrlById.get(tabId);
-  const { tabUrlMap } = await browser.storage.local.get("tabUrlMap");
-  return (tabUrlMap && tabUrlMap[tabId]) || null;
-}
-async function forgetTabUrl(tabId) {
-  tabUrlById.delete(tabId);
-  const { tabUrlMap } = await browser.storage.local.get("tabUrlMap");
-  if (tabUrlMap && tabUrlMap[tabId] != null) {
-    delete tabUrlMap[tabId];
-    await browser.storage.local.set({ tabUrlMap });
+// The device's currently-open, real (non-placeholder) http(s) URLs.
+async function currentOwnUrls() {
+  const set = new Set();
+  for (const t of await browser.tabs.query({})) {
+    if (placeholderInfo(t)) continue;
+    const u = t.url;
+    if (/^https?:\/\//.test(u)) set.add(u);
   }
+  return set;
 }
 
 // Tab ids WE are about to close during reconciliation, so their
@@ -867,7 +853,6 @@ async function refreshActionIcon() {
 browser.runtime.onInstalled.addListener(async () => {
   ensureAlarm();
   refreshActionIcon();
-  await rebuildTabUrlMap();
   const { deviceName, profiles } = await browser.storage.local.get([
     "deviceName",
     "profiles",
@@ -887,26 +872,8 @@ browser.runtime.onStartup.addListener(async () => {
   ensureAlarm();
   refreshActionIcon();
   sweepExpiredNotifications();
-  await rebuildTabUrlMap();
   await reconcileFullMirror();
 });
-
-// Rebuild the tabId -> URL map from the currently open tabs (their ids
-// don't survive a browser restart, and the in-memory map is lost when
-// the worker suspends).
-async function rebuildTabUrlMap() {
-  const m = {};
-  try {
-    for (const t of await browser.tabs.query({})) {
-      const u = realUrlOfTab(t);
-      if (/^https?:\/\//.test(u)) {
-        tabUrlById.set(t.id, u);
-        m[t.id] = u;
-      }
-    }
-    await browser.storage.local.set({ tabUrlMap: m });
-  } catch (e) {}
-}
 
 browser.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === "saveTabsAlarm") {
@@ -929,44 +896,39 @@ browser.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// --- Full-mirror tab tracking ---------------------------------------
-// Keep a tabId -> real-URL map so a close can be resolved to its URL.
-browser.tabs.onCreated.addListener((tab) => {
-  const u = realUrlOfTab(tab);
-  if (/^https?:\/\//.test(u)) rememberTabUrl(tab.id, u);
-});
-
-browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (!changeInfo.url) return; // only on actual navigations
-  const u = realUrlOfTab(tab);
-  if (/^https?:\/\//.test(u)) rememberTabUrl(tabId, u);
-});
-
-// A user-initiated tab close: record a close tombstone so the URL closes
-// on the other devices too. Never on window/browser close (that would
-// wipe the session everywhere), never for our own reconcile-driven
-// closes, and never if the URL is still open in another tab.
+// A user-initiated tab close: tombstone the URL(s) that this device had
+// open but no longer does, so the close propagates to the other devices.
+// Detected by diffing this device's saved open set against the live tabs
+// (robust — no fragile tabId->URL map). Safety rails: never on
+// window/browser close (that would wipe the session everywhere), and
+// never for our own reconcile-driven closes.
 browser.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
-  const url = await recallTabUrl(tabId);
-  await forgetTabUrl(tabId);
-
-  if (removeInfo && removeInfo.isWindowClosing) return;
+  if (removeInfo && removeInfo.isWindowClosing) return; // shutdown/window close
   if (selfClosingTabIds.has(tabId)) {
     selfClosingTabIds.delete(tabId);
     return;
   }
-  if (!url) return; // unknown (e.g. worker was cold) -> best-effort skip
   if (!(await fullMirrorEnabled())) return;
   if (!(await isSyncEnabled())) return;
 
-  const stillOpen = (await browser.tabs.query({})).some(
-    (t) => realUrlOfTab(t) === url
-  );
-  if (stillOpen) return;
-
+  const { deviceName } = await browser.storage.local.get("deviceName");
+  if (!deviceName) return;
   const profile = await getActiveProfile();
-  await addLocalCloseTime(profile, url, Date.now());
-  await saveOpenTabs(); // flush the tombstone + bump status so peers reconcile
+
+  // URLs this device had saved (its contribution) that are no longer open
+  // — that's what the user just closed. A URL still open in another tab
+  // stays in `current`, so duplicates are handled naturally.
+  const prev = await getTabEntriesForDeviceProfile(deviceName, profile);
+  const current = await currentOwnUrls();
+  const now = Date.now();
+  let closedAny = false;
+  for (const entry of prev) {
+    if (!current.has(entry.url)) {
+      await addLocalCloseTime(profile, entry.url, now);
+      closedAny = true;
+    }
+  }
+  if (closedAny) await saveOpenTabs(); // flush tombstones + bump status
 });
 
 browser.bookmarks.onCreated.addListener(async (id, node) => {
