@@ -106,16 +106,33 @@ Understanding these will keep changes safe:
 - **Full session mirror** (`fullSessionMirror`, default on). Same-profile devices
   keep a two-way-synced tab set. Each device writes per-URL open times `o` and
   close tombstones `c` into `<device>/<profile>/_events`; `computeEffectiveOpen`
-  says a URL is open iff its newest `o` > newest `c` across devices.
+  says a URL is open iff its newest `o` > newest `c` across devices, and also
+  returns the winning open time per URL (`openT`).
   `reconcileFullMirror` (run on same-profile `_status` changes, on the alarm, and
   on startup) closes local tabs no longer open and opens ones that are — it
-  **replaces** the notify+Add/Replace flow while on. A user tab-close is turned
-  into a tombstone in `tabs.onRemoved` by **diffing** this device's saved open
-  set against the live tabs (robust — no fragile tabId→URL map). **Critical
-  safety:** never tombstone on `isWindowClosing` (shutdown/window close), never
-  on our own reconcile closes (`selfClosingTabIds`); a URL still open in another
-  tab stays in the live set so duplicates don't tombstone. When off, the milder `mirrorRemoteCloses`
-  (placeholder-only) applies instead.
+  **replaces** the notify+Add/Replace flow while on. A user tab-close is
+  detected in `tabs.onRemoved` by **diffing** this device's saved open set
+  against the live tabs (robust — no fragile tabId→URL map); the closed URL's
+  bookmark is then removed **directly and immediately** from this device's own
+  profile folder via `removeClosedTabBookmarks` (a small, targeted write —
+  remove the bookmark, merge the close tombstone into `_events`, bump
+  `_last_sync`/`_status`) instead of waiting on the next full `saveOpenTabs`
+  rewrite; `addLocalCloseTime`/`takeLocalCloseTimes` still stage the tombstone
+  in storage first as an MV3-durability safety net. **Critical safety:** never
+  tombstone on `isWindowClosing` (shutdown/window close), never on our own
+  reconcile closes (`selfClosingTabIds`); a URL still open in another tab stays
+  in the live set so duplicates don't tombstone. When off, the milder
+  `mirrorRemoteCloses` (placeholder-only) applies instead.
+- **Mirrored-in URLs inherit their true open time.** When a device first
+  records `o[url]` for a URL with no prior local `_events` entry, it must NOT
+  stamp `Date.now()` if the URL was mirrored in rather than opened locally for
+  the first time — doing so lets a device that's slow to hear about a remote
+  close (ordinary bookmark-sync lag) win the open/close race merely by saving
+  on its own schedule, resurrecting a tab that was legitimately closed
+  elsewhere. `reconcileFullMirror` remembers each opened URL's aggregated
+  `openT` via `rememberMirroredOpenTimes`; `saveOpenTabs` consults that map
+  (`mirroredOpenTimes` in storage) before falling back to `now`. Keep this
+  invariant if you touch the open-time bookkeeping.
 - **Profiles are independent.** `evaluateStatusAndNotify` ignores a remote
   update whose profile isn't this device's **active** profile — automatic sync
   only flows between devices on the same profile. Switching profile

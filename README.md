@@ -97,11 +97,12 @@ SyncMyTabs/                    ← root folder (in "Other Bookmarks")
   records per-URL open times and close "tombstones" (in a small `_events`
   metadata bookmark), and a URL is considered open when its newest open is newer
   than its newest close. A close is detected by diffing this device's saved tabs
-  against the live ones (no fragile per-tab bookkeeping). Safety rails: closing a
-  **whole window or quitting** the browser never propagates (only closing
-  individual tabs does), and a device's own reconcile-driven closes never loop
-  back. Turn it off in the settings to fall back to the milder placeholder-only
-  mirror below.
+  against the live ones (no fragile per-tab bookkeeping), and the closed tab's
+  bookmark is removed **immediately** from this device's own folder — it doesn't
+  wait for the next periodic save. Safety rails: closing a **whole window or
+  quitting** the browser never propagates (only closing individual tabs does),
+  and a device's own reconcile-driven closes never loop back. Turn it off in the
+  settings to fall back to the milder placeholder-only mirror below.
 - **Mirroring closes (mild).** When full mirror is *off*: a close is mirrored
   here **only** for a placeholder tab you never opened (tagged with the source
   device/profile, so tabs you've opened or created yourself are never touched).
