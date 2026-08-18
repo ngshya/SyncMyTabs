@@ -425,7 +425,12 @@ async function updateEventsBookmark(profileFolderId, eventsObj) {
 }
 
 // Pure: given each device's {o,c} events, the set of URLs currently open
-// (newest open strictly newer than newest close).
+// (newest open strictly newer than newest close). Also returns the
+// winning open time per URL (openT) so a device that mirrors a URL in
+// can inherit its TRUE open time instead of inventing a fresh one (see
+// rememberMirroredOpenTimes) — inventing "now" here would let a device
+// that's slow to hear about a remote close race ahead of that close's
+// timestamp merely by saving on its own schedule, resurrecting the tab.
 function computeEffectiveOpen(perDeviceEvents) {
   const openT = {};
   const closeT = {};
@@ -442,7 +447,7 @@ function computeEffectiveOpen(perDeviceEvents) {
   for (const u of Object.keys(openT)) {
     if (openT[u] > (closeT[u] || 0)) present.add(u);
   }
-  return { present, known };
+  return { present, known, openT };
 }
 
 // Pending close tombstones recorded locally (by tab-close events),
@@ -467,6 +472,25 @@ async function takeLocalCloseTimes(profile) {
     await browser.storage.local.set({ localCloseTimes: map });
   }
   return forProfile;
+}
+
+// True open times for URLs this device just mirrored in from another
+// device (see reconcileFullMirror), remembered so that when THIS
+// device's own "_events" first records o[url] it inherits the real
+// open time instead of stamping Date.now(). Without this, a device
+// that's slow to hear about a remote close (normal bookmark-sync lag)
+// could save on its own schedule, invent an open time newer than that
+// close, and win the open/close race — reopening/resurrecting a tab
+// that was legitimately closed elsewhere. Consumed (and cleared) the
+// first time this profile's own "_events" is saved after mirroring.
+async function rememberMirroredOpenTimes(profile, map) {
+  if (!map || !Object.keys(map).length) return;
+  const { mirroredOpenTimes } = await browser.storage.local.get(
+    "mirroredOpenTimes"
+  );
+  const all = mirroredOpenTimes || {};
+  all[profile] = { ...(all[profile] || {}), ...map };
+  await browser.storage.local.set({ mirroredOpenTimes: all });
 }
 
 // The device's currently-open, real (non-placeholder) http(s) URLs.
@@ -517,7 +541,7 @@ async function reconcileFullMirror(profileArg) {
       if (b.url && !isProfileMetaTitle(b.title)) titleByUrl[b.url] = b.title;
     }
   }
-  const { present, known } = computeEffectiveOpen(perDevice);
+  const { present, known, openT } = computeEffectiveOpen(perDevice);
 
   // Index local tabs by their real URL.
   const localByUrl = new Map();
@@ -551,6 +575,12 @@ async function reconcileFullMirror(profileArg) {
     if (!localByUrl.has(u)) toOpen.push({ url: u, title: titleByUrl[u] || u });
   }
   if (toOpen.length) {
+    // Remember each URL's TRUE (aggregated) open time before mirroring
+    // it in, so this device's own next save inherits it instead of
+    // inventing "now" — see rememberMirroredOpenTimes.
+    const times = {};
+    for (const e of toOpen) times[e.url] = openT[e.url] || Date.now();
+    await rememberMirroredOpenTimes(profile, times);
     await performAdd(toOpen, { profile });
   }
 }
@@ -679,10 +709,24 @@ async function saveOpenTabs() {
     const existingEvents = parseEvents(
       existingBookmarks.find((b) => b.url && b.title === EVENTS_TITLE)
     );
+    const { mirroredOpenTimes } = await browser.storage.local.get(
+      "mirroredOpenTimes"
+    );
+    const mirroredForProfile = (mirroredOpenTimes && mirroredOpenTimes[profile]) || {};
     const now = Date.now();
     const o = {};
     for (const entry of newEntries) {
-      o[entry.url] = existingEvents.o[entry.url] || now;
+      // Preserve a known open time; otherwise inherit the true open
+      // time remembered from mirroring this URL in (see
+      // rememberMirroredOpenTimes); only invent "now" as a last resort,
+      // for a URL genuinely opened locally for the first time.
+      o[entry.url] =
+        existingEvents.o[entry.url] || mirroredForProfile[entry.url] || now;
+    }
+    if (Object.keys(mirroredForProfile).length) {
+      const all = mirroredOpenTimes || {};
+      delete all[profile];
+      await browser.storage.local.set({ mirroredOpenTimes: all });
     }
     const pendingCloses = await takeLocalCloseTimes(profile);
     const c = { ...existingEvents.c, ...pendingCloses };
@@ -896,12 +940,65 @@ browser.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// A user-initiated tab close: tombstone the URL(s) that this device had
-// open but no longer does, so the close propagates to the other devices.
-// Detected by diffing this device's saved open set against the live tabs
-// (robust — no fragile tabId->URL map). Safety rails: never on
+// Directly removes the bookmark(s) for `urls` from this device's OWN
+// profile folder and records their close tombstones in "_events" — a
+// small, targeted write done right when the user closes a tab, instead
+// of waiting for the next periodic saveOpenTabs (which clears and
+// recreates every tab bookmark). This is what actually makes a close
+// immediate and durable: the bookmark is gone from the folder right
+// away, not just tombstoned in local storage until some later save.
+async function removeClosedTabBookmarks(deviceName, profile, urls) {
+  const root = await getOrCreateRootFolder();
+  const deviceChildren = await browser.bookmarks.getChildren(root.id);
+  const deviceFolder = deviceChildren.find(
+    (c) => !c.url && c.title === deviceName
+  );
+  if (!deviceFolder) return;
+  const profileChildren = await browser.bookmarks.getChildren(deviceFolder.id);
+  const profileFolder = profileChildren.find(
+    (c) => !c.url && c.title === profile
+  );
+  if (!profileFolder) return;
+
+  const children = await browser.bookmarks.getChildren(profileFolder.id);
+  const urlSet = new Set(urls);
+
+  for (const child of children) {
+    if (
+      child.url &&
+      !isProfileMetaTitle(child.title) &&
+      urlSet.has(child.url)
+    ) {
+      try {
+        await browser.bookmarks.remove(child.id);
+      } catch (e) {}
+    }
+  }
+
+  if (await fullMirrorEnabled()) {
+    const events = parseEvents(
+      children.find((b) => b.url && b.title === EVENTS_TITLE)
+    );
+    // Pick up the tombstones the caller just staged (plus any left over
+    // from a previous run that never got flushed, as a safety net).
+    const pending = await takeLocalCloseTimes(profile);
+    const c = { ...events.c, ...pending };
+    await updateEventsBookmark(profileFolder.id, { o: events.o, c });
+  }
+
+  await updateLastSyncBookmark(profileFolder.id, deviceName, profile);
+  // Bump this device's own status so other devices on the same profile
+  // notice the close right away (event-driven, no polling).
+  await updateStatusBookmark(deviceFolder.id, deviceName, profile);
+}
+
+// A user-initiated tab close: remove the corresponding bookmark(s) from
+// this device's own folder immediately, and record close tombstones in
+// "_events" so the close propagates to other devices on the same
+// profile. Detected by diffing this device's saved open set against the
+// live tabs (robust — no fragile tabId->URL map). Safety rails: never on
 // window/browser close (that would wipe the session everywhere), and
-// never for our own reconcile-driven closes.
+// never for our own reconcile-driven closes (selfClosingTabIds).
 browser.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
   if (removeInfo && removeInfo.isWindowClosing) return; // shutdown/window close
   if (selfClosingTabIds.has(tabId)) {
@@ -917,18 +1014,26 @@ browser.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
 
   // URLs this device had saved (its contribution) that are no longer open
   // — that's what the user just closed. A URL still open in another tab
-  // stays in `current`, so duplicates are handled naturally.
+  // stays in `current`, so duplicates are handled naturally. This is not
+  // affected by the origin (sd/sp) of a tab: what matters here is only
+  // what THIS device previously saved as its own contribution vs. what's
+  // live now — a tab that started as a placeholder from another device
+  // and was since opened here is, by that point, indistinguishable from
+  // any other of this device's own tabs (placeholderInfo() returns null
+  // for it), so closing it is handled the same way.
   const prev = await getTabEntriesForDeviceProfile(deviceName, profile);
   const current = await currentOwnUrls();
   const now = Date.now();
-  let closedAny = false;
+  const closedUrls = [];
   for (const entry of prev) {
     if (!current.has(entry.url)) {
       await addLocalCloseTime(profile, entry.url, now);
-      closedAny = true;
+      closedUrls.push(entry.url);
     }
   }
-  if (closedAny) await saveOpenTabs(); // flush tombstones + bump status
+  if (closedUrls.length) {
+    await removeClosedTabBookmarks(deviceName, profile, closedUrls);
+  }
 });
 
 browser.bookmarks.onCreated.addListener(async (id, node) => {
