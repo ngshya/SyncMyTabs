@@ -15,11 +15,11 @@ document.getElementById("syncToggle").addEventListener("change", async (e) => {
 });
 
 async function refresh() {
-  const { deviceName, syncIntervalMinutes, lastSeenTimestamp } =
+  const { deviceName, syncIntervalMinutes, lastActivityTimestamp } =
     await browser.storage.local.get([
       "deviceName",
       "syncIntervalMinutes",
-      "lastSeenTimestamp",
+      "lastActivityTimestamp",
     ]);
 
   document.getElementById("deviceName").textContent =
@@ -27,19 +27,22 @@ async function refresh() {
   document.getElementById("interval").textContent = syncIntervalMinutes
     ? `${syncIntervalMinutes} min`
     : "1 min (default)";
-  document.getElementById("lastSeen").textContent = lastSeenTimestamp
-    ? new Date(lastSeenTimestamp).toLocaleString()
+  document.getElementById("lastActivity").textContent = lastActivityTimestamp
+    ? new Date(lastActivityTimestamp).toLocaleString()
     : "none";
+}
+
+async function knownProfiles() {
+  const { profiles } = await browser.runtime.sendMessage({
+    type: "GET_ALL_KNOWN_PROFILES",
+  });
+  return profiles && profiles.length ? profiles : [DEFAULT_PROFILE];
 }
 
 async function refreshActiveProfileSelect() {
   const { activeProfile } = await browser.storage.local.get("activeProfile");
   const active = activeProfile || DEFAULT_PROFILE;
-
-  const { profiles } = await browser.runtime.sendMessage({
-    type: "GET_ALL_KNOWN_PROFILES",
-  });
-  const list = profiles && profiles.length ? profiles : [DEFAULT_PROFILE];
+  const list = await knownProfiles();
 
   const select = document.getElementById("activeProfileSelect");
   select.innerHTML = "";
@@ -72,13 +75,28 @@ document
     }, 1200);
   });
 
-async function refreshDeviceList() {
-  const select = document.getElementById("deviceSelect");
-  const { devices } = await browser.runtime.sendMessage({
-    type: "GET_DEVICES",
-  });
-
+async function refreshRestoreProfileSelect() {
+  const select = document.getElementById("restoreProfileSelect");
+  const list = await knownProfiles();
   select.innerHTML = "";
+  for (const name of list) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
+  }
+  await refreshDeviceList(select.value);
+}
+
+async function refreshDeviceList(profile) {
+  const select = document.getElementById("deviceSelect");
+  select.innerHTML = "";
+  if (!profile) return;
+
+  const { devices } = await browser.runtime.sendMessage({
+    type: "GET_DEVICES_FOR_PROFILE",
+    profile,
+  });
 
   if (!devices || devices.length === 0) {
     const opt = document.createElement("option");
@@ -87,7 +105,6 @@ async function refreshDeviceList() {
     select.appendChild(opt);
     document.getElementById("restoreReplace").disabled = true;
     document.getElementById("restoreAdd").disabled = true;
-    document.getElementById("profileSelect").innerHTML = "";
     return;
   }
 
@@ -99,39 +116,11 @@ async function refreshDeviceList() {
   }
   document.getElementById("restoreReplace").disabled = false;
   document.getElementById("restoreAdd").disabled = false;
-
-  await refreshProfileList(select.value);
-}
-
-async function refreshProfileList(deviceName) {
-  const profileSelect = document.getElementById("profileSelect");
-  profileSelect.innerHTML = "";
-  if (!deviceName) return;
-
-  const { profiles } = await browser.runtime.sendMessage({
-    type: "GET_PROFILES_FOR_DEVICE",
-    device: deviceName,
-  });
-
-  if (!profiles || profiles.length === 0) {
-    const opt = document.createElement("option");
-    opt.textContent = "No profiles found";
-    opt.disabled = true;
-    profileSelect.appendChild(opt);
-    return;
-  }
-
-  for (const name of profiles) {
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = name;
-    profileSelect.appendChild(opt);
-  }
 }
 
 document
-  .getElementById("deviceSelect")
-  .addEventListener("change", (e) => refreshProfileList(e.target.value));
+  .getElementById("restoreProfileSelect")
+  .addEventListener("change", (e) => refreshDeviceList(e.target.value));
 
 document.getElementById("syncNow").addEventListener("click", async () => {
   const btn = document.getElementById("syncNow");
@@ -139,22 +128,21 @@ document.getElementById("syncNow").addEventListener("click", async () => {
   btn.textContent = "Syncing...";
   btn.disabled = true;
 
-  const result = await browser.runtime.sendMessage({ type: "SYNC_NOW" });
-
-  btn.textContent = result?.updateFound ? "Update found ✓" : "No update found";
+  await browser.runtime.sendMessage({ type: "SYNC_NOW" });
+  btn.textContent = "Synced ✓";
 
   await refresh();
-  await refreshDeviceList();
+  await refreshRestoreProfileSelect();
 
   setTimeout(() => {
     btn.textContent = original;
     btn.disabled = false;
-  }, 1800);
+  }, 1200);
 });
 
 async function handleManualRestore(mode) {
+  const profile = document.getElementById("restoreProfileSelect").value;
   const device = document.getElementById("deviceSelect").value;
-  const profile = document.getElementById("profileSelect").value;
   const statusEl = document.getElementById("restoreStatus");
   if (!device || !profile) return;
 
@@ -190,4 +178,4 @@ document.getElementById("version").textContent =
 refreshSyncState();
 refresh();
 refreshActiveProfileSelect();
-refreshDeviceList();
+refreshRestoreProfileSelect();

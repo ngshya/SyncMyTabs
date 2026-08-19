@@ -1,12 +1,10 @@
 const nameInput = document.getElementById("deviceName");
 const intervalInput = document.getElementById("intervalMinutes");
-const timeoutInput = document.getElementById("notificationTimeoutSeconds");
-const defaultActionSelect = document.getElementById("defaultTimeoutAction");
 const lazyInput = document.getElementById("openRestoredLazy");
-const mirrorInput = document.getElementById("mirrorRemoteCloses");
-const fullMirrorInput = document.getElementById("fullSessionMirror");
+const ttlEnabledInput = document.getElementById("ttlEnabled");
+const ttlDaysInput = document.getElementById("ttlDays");
 const status = document.getElementById("status");
-const lastSeenEl = document.getElementById("lastSeen");
+const lastActivityEl = document.getElementById("lastActivity");
 const profileListEl = document.getElementById("profileList");
 const newProfileInput = document.getElementById("newProfileName");
 
@@ -16,8 +14,6 @@ document.getElementById("version").textContent =
   "v" + browser.runtime.getManifest().version;
 
 async function getKnownProfiles() {
-  // Union of profiles that exist anywhere in the synced bookmark
-  // tree (any device) plus this device's own locally-added ones.
   const { profiles } = await browser.runtime.sendMessage({
     type: "GET_ALL_KNOWN_PROFILES",
   });
@@ -79,7 +75,7 @@ async function renderProfiles() {
 
 async function setActiveProfile(name) {
   await browser.storage.local.set({ activeProfile: name });
-  // Immediately save tabs under the newly active profile, instead of
+  // Immediately reconcile under the newly active profile, instead of
   // waiting for the next alarm cycle.
   await browser.runtime.sendMessage({ type: "SWITCH_PROFILE_AND_SAVE" });
   await renderProfiles();
@@ -88,9 +84,8 @@ async function setActiveProfile(name) {
 async function removeProfileFromLocalList(name) {
   // Only removes it from THIS device's local "profiles" list (the
   // picker). It does not delete any bookmark data — a profile that
-  // still exists as a folder on any device (this one or another)
-  // will keep showing up here too, since the picker is the union of
-  // local + synced names.
+  // still exists as a folder on any device will keep showing up here
+  // too, since the picker is the union of local + synced names.
   const { profiles } = await browser.storage.local.get("profiles");
   const list = profiles && profiles.length ? profiles : [DEFAULT_PROFILE];
   const remaining = list.filter((p) => p !== name);
@@ -118,34 +113,27 @@ browser.storage.local
   .get([
     "deviceName",
     "syncIntervalMinutes",
-    "notificationTimeoutSeconds",
-    "defaultTimeoutAction",
     "openRestoredLazy",
-    "mirrorRemoteCloses",
-    "fullSessionMirror",
-    "lastSeenTimestamp",
+    "ttlEnabled",
+    "ttlDays",
+    "lastActivityTimestamp",
   ])
   .then(
     ({
       deviceName,
       syncIntervalMinutes,
-      notificationTimeoutSeconds,
-      defaultTimeoutAction,
       openRestoredLazy,
-      mirrorRemoteCloses,
-      fullSessionMirror,
-      lastSeenTimestamp,
+      ttlEnabled,
+      ttlDays,
+      lastActivityTimestamp,
     }) => {
       if (deviceName) nameInput.value = deviceName;
       if (syncIntervalMinutes) intervalInput.value = syncIntervalMinutes;
-      if (notificationTimeoutSeconds)
-        timeoutInput.value = notificationTimeoutSeconds;
-      defaultActionSelect.value = defaultTimeoutAction || "add";
       lazyInput.checked = openRestoredLazy !== false; // default ON
-      mirrorInput.checked = mirrorRemoteCloses !== false; // default ON
-      fullMirrorInput.checked = fullSessionMirror !== false; // default ON
-      lastSeenEl.textContent = lastSeenTimestamp
-        ? new Date(lastSeenTimestamp).toLocaleString()
+      ttlEnabledInput.checked = ttlEnabled !== false; // default ON
+      ttlDaysInput.value = ttlDays || 21;
+      lastActivityEl.textContent = lastActivityTimestamp
+        ? new Date(lastActivityTimestamp).toLocaleString()
         : "none";
     }
   );
@@ -155,8 +143,7 @@ renderProfiles();
 document.getElementById("save").addEventListener("click", async () => {
   const name = nameInput.value.trim();
   const interval = Number(intervalInput.value);
-  const notificationTimeout = Number(timeoutInput.value);
-  const defaultAction = defaultActionSelect.value;
+  const ttlDays = Number(ttlDaysInput.value);
 
   if (!name) {
     status.textContent = "Please enter a valid name.";
@@ -168,8 +155,8 @@ document.getElementById("save").addEventListener("click", async () => {
     status.style.color = "#dc2626";
     return;
   }
-  if (!notificationTimeout || notificationTimeout < 1) {
-    status.textContent = "The notification timeout must be at least 1 second.";
+  if (ttlEnabledInput.checked && (!ttlDays || ttlDays < 1)) {
+    status.textContent = "The cleanup threshold must be at least 1 day.";
     status.style.color = "#dc2626";
     return;
   }
@@ -177,15 +164,15 @@ document.getElementById("save").addEventListener("click", async () => {
   await browser.storage.local.set({
     deviceName: name,
     syncIntervalMinutes: interval,
-    notificationTimeoutSeconds: notificationTimeout,
-    defaultTimeoutAction: defaultAction,
     openRestoredLazy: lazyInput.checked,
-    mirrorRemoteCloses: mirrorInput.checked,
-    fullSessionMirror: fullMirrorInput.checked,
+    ttlEnabled: ttlEnabledInput.checked,
+    ttlDays: ttlDays || 21,
   });
 
-  status.textContent = `Saved: "${name}", checking every ${interval} min, notification timeout ${notificationTimeout}s, default action "${defaultAction}", lazy restore ${
+  status.textContent = `Saved: "${name}", checking every ${interval} min, lazy restore ${
     lazyInput.checked ? "on" : "off"
+  }, cleanup ${
+    ttlEnabledInput.checked ? `after ${ttlDays} days` : "off"
   }. Closing this tab...`;
   status.style.color = "#16a34a";
 
