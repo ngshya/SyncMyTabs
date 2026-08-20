@@ -33,7 +33,7 @@ const ROOT_NAME = "SyncMyTabs";
 const LEGACY_ROOT_NAMES = ["OpenTabSync", "Live Tabs Sync"];
 
 const DEFAULT_PROFILE = "default";
-const DEFAULT_TTL_DAYS = 1;
+const DEFAULT_TTL_DAYS = 14;
 const DEFAULT_INTERVAL_MINUTES = 1;
 
 // Bookmark tree shape (see CLAUDE.md):

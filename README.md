@@ -83,7 +83,7 @@ so there's never a conflicting write to the same bookmark.
   changes** — there's no polling, no need to wait for the periodic check.
 - **Cleanup (TTL).** If a device is uninstalled, or otherwise never comes back
   to agree "closed", its bookmark would otherwise linger forever. A
-  configurable safety net (default on, **1 day**) deletes any device bookmark
+  configurable safety net (default on, **14 days**) deletes any device bookmark
   that hasn't been touched in that long; a URL folder disappears once every
   bookmark left in it (after that pruning) is closed, or none remain. A tab
   you keep genuinely open is refreshed automatically well before that
@@ -146,7 +146,7 @@ Everything — status and settings alike — lives in one place: the **popup**
   regardless; this only controls the background double-check cadence.
 - **Lazy restore** (default on) — open mirrored-in tabs as placeholders that
   don't load from the network until you view each one.
-- **Cleanup / TTL** (default on, **1 day**) — delete a device's bookmark
+- **Cleanup / TTL** (default on, **14 days**) — delete a device's bookmark
   entry if it hasn't been updated in this many days (safety net for a device
   that never comes back to agree "closed").
 - **Sync now** — force an immediate check in both directions.

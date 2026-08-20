@@ -57,7 +57,7 @@ async function loadSettings() {
   intervalInput.value = syncIntervalMinutes || 1;
   lazyInput.checked = openRestoredLazy !== false; // default ON
   ttlEnabledInput.checked = ttlEnabled !== false; // default ON
-  ttlDaysInput.value = ttlDays || 21;
+  ttlDaysInput.value = ttlDays || 14;
   document.getElementById("lastActivity").textContent = lastActivityTimestamp
     ? new Date(lastActivityTimestamp).toLocaleString()
     : "none";
@@ -98,7 +98,7 @@ ttlDaysInput.addEventListener("change", async () => {
   const days = Number(ttlDaysInput.value);
   if (!days || days < 1) {
     flashStatus("Cleanup threshold must be at least 1 day", true);
-    ttlDaysInput.value = 21;
+    ttlDaysInput.value = 14;
     return;
   }
   await browser.storage.local.set({ ttlDays: days });

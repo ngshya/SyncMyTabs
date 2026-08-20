@@ -256,7 +256,7 @@ limitations).
   `cleanupProfileFolder` (as a periodic backstop) delete the whole folder —
   safe for any device to do, since by then nobody is writing to those
   bookmarks anymore.
-- **TTL cleanup** (`ttlEnabled`/`ttlDays` in storage, default on/**1 day**)
+- **TTL cleanup** (`ttlEnabled`/`ttlDays` in storage, default on/**14 days**)
   is the escape hatch for a device that's gone for good and will never come
   back to agree "closed". It is evaluated **per device entry, not per
   folder**: each device's own status bookmark is checked independently
