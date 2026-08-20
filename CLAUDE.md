@@ -190,21 +190,50 @@ limitations).
   `t`=state-change time, `h`=heartbeat time. **A device only ever writes its
   own status bookmark** — never another device's — so there is never a
   concurrent write to the same bookmark. This is the property that makes the
-  whole design safe; don't introduce a code path where one device edits
-  another's status bookmark (TTL-driven removal of a stale entry, or bulk
-  deletion of a folder everyone already agrees is fully `closed`, are the
-  sanctioned exceptions — see cleanup below).
-- **Closing is per-device and STICKY — not timestamp-voted.** This is the
-  key behavioral difference from v3. Once a device's own status bookmark
-  exists in a folder — open OR closed — only **that device's own** later
-  open/close actions on that URL ever change it again. It is never
-  overridden by another device's state, in either direction: a device that's
-  already closed its copy is never silently reopened just because others are
-  still open, and a device that's still open is never forced closed just
-  because another device closed. A device with no bookmark of its own yet
-  mirrors in whatever's open elsewhere (see `reconcileMirror`'s `mine`
-  check). This intentionally replaces v3's `latestOpenT > latestCloseT`
-  cross-device precedence formula.
+  whole design safe; don't introduce a NEW code path where one device edits
+  another's status bookmark beyond the three sanctioned exceptions: TTL-
+  driven removal of a stale entry, bulk deletion of a folder everyone
+  already agrees is fully `closed` (see cleanup below), and
+  `resetClosedPeers` deleting a peer's stale `closed` entry on a fresh
+  open/reopen (see the CONTAGIOUS bullet right below).
+- **Closing is CONTAGIOUS, not per-device-final.** The moment ANY device's
+  own status bookmark in a folder reads `closed`, `reconcileMirror` makes
+  every OTHER device that still shows `open` follow suit: it closes its own
+  matching tab(s) (via `env.tabs.remove`) and flips its own status bookmark
+  to `closed` too — see the `anyClosed` branch. This cascades until every
+  device agrees closed, at which point the folder is deleted (see below). A
+  device with no bookmark of its own yet still mirrors in whatever's open
+  elsewhere, exactly as before — but once ANYONE has started closing a URL,
+  no device mirrors it in anymore (`if (anyClosed) { ...; continue; }` skips
+  the open-mirroring branch entirely for that URL). This is a REMOTE-DRIVEN
+  close, driven by an unambiguous bookmark-state signal, not an inference
+  from this device's own tab snapshot — see the SAFETY RULE below for why
+  that distinction matters and why it's still fine for this to run from
+  every trigger (alarm/startup/bookmark-event), unlike `closeMyGoneTabs`.
+  (An earlier iteration of this design made a device's own close "sticky" —
+  final for that device, never overridden by another's state. That was
+  reverted: closing a tab anywhere now closes it everywhere.)
+- **Reopening propagates too — `resetClosedPeers`.** Close-contagion alone
+  left a real gap: a device that had already followed a peer's close stayed
+  closed forever, even after that peer reopened — nothing told it to catch
+  up. `reconcileMyOpenEntries` closes this gap: whenever THIS device
+  freshly opens a URL (the `!mine` branch) or genuinely reopens one (the
+  `mine.state === "closed"` branch), it calls `resetClosedPeers`, which
+  deletes every OTHER device's entry in that folder that currently reads
+  `closed` — never one that's still `open`. Once deleted, that peer has "no
+  entry of its own" left, so its own next reconcile naturally re-mirrors
+  the URL back in as open, via the ordinary `!mine` open-mirroring branch —
+  no separate "force open remotely" mechanism needed. Deliberately NOT
+  called from the heartbeat-refresh branch (`mine.state` already `open`,
+  just bumping `h`) — only from a genuine, one-time local open/reopen
+  action — otherwise one device's periodic heartbeat could repeatedly undo
+  a peer's LATER, independent, intentional close, an infinite forced-reopen
+  loop. Known trade-off, accepted as-is: this can't distinguish a peer's
+  STALE closed entry (left over from following an earlier close that's now
+  been undone) from that same peer's own CURRENT, independent close for
+  unrelated reasons — both look identical in the bookmark tree, so a
+  reopen anywhere will force a reopen on every currently-closed peer,
+  regardless of why each one is closed. See `test/reopen-propagation.test.js`.
 - **`t` vs `h` — do not conflate them.** `t` only ever moves on a genuine
   local open/close transition. `h` is bumped by routine liveness heartbeats
   so TTL cleanup doesn't sweep a tab that's simply been open a long time.
@@ -233,6 +262,13 @@ limitations).
   case a tab is registered a little late, which self-heals on the next
   trigger, never destructive. Preserve this asymmetry if you touch the
   reconcile pipeline.
+  **This rule is specifically about closeMyGoneTabs** (inferring a close
+  from THIS device's own, possibly-incomplete tab snapshot) and is
+  unaffected by — and doesn't apply to — `reconcileMirror`'s contagious
+  close (above): that one acts on an explicit, unambiguous REMOTE signal
+  (another device's bookmark already reads `closed`), not an inference, so
+  it's safe to run from every trigger, including the alarm and `onStartup`.
+  Don't conflate the two when reasoning about this code.
 - **`snapshotOwnTabs` skips tabs still loading** (`status !== "complete"`).
   A tab's url/pendingUrl can pass through transient values while
   navigating (a redirect chain, for instance); registering one of those
@@ -266,14 +302,15 @@ limitations).
   safety rule above), and without it from the alarm, `onStartup`, and
   reactions to bookmark create/change events under the active profile
   folder.
-- **Closing propagates as an event, but deletion needs full agreement.** A
-  close never deletes anything immediately — it flips the device's own
-  bookmark to `closed`, an observable event other devices react to per the
-  sticky rule above. Only once **every** device that ever weighed in on a
-  URL shows closed does `reconcileMirror` (immediately) or
-  `cleanupProfileFolder` (as a periodic backstop) delete the whole folder —
-  safe for any device to do, since by then nobody is writing to those
-  bookmarks anymore.
+- **A close always propagates, but folder deletion still needs everyone
+  actually closed first.** A close never deletes anything immediately — it
+  flips the device's own bookmark to `closed`, which (per the contagious
+  rule above) makes every other device close in turn. Only once **every**
+  device that ever weighed in on a URL shows closed does `reconcileMirror`
+  (immediately, on whichever device's own write happens to be the one that
+  notices everyone's now closed) or `cleanupProfileFolder` (as a periodic
+  backstop) delete the whole folder — safe for any device to do, since by
+  then nobody is writing to those bookmarks anymore.
 - **TTL cleanup** (`ttlEnabled`/`ttlDays` in storage, default on/**14 days**)
   is the escape hatch for a device that's gone for good and will never come
   back to agree "closed". It is evaluated **per device entry, not per
@@ -364,7 +401,7 @@ exist (same cross-browser rule as the rest of the codebase).
 - **Config, not tab state — different sync model on purpose.** Unlike
   open/closed tab entries, a group's rules are just replaced wholesale on
   every edit (`setGroupSettings` deletes the old rule set, writes the new
-  one) — there's no per-device-final/sticky semantics here, because unlike
+  one) — there's no contagion/propagation semantics here, because unlike
   a tab's open/closed state, group rules aren't something each device
   independently observes; they're shared configuration a user edits from
   any device. Two devices editing the SAME group concurrently is
@@ -417,13 +454,19 @@ exist (same cross-browser rule as the rest of the codebase).
 
 - Chrome/Brave and Firefox are both supported targets (see **Cross-browser
   support** above).
-- **A device's own close is sticky, not timestamp-voted** (see the
+- **Closing (and reopening) is contagious, not per-device-final** (see the
   Architecture section above) — there is no shared clock and no cross-device
-  "who's newer" comparison anymore. This is architectural and deliberate per
-  the user's own spec for the v4 redesign: a URL can legitimately stay open
-  on one device indefinitely after every other device has closed its copy,
-  until that one device closes its own tab too. Don't "fix" this into a
-  timestamp-voted model without discussion.
+  "who's newer" comparison; a close anywhere closes everywhere, and a reopen
+  anywhere resets any peer that's currently closed so it re-mirrors back in
+  too. This is architectural and deliberate, confirmed explicitly with the
+  user after an earlier "sticky" iteration (a device's own close was final,
+  never overridden by another's state) was found to not match what was
+  actually wanted. Known, accepted trade-off: `resetClosedPeers` can't tell
+  a peer's STALE closed entry (left over from an earlier close that's since
+  been undone) apart from that same peer's own CURRENT, independent close —
+  so a reopen anywhere forces a reopen on every currently-closed peer,
+  regardless of why each one is closed. Don't "fix" this into a
+  per-device-final model without discussion.
 - No migration from pre-4.0 versions. An upgrading user's old
   `SyncMyTabs/<profile>/…` (v3, flat per-(device,url) bookmarks) or
   `SyncMyTabs/<device>/…` (pre-3.0) tree is left in place, unused. Don't add
@@ -434,7 +477,7 @@ exist (same cross-browser rule as the rest of the codebase).
   stable cross-device key) — see its own section above. Group RULES are
   last-write-wins on concurrent cross-device edits (config data, not tab
   state — see that section for why this is a different, and accepted,
-  trade-off from the sticky tab-close model). A tab dragged into a group
+  trade-off from the tab-close model). A tab dragged into a group
   after its page already loaded doesn't get leashing until reloaded, by
   design (see that section's content-script note) — don't "fix" this by
   reverting to intercepting every click on every page.

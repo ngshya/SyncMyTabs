@@ -25,7 +25,7 @@ test("a tab opened directly inside a group is never synced", async () => {
   assert.deepEqual(b.openUrls(), [], "a grouped tab must never mirror to another device");
 });
 
-test("dragging an already-synced tab into a group stops tracking it (closes the entry, leaves the tab open)", async () => {
+test("dragging an already-synced tab into a group stops tracking it (closes the entry, leaves A's own tab open, and propagates the close to B)", async () => {
   const world = new SimWorld();
   const a = world.addDevice({ deviceName: "A" });
   const b = world.addDevice({ deviceName: "B" });
@@ -41,19 +41,25 @@ test("dragging an already-synced tab into a group stops tracking it (closes the 
 
   assert.ok(
     a.openUrls().includes("https://example.com/"),
-    "the grouped tab itself must stay open locally"
+    "the grouped tab itself must stay open locally — grouping never closes a tab, only stops tracking it"
   );
-  const mine = await a.myEntries("default");
-  const entry = mine.find((e) => e.real === "https://example.com/");
-  assert.equal(entry.state, "closed", "no-longer-tracked entry should read as closed");
 
-  // A's own entry now reads closed, but per the sticky close model that
-  // never forces B's already-mirrored-in copy closed too — B's own status
-  // bookmark is final once it exists, unaffected by A's later state.
-  await b.tick();
-  assert.ok(
+  // The moment A's own entry reads closed (from A's point of view the
+  // URL is simply no longer tracked), the contagious close model
+  // propagates it to B too — B's mirrored (real, ungrouped) tab is
+  // actually closed, and since both devices now agree closed, the
+  // whole folder is gone. All of this resolves within the same
+  // reconcile cascade the tab-group drag's next live event triggered.
+  assert.equal(
     b.openUrls().includes("https://example.com/"),
-    "B's own mirrored copy is sticky and stays open regardless of A's entry"
+    false,
+    "B follows A's (tracking-loss-driven) close"
+  );
+  const all = await world.allEntries("default");
+  assert.equal(
+    all.some((e) => e.real === "https://example.com/"),
+    false,
+    "example.com's folder is gone once both devices agree closed"
   );
 });
 

@@ -364,11 +364,39 @@ function createSyncEngine(env) {
     return byUrl;
   }
 
+  // Deletes any OTHER device's stale "closed" bookmark in a folder —
+  // called only when THIS device just freshly opened/reopened that URL
+  // (a genuine, one-time local action), never on a routine heartbeat
+  // refresh of an already-open entry (that would let one device's
+  // periodic heartbeat repeatedly undo a peer's later, INDEPENDENT,
+  // intentional close — an infinite forced-reopen loop). This is the
+  // open-propagation mirror of reconcileMirror's close-contagion: once
+  // deleted, that peer has "no entry of its own" left in the folder, so
+  // its own next reconcile naturally re-mirrors the URL back in as open
+  // (same `!mine` branch as a device joining fresh) — closing this
+  // session's earlier close-then-reopen gap, where a peer that had
+  // already caught up to the close was otherwise stuck closed forever.
+  // A device that's still OPEN is never touched. Third sanctioned
+  // exception (with TTL sweep and full-agreement folder deletion) to
+  // "a device only ever writes its own status bookmark" — see CLAUDE.md.
+  async function resetClosedPeers(folderEntry, deviceName) {
+    for (const [peerName, list] of folderEntry.devices) {
+      if (peerName === deviceName) continue;
+      for (const entry of list) {
+        if (entry.state !== "closed") continue;
+        try {
+          await env.bookmarks.remove(entry.id);
+        } catch (e) {}
+      }
+    }
+  }
+
   // Registers/refreshes THIS device's own "open" entries against its
   // live tabs. Safe to call from anywhere — it only ever creates a new
   // URL folder, creates/refreshes an "open" entry, or revives a
-  // "closed" one a tab was genuinely reopened at; it never closes
-  // anything.
+  // "closed" one a tab was genuinely reopened at (also resetting any
+  // OTHER device's stale "closed" entry so it re-mirrors in too — see
+  // resetClosedPeers above); it never closes anything of its own.
   async function reconcileMyOpenEntries(profileFolderId, deviceName) {
     const entries = await readProfileEntries(profileFolderId);
 
@@ -423,6 +451,7 @@ function createSyncEngine(env) {
             url: buildDeviceStatusUrl({ state: "open", t: now, h: now }),
           });
         } catch (e) {}
+        await resetClosedPeers(folderEntry, deviceName);
       } else if (mine.state === "closed") {
         // Genuine reopen: always safe to record, regardless of when
         // it's detected.
@@ -431,6 +460,7 @@ function createSyncEngine(env) {
             url: buildDeviceStatusUrl({ state: "open", t: now, h: now }),
           });
         } catch (e) {}
+        await resetClosedPeers(folderEntry, deviceName);
       } else if (now - mine.h > heartbeatMs) {
         // Still open: only bump the heartbeat, never `t` — otherwise a
         // routine liveness touch could outrace a genuine close recorded
@@ -464,18 +494,32 @@ function createSyncEngine(env) {
   }
 
   // Mirrors the shared state onto this device's live tabs, and deletes
-  // any URL folder every device has now closed. Per-device state is
-  // NOT re-derived from a cross-device timestamp vote (the old model):
-  // once THIS device's own entry says "closed", it stays closed here
-  // regardless of what other devices still show — only this device's
-  // own genuine open/close actions (reconcileMyOpenEntries /
-  // closeMyGoneTabs) ever change it. A device that hasn't weighed in
-  // yet (no entry of its own) mirrors in whatever's open elsewhere.
+  // any URL folder every device has now closed. Close is CONTAGIOUS: the
+  // moment ANY device's entry in a folder reads "closed", every OTHER
+  // device that still shows "open" follows — closing its own matching
+  // tab(s) (if it currently has any) and flipping its own entry to
+  // "closed" too — until eventually every device agrees closed and the
+  // folder is deleted (by whichever device's own write happens to be
+  // the one that notices "now they're all closed", via that device's
+  // own immediate follow-up reconcile — see CLAUDE.md). A device that
+  // hasn't weighed in AT ALL yet (no entry of its own) mirrors in
+  // whatever's open elsewhere, same as before, but never once anyone
+  // has started closing it — see the isRelevantBookmarkChange trigger
+  // for why this reacts near-instantly to another device's write.
+  //
+  // This is a REMOTE-DRIVEN close, not an inference from this device's
+  // own (possibly incomplete) tab snapshot — the bookmark tree is the
+  // unambiguous signal here, so it's safe to run from every trigger
+  // (alarm/startup/bookmark-event), unlike closeMyGoneTabs (see its own
+  // comment and the SAFETY RULE in CLAUDE.md, which is about a
+  // DIFFERENT failure mode and still fully applies to closeMyGoneTabs).
   async function reconcileMirror(profileFolderId, deviceName) {
     const entries = await readProfileEntries(profileFolderId);
-    const { allUrls } = await snapshotOwnTabs();
+    const { allUrls, tabIdsByUrl } = await snapshotOwnTabs();
+    const now = Date.now();
 
     const toOpen = [];
+    const toCloseTabIds = [];
     const foldersToDelete = [];
 
     for (const [url, folderEntry] of entries) {
@@ -490,16 +534,32 @@ function createSyncEngine(env) {
       }
 
       const mine = folderEntry.devices.get(deviceName)?.[0];
-      if (mine) continue; // I've already weighed in (open or closed) — never overridden by others
+      const anyClosed = allEntries.some((e) => e.state === "closed");
+
+      if (anyClosed) {
+        // Someone else already closed this URL: follow suit. A device
+        // with no entry yet has no tab of its own to close and simply
+        // never mirrors it in (see the `continue` below) — there's
+        // nothing further for it to do.
+        if (mine && mine.state === "open") {
+          const ids = tabIdsByUrl.get(url);
+          if (ids && ids.length) toCloseTabIds.push(...ids);
+          try {
+            await env.bookmarks.update(mine.id, {
+              url: buildDeviceStatusUrl({ state: "closed", t: now, h: now }),
+            });
+          } catch (e) {}
+        }
+        continue;
+      }
+
+      if (mine) continue; // already open here, nothing to mirror in
 
       const anyOpen = allEntries.some((e) => e.state === "open");
       // Duplicate-open check uses `allUrls` (pinned/grouped tabs
       // included): a URL the user already has open there is still
       // "already here" and must not get a second, untracked tab opened
-      // next to it. There's no "close a local tab" branch here — under
-      // this model only THIS device's own genuine close (via
-      // closeMyGoneTabs) ever closes its own tab; see the function
-      // comment above.
+      // next to it.
       if (anyOpen && !allUrls.has(url)) {
         toOpen.push({ url, title: folderEntry.folderTitle || url });
       }
@@ -510,10 +570,15 @@ function createSyncEngine(env) {
         await env.bookmarks.removeTree(folderId);
       } catch (e) {}
     }
+    if (toCloseTabIds.length) {
+      try {
+        await env.tabs.remove(toCloseTabIds);
+      } catch (e) {}
+    }
     if (toOpen.length) {
       await performAdd(toOpen);
     }
-    if (toOpen.length || foldersToDelete.length) {
+    if (toOpen.length || foldersToDelete.length || toCloseTabIds.length) {
       await env.storage.local.set({ lastActivityTimestamp: Date.now() });
     }
   }
