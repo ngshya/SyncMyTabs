@@ -244,8 +244,21 @@ open/close-time blob; that's gone — no migration, see Known limitations).
   swaps to the `icons/icon*-off.png` set plus an "OFF" badge via
   `updateActionIcon`, driven off `chrome.storage.onChanged` so the popup
   toggle is the single source of truth.
-- **No pinned tabs / tab groups.** Dropped in the v3 redesign to keep the
-  per-tab-bookmark schema simple. Don't reintroduce them without discussion.
+- **No pinned tabs.** Dropped in the v3 redesign to keep the per-tab-bookmark
+  schema simple — pinning isn't synced, but a pinned tab still syncs open/
+  closed like any other tab. Don't reintroduce pin syncing without discussion.
+- **Tabs inside a browser tab group are excluded from sync entirely**
+  (`isInTabGroup`, feature-detected off `t.groupId`; a no-op on Firefox,
+  which doesn't expose one). `snapshotOwnTabs` splits its result into `urls`
+  (grouped tabs excluded — feeds `reconcileMyOpenEntries`/`closeMyGoneTabs`,
+  so a grouped tab never gets a bookmark entry and dragging a tracked tab
+  into a group reads as "no longer tracked" on the next live-event reconcile,
+  which flips its entry to closed without touching the actual tab) and
+  `allUrls` (grouped tabs included — feeds the "is this URL already open
+  here at all" dedup checks in `reconcileMirror`/`performAdd`, so a remote
+  open never duplicates a tab the user already has grouped). `tabIdsByUrl`
+  is built from the grouped-excluded set, which is what keeps a mirror-driven
+  close from ever reaching into a local group. See `test/tab-groups.test.js`.
 - **Self-healing.** Third-party sync tools sometimes recreate rather than
   update bookmarks, producing duplicate profile folders or duplicate root
   folders. `mergeFolderInto` merges same-named subfolders recursively and

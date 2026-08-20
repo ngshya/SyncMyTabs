@@ -61,6 +61,15 @@ function isHttpUrl(u) {
   return /^https?:\/\//.test(u || "");
 }
 
+// True iff `t` is inside a browser tab group. Feature-detected via
+// `groupId` (Chrome/Brave tabGroups: -1 means ungrouped) rather than
+// assumed present — Firefox tabs don't carry a `groupId` at all, so this
+// is always false there and grouped-tab handling silently no-ops, per
+// CLAUDE.md's cross-browser rule (never assume a Chrome-only field).
+function isInTabGroup(t) {
+  return typeof t.groupId === "number" && t.groupId !== -1;
+}
+
 function buildTabEntryUrl({ real, device, state, t, h }) {
   return (
     `${TAB_URL_BASE}?u=${encodeURIComponent(real)}` +
@@ -228,20 +237,31 @@ function createSyncEngine(env) {
   // pending, http/https) tabs. Tabs still mid-navigation
   // (status !== "complete") are excluded entirely — see CLAUDE.md for
   // why (the phantom-duplicate-entry bug this guards against).
+  //
+  // Tabs inside a browser tab group are deliberately left out of `urls`/
+  // `titleByUrl`/`tabIdsByUrl` too: a grouped tab never gets its own
+  // bookmark entry, and mirror-driven open/close never touches one
+  // (reconcileMirror only ever closes ids drawn from `tabIdsByUrl`). They
+  // ARE still counted in `allUrls`, which exists purely so callers that
+  // just want to know "is this URL already open here at all" (avoiding a
+  // duplicate open) don't ignore a tab merely because it's grouped.
   async function snapshotOwnTabs() {
     const urls = new Set();
+    const allUrls = new Set();
     const titleByUrl = new Map();
     const tabIdsByUrl = new Map();
     for (const t of await env.tabs.query({})) {
       if (t.status && t.status !== "complete") continue;
       const real = realUrlOfTab(t);
       if (!isHttpUrl(real)) continue;
+      allUrls.add(real);
+      if (isInTabGroup(t)) continue;
       urls.add(real);
       if (!titleByUrl.has(real)) titleByUrl.set(real, t.title || real);
       if (!tabIdsByUrl.has(real)) tabIdsByUrl.set(real, []);
       tabIdsByUrl.get(real).push(t.id);
     }
-    return { urls, titleByUrl, tabIdsByUrl };
+    return { urls, allUrls, titleByUrl, tabIdsByUrl };
   }
 
   // Master on/off switch. When paused, this device neither pushes its
@@ -386,7 +406,7 @@ function createSyncEngine(env) {
       groups.get(info.real).push({ id: c.id, title: c.title, ...info });
     }
 
-    const { urls: current, tabIdsByUrl } = await snapshotOwnTabs();
+    const { urls: current, allUrls, tabIdsByUrl } = await snapshotOwnTabs();
 
     const idsToClose = [];
     const toOpen = [];
@@ -403,7 +423,14 @@ function createSyncEngine(env) {
       );
       const present = latestOpenT > latestCloseT;
 
-      if (present && !current.has(url)) {
+      // Duplicate-open check uses `allUrls` (grouped tabs included): a
+      // URL the user already has open in a tab group is still "already
+      // here" and must not get a second, ungrouped tab opened next to
+      // it. Mirror-driven close, by contrast, only ever draws ids from
+      // `tabIdsByUrl`, which excludes grouped tabs by construction — a
+      // remote close never reaches into a tab group the user built
+      // locally.
+      if (present && !allUrls.has(url)) {
         const best = openEntries.sort((a, b) => b.t - a.t)[0];
         toOpen.push({ url, title: (best && best.title) || url });
       } else if (!present && current.has(url)) {
@@ -525,10 +552,11 @@ function createSyncEngine(env) {
 
   // Opens `entries` ({url,title}) alongside the current tabs, skipping
   // any already open. Used by reconcileMirror to mirror in URLs that
-  // are open elsewhere but not here yet.
+  // are open elsewhere but not here yet. Dedup uses `allUrls` (grouped
+  // tabs included) — same reasoning as reconcileMirror's own check.
   async function performAdd(entries) {
     const lazy = await openRestoredLazily();
-    const { urls: alreadyOpen } = await snapshotOwnTabs();
+    const { allUrls: alreadyOpen } = await snapshotOwnTabs();
     const toOpen = entries.filter((e) => !alreadyOpen.has(e.url));
     if (toOpen.length === 0) return;
 
