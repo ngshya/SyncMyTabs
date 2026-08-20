@@ -1,5 +1,9 @@
 // 3-4 device scenarios: fan-out, and "everyone must agree closed"
-// before a group is actually deleted.
+// before a folder is actually deleted. Closing is per-device and
+// sticky (see mirror.test.js's header comment) — one device closing
+// its own copy never forces another device's already-mirrored-in copy
+// closed; the folder only disappears once EVERY device that ever
+// weighed in shows closed.
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
@@ -19,7 +23,7 @@ test("a tab opened on one device mirrors onto three others", async () => {
   }
 });
 
-test("a group is only deleted once EVERY device that had it open agrees it's closed", async () => {
+test("a folder is only deleted once EVERY device that had it open closes its own copy", async () => {
   const world = new SimWorld();
   const a = world.addDevice({ deviceName: "A" });
   const b = world.addDevice({ deviceName: "B" });
@@ -29,26 +33,29 @@ test("a group is only deleted once EVERY device that had it open agrees it's clo
   assert.deepEqual(b.openUrls(), ["https://example.com/"]);
   assert.deepEqual(c.openUrls(), ["https://example.com/"]);
 
-  // A and B close, C hasn't reacted yet in this simulation step... but
-  // since propagation is instantaneous here, C mirrors A's close right
-  // away too. Verify it ends up closed everywhere, and the group is
-  // only removed once ALL THREE entries (A, B, C) show closed.
+  // A closes: B and C haven't, so their entries (and the folder)
+  // survive untouched.
   await a.closeTab("https://example.com/");
   await b.tick();
   await c.tick();
+  assert.notDeepEqual(await world.allEntries("default"), []);
+  assert.deepEqual(b.openUrls(), ["https://example.com/"]);
+  assert.deepEqual(c.openUrls(), ["https://example.com/"]);
 
-  assert.deepEqual(a.openUrls(), []);
-  assert.deepEqual(b.openUrls(), []);
-  assert.deepEqual(c.openUrls(), []);
+  // B closes too: still not everyone.
+  await b.closeTab("https://example.com/");
+  await c.tick();
+  assert.notDeepEqual(await world.allEntries("default"), []);
+
+  // C, the last holdout, closes: now every device that ever weighed in
+  // agrees closed, and the folder is deleted.
+  await c.closeTab("https://example.com/");
+  await a.tick();
+  await b.tick();
   assert.deepEqual(await world.allEntries("default"), []);
 });
 
-test("closing a MIRRORED copy closes it everywhere, including at the original opener", async () => {
-  // This is the symmetric "true mirror" property the whole design is
-  // for: it's not "only the original opener's close counts" — ANY
-  // device's close (even one that only ever mirrored the tab in) wins
-  // and propagates to everyone, including back to whoever opened it
-  // first.
+test("closing a mirrored copy on ONE device leaves the other mirrored copies untouched", async () => {
   const world = new SimWorld();
   const a = world.addDevice({ deviceName: "A" });
   const b = world.addDevice({ deviceName: "B" });
@@ -63,10 +70,17 @@ test("closing a MIRRORED copy closes it everywhere, including at the original op
   await a.tick();
   await c.tick();
 
-  assert.deepEqual(a.openUrls(), [], "the original opener must close too");
+  assert.deepEqual(
+    a.openUrls(),
+    ["https://example.com/"],
+    "the original opener keeps its own copy"
+  );
   assert.deepEqual(b.openUrls(), []);
-  assert.deepEqual(c.openUrls(), []);
-  assert.deepEqual(await world.allEntries("default"), []);
+  assert.deepEqual(
+    c.openUrls(),
+    ["https://example.com/"],
+    "an untouched mirrored copy stays open too"
+  );
 });
 
 test("a fourth device joining later mirrors in whatever's currently open", async () => {
@@ -88,7 +102,7 @@ test("a fourth device joining later mirrors in whatever's currently open", async
   ]);
 });
 
-test("four devices, mixed opens and closes, converge to the same state", async () => {
+test("four devices, mixed opens and closes, converge once everyone closes their own copy", async () => {
   const world = new SimWorld();
   const a = world.addDevice({ deviceName: "A" });
   const b = world.addDevice({ deviceName: "B" });
@@ -107,10 +121,13 @@ test("four devices, mixed opens and closes, converge to the same state", async (
     );
   }
 
+  // Every device mirrored "one.example" in on its own, so every device
+  // needs to close its own copy before the folder goes away.
   await a.closeTab("https://one.example/");
-  await b.tick();
-  await c.tick();
-  await d.tick();
+  await b.closeTab("https://one.example/");
+  await c.closeTab("https://one.example/");
+  await d.closeTab("https://one.example/");
+  await a.tick();
 
   for (const dev of [a, b, c, d]) {
     assert.deepEqual(

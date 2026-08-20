@@ -1,6 +1,6 @@
 # Privacy Policy — SyncMyTabs
 
-_Last updated: 2026-08-19_
+_Last updated: 2026-08-20_
 
 SyncMyTabs is a browser extension that syncs your open tabs across your own
 devices, organized by profile, using **bookmarks as the transport**. This policy
@@ -19,9 +19,11 @@ explains exactly what the extension accesses and what happens to that data.
 
 | Data | Why it's accessed | Where it goes |
 |---|---|---|
-| **Open tab URLs and titles** | To save the active profile's open tabs and to reopen them when restoring from another device | Written only into your local bookmarks (see below) |
+| **Open tab URLs and titles** | To save the active profile's open tabs and to reopen them when mirrored in from another device | Written only into your local bookmarks (see below) |
 | **Bookmarks** | Bookmarks are the sync transport: the extension reads/writes a single `SyncMyTabs/…` folder tree | Stays in your browser's bookmark store |
 | **Device name and settings** (device name, profile list, sync interval, cleanup preference, last-activity timestamp) | To configure how this device behaves | Local extension storage (`chrome.storage.local`) only |
+| **Tab group titles and leashing rules** (optional module, Chrome/Brave only — see below) | To keep a browser tab group's declared tabs present, and keep links clicked inside it from wandering outside its declared pages | Written into the same local bookmarks tree, under the active profile |
+| **Clicked link URLs** (optional module) | Only on a tab that's inside a configured tab group: the clicked link's own href and click modifiers (ctrl/cmd/shift/middle-click), to decide whether to navigate in place, open alongside, or open a fresh ungrouped tab | Sent locally to the extension's own background page only — never off-device |
 
 ## How syncing actually works
 
@@ -53,10 +55,15 @@ bookmark-sync tool replicates it.
 
 ## Permissions
 
-The extension requests only the permissions required for the above
-functionality: `bookmarks`, `tabs`, `storage`, and `alarms`.
-It requests **no host permissions**, runs **no content scripts** on web pages,
-and loads **no remote code** — all code ships inside the extension package. See
+The extension requests the permissions required for the above functionality:
+`bookmarks`, `tabs`, `tabGroups`, `storage`, `alarms`, and the `<all_urls>`
+host permission with one content script (`link-leash-content.js`), used
+exclusively by the optional tab-group leashing module described above. That
+content script only ever reads a clicked link's own href — never page
+content — and only attaches its click listener on a tab it has first
+confirmed (by asking the background page) is inside a configured tab group;
+an ordinary, ungrouped tab is unaffected by it. The extension loads **no
+remote code** — all code ships inside the extension package. See
 [`PERMISSIONS.md`](PERMISSIONS.md) for a per-permission justification.
 
 ## Children's privacy

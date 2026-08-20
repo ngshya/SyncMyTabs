@@ -1,57 +1,48 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { parseTabEntryUrl, buildTabEntryUrl, isHttpUrl } = require("../sync-core.js");
+const {
+  buildDeviceStatusUrl,
+  parseDeviceStatusUrl,
+  isRelevantBookmarkChange,
+  isHttpUrl,
+  URL_MARKER_TITLE,
+} = require("../sync-core.js");
 
-test("buildTabEntryUrl + parseTabEntryUrl round-trip", () => {
-  const url = buildTabEntryUrl({
-    real: "https://example.com/some path?q=1&r=2",
-    device: "laptop A",
-    state: "open",
-    t: 123,
-    h: 456,
-  });
-  const parsed = parseTabEntryUrl(url);
-  assert.deepEqual(parsed, {
-    real: "https://example.com/some path?q=1&r=2",
-    device: "laptop A",
-    state: "open",
-    t: 123,
-    h: 456,
-  });
+test("buildDeviceStatusUrl + parseDeviceStatusUrl round-trip", () => {
+  const url = buildDeviceStatusUrl({ state: "open", t: 123, h: 456 });
+  assert.deepEqual(parseDeviceStatusUrl(url), { state: "open", t: 123, h: 456 });
 });
 
-test("parseTabEntryUrl rejects non-tab-entry URLs", () => {
-  assert.equal(parseTabEntryUrl("https://example.com/"), null);
-  assert.equal(parseTabEntryUrl("https://syncmytabs.local/other"), null);
-  assert.equal(parseTabEntryUrl(""), null);
-  assert.equal(parseTabEntryUrl(null), null);
+test("parseDeviceStatusUrl rejects non-status URLs", () => {
+  assert.equal(parseDeviceStatusUrl("https://example.com/"), null);
+  assert.equal(parseDeviceStatusUrl("https://syncmytabs.local/other"), null);
+  assert.equal(parseDeviceStatusUrl(""), null);
+  assert.equal(parseDeviceStatusUrl(null), null);
 });
 
-test("parseTabEntryUrl rejects a malformed/incomplete tab entry", () => {
-  // missing device
+test("parseDeviceStatusUrl rejects an invalid state", () => {
   assert.equal(
-    parseTabEntryUrl("https://syncmytabs.local/tab?u=https%3A%2F%2Fx&s=open&t=1"),
+    parseDeviceStatusUrl("https://syncmytabs.local/status?s=maybe&t=1&h=1"),
     null
   );
-  // invalid state
+});
+
+test("parseDeviceStatusUrl defaults h to t when h is absent", () => {
+  const url = "https://syncmytabs.local/status?s=open&t=42";
+  assert.deepEqual(parseDeviceStatusUrl(url), { state: "open", t: 42, h: 42 });
+});
+
+test("isRelevantBookmarkChange recognizes the _url marker and status bookmarks, ignores everything else", () => {
+  assert.equal(isRelevantBookmarkChange(URL_MARKER_TITLE, "https://example.com/"), true);
   assert.equal(
-    parseTabEntryUrl(
-      "https://syncmytabs.local/tab?u=https%3A%2F%2Fx&d=A&s=maybe&t=1"
+    isRelevantBookmarkChange(
+      "laptop-A",
+      buildDeviceStatusUrl({ state: "open", t: 1, h: 1 })
     ),
-    null
+    true
   );
-});
-
-test("parseTabEntryUrl defaults h to t when h is absent", () => {
-  const url =
-    "https://syncmytabs.local/tab?u=https%3A%2F%2Fx&d=A&s=open&t=42";
-  assert.deepEqual(parseTabEntryUrl(url), {
-    real: "https://x",
-    device: "A",
-    state: "open",
-    t: 42,
-    h: 42,
-  });
+  assert.equal(isRelevantBookmarkChange("My bookmark", "https://example.com/"), false);
+  assert.equal(isRelevantBookmarkChange(undefined, undefined), false);
 });
 
 test("isHttpUrl", () => {

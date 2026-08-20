@@ -1,24 +1,30 @@
 // ============================================================
 // SyncMyTabs - background.js (service worker, Manifest V3)
 //
-// Architecture (v3 — per-tab shared metadata, see CLAUDE.md):
+// Architecture (v4 — per-URL folders, see CLAUDE.md):
 // - Root bookmarks folder: "SyncMyTabs"
-// - Under it: one subfolder per PROFILE (e.g. "default", "work").
-//   Profiles are now the top-level unit — there is no more per-device
-//   folder. A device picks which profile is "active"; automatic sync
-//   only ever happens for the active profile (profiles stay independent).
-// - Inside each profile folder: one bookmark per (device, url) pair —
-//   the tab's real title, and its metadata packed into the bookmark's
-//   URL: which device, open/closed state, and two timestamps (see
-//   parseTabEntryUrl/buildTabEntryUrl in sync-core.js).
-// - Every device is the ONLY writer of its OWN (device, url) entries.
-//   Opening a tab creates/updates that device's entry to "open"; closing
-//   it flips the SAME entry to "closed" (never deleted immediately) so
-//   the closure is an observable, explicit event other devices react
-//   to. Once EVERY entry for a URL is "closed", any device that notices
-//   deletes the whole group. A configurable TTL is a safety net that
-//   deletes stale entries outright (e.g. a device that was uninstalled
-//   and will never come back to agree "closed").
+// - Under it: one subfolder per PROFILE (e.g. "default", "work"). A
+//   device picks which profile is "active"; automatic sync only ever
+//   happens for the active profile (profiles stay independent).
+// - Under each profile: one subfolder per open URL (its title is just
+//   the tab title/URL, cosmetic only). Inside it: an `_url` bookmark
+//   holding the real URL (the actual matching key — never the folder
+//   title), and one status bookmark per device, titled with that
+//   device's name, encoding open/closed + two timestamps (see
+//   parseDeviceStatusUrl/buildDeviceStatusUrl in sync-core.js).
+// - Every device is the ONLY writer of its OWN status bookmark. Opening
+//   a tab creates/updates that device's entry to "open"; closing it
+//   flips the SAME entry to "closed" (never deleted immediately) so the
+//   closure is an observable, explicit event other devices react to.
+//   Once EVERY device's entry in a folder is "closed", any device that
+//   notices deletes the whole folder. Once a device has weighed in
+//   (open OR closed) on a URL, only ITS OWN future actions ever change
+//   its own entry — it never gets overridden by another device's state.
+//   A configurable TTL is a safety net that prunes a device's own stale
+//   entry (untouched heartbeat) outright; a folder disappears once
+//   every entry left in it (after pruning) is closed, or none remain.
+// - Pinned tabs and tabs inside a browser tab group are excluded
+//   entirely from this tracking.
 // - No more notifications / manual Add-Replace flow: this is always a
 //   live two-way mirror for the active profile.
 //
@@ -30,6 +36,17 @@
 // sync-core.js; keep this file to wiring real browser events to it and
 // to things that are genuinely browser-chrome-only (the toolbar icon,
 // the alarm registration).
+//
+// groups-core.js is a SEPARATE, independent module (own bookmark
+// sub-tree, own reconcile pipeline) for tab-group "leashing": a link
+// clicked inside a titled browser tab group either navigates in place
+// / opens alongside in the SAME group if it matches that tab's
+// configured pattern, or always opens in a fresh UNGROUPED tab
+// otherwise — plus a startup reconcile that reopens a group's missing
+// "essential" tabs and closes duplicates. Chrome/Brave only (Firefox
+// has no tabGroups API — see groups-core.js). Group RULES sync via the
+// SAME bookmark mechanism as everything else, scoped by the SAME
+// active-profile concept.
 // ============================================================
 
 // Cross-browser API access: use the promise-based `browser.*` namespace
@@ -39,22 +56,25 @@
 // manifest `background.scripts` instead, and `importScripts` doesn't
 // exist on the event page — so guard the call.
 if (typeof importScripts === "function") {
-  importScripts("browser-polyfill.min.js", "sync-core.js");
+  importScripts("browser-polyfill.min.js", "sync-core.js", "groups-core.js");
 }
 
 const engine = createSyncEngine(browser);
+const groupsEngine = createGroupsEngine(browser, engine);
 
-// NOTE: sync-core.js is loaded into this SAME script via importScripts
-// (Chrome) / sequential <script> tags (Firefox) — both share ONE
-// top-level `let`/`const` lexical scope, so declaring a top-level
-// const/let here with the SAME NAME as one of sync-core.js's own
-// top-level bindings (e.g. its internal DEFAULT_PROFILE,
-// DEFAULT_INTERVAL_MINUTES) throws a SyntaxError ("already been
-// declared") that silently prevents this ENTIRE script from running —
-// no listeners get registered at all. Always read such values off
-// `engine.*` instead of re-declaring a same-named local, and give any
-// background.js-only constant a name that can't collide.
+// NOTE: sync-core.js and groups-core.js are loaded into this SAME
+// script via importScripts (Chrome) / sequential <script> tags
+// (Firefox) — all three share ONE top-level `let`/`const` lexical
+// scope, so declaring a top-level const/let here (or in groups-core.js)
+// with the SAME NAME as one of sync-core.js's own top-level bindings
+// (e.g. its internal DEFAULT_PROFILE, DEFAULT_INTERVAL_MINUTES) throws
+// a SyntaxError ("already been declared") that silently prevents this
+// ENTIRE script from running — no listeners get registered at all.
+// Always read such values off `engine.*`/`groupsEngine.*` instead of
+// re-declaring a same-named local, and give any background.js-only
+// constant a name that can't collide (see test/no-name-collision.test.js).
 const FALLBACK_INTERVAL_MINUTES = 1;
+const GROUPS_RECONCILE_ALARM = "groupsReconcileAlarm";
 
 async function ensureAlarm() {
   const { syncIntervalMinutes } = await browser.storage.local.get(
@@ -112,11 +132,26 @@ browser.runtime.onStartup.addListener(async () => {
   ensureAlarm();
   refreshActionIcon();
   await engine.handleStartup();
+  // Startup-only group reconcile, delayed (default 15s, configurable)
+  // so the browser's own session restore has time to finish
+  // repopulating windows/tabs/groups first — reconciling against a
+  // still-incomplete snapshot could wrongly treat a not-yet-restored
+  // tab as "missing" or "duplicate". Never run mid-session off this
+  // same path — only a fresh browser launch gets this delayed check.
+  const seconds = await groupsEngine.groupsStartupDelaySeconds();
+  browser.alarms.create(GROUPS_RECONCILE_ALARM, {
+    delayInMinutes: Math.max(Number(seconds) || 0, 1) / 60,
+  });
 });
 
 browser.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== "saveTabsAlarm") return;
   await engine.handleAlarm();
+});
+
+browser.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== GROUPS_RECONCILE_ALARM) return;
+  await groupsEngine.handleGroupsAlarm();
 });
 
 browser.storage.onChanged.addListener((changes, area) => {
@@ -136,11 +171,11 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
 });
 
 browser.bookmarks.onCreated.addListener((id, node) => {
-  engine.handleBookmarkEvent(node && node.url);
+  engine.handleBookmarkEvent(node && node.title, node && node.url);
 });
 
 browser.bookmarks.onChanged.addListener((id, changeInfo) => {
-  engine.handleBookmarkEvent(changeInfo && changeInfo.url);
+  engine.handleBookmarkEvent(changeInfo && changeInfo.title, changeInfo && changeInfo.url);
 });
 
 browser.bookmarks.onRemoved.addListener(() => {
@@ -181,6 +216,88 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!exists) {
         await browser.storage.local.set({ profiles: [...list, name] });
       }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  // ---- Tab-group leashing module (groups-core.js) ----
+
+  if (message?.type === "LINK_CLICK" && sender.tab) {
+    groupsEngine
+      .handleLinkClick(message.href, sender.tab, message.modifiers || {})
+      .then(() => sendResponse({ ok: true }))
+      .catch((err) => sendResponse({ ok: false, error: String(err) }));
+    return true;
+  }
+
+  // Answers link-leash-content.js's startup question so it only
+  // attaches its click listeners on a tab that's actually grouped —
+  // see link-leash-content.js.
+  if (message?.type === "AM_I_GROUPED") {
+    const tab = sender.tab;
+    const grouped = !!(tab && typeof tab.groupId === "number" && tab.groupId !== -1);
+    sendResponse({ grouped });
+    return true;
+  }
+
+  if (message?.type === "GROUPS_LIST") {
+    groupsEngine.listGroupsForActiveProfile().then((data) => sendResponse(data));
+    return true;
+  }
+
+  if (message?.type === "GROUPS_GET") {
+    groupsEngine.getGroupForEditing(message.title).then((data) => sendResponse(data));
+    return true;
+  }
+
+  if (message?.type === "GROUPS_SET") {
+    (async () => {
+      await groupsEngine.setGroupSettingsForActiveProfile(message.title, message.rules);
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message?.type === "GROUPS_DELETE") {
+    (async () => {
+      await groupsEngine.deleteGroupSettingsForActiveProfile(message.title);
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message?.type === "GROUPS_GET_PREFS") {
+    (async () => {
+      const [leashEnabled, closeUndeclared, startupDelaySeconds] = await Promise.all([
+        groupsEngine.isLeashEnabled(),
+        groupsEngine.closeUndeclaredTabsEnabled(),
+        groupsEngine.groupsStartupDelaySeconds(),
+      ]);
+      sendResponse({ leashEnabled, closeUndeclared, startupDelaySeconds });
+    })();
+    return true;
+  }
+
+  if (message?.type === "GROUPS_SET_PREFS") {
+    (async () => {
+      const updates = {};
+      if (message.leashEnabled !== undefined) updates.groupsLeashEnabled = message.leashEnabled;
+      if (message.closeUndeclared !== undefined) {
+        updates.groupsCloseUndeclaredTabs = message.closeUndeclared;
+      }
+      if (message.startupDelaySeconds !== undefined) {
+        updates.groupsStartupDelaySeconds = message.startupDelaySeconds;
+      }
+      await browser.storage.local.set(updates);
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message?.type === "GROUPS_RECONCILE_NOW") {
+    (async () => {
+      await groupsEngine.reconcileGroups();
       sendResponse({ ok: true });
     })();
     return true;

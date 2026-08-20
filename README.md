@@ -32,18 +32,25 @@ The extension maintains one root folder in your bookmarks with this shape:
 ```
 SyncMyTabs/                    ← root folder (in "Other Bookmarks")
 ├── default/                   ← one folder per profile (shared across devices)
-│   ├── "Example page"         ← one bookmark per (device, url) — see below
-│   ├── "Another page"
+│   ├── "Example page"/        ← one folder per open URL
+│   │   ├── _url                ← the real URL (folder name is cosmetic only)
+│   │   ├── laptop-A             ← one bookmark per device that's weighed in
+│   │   └── phone-B              ← its URL encodes that device's open/closed status
+│   ├── "Another page"/
+│   │   └── …
 │   └── …
 └── work/
     └── …
 ```
 
-Every open tab is a **bookmark shared across devices**, one per `(device,
-url)` pair. Its title is the page title; its metadata (which device, open or
-closed, and two timestamps) is packed into the bookmark's own URL. Each device
-only ever writes **its own** entries — never another device's — so there's
-never a conflicting write to the same bookmark.
+Every open URL gets its **own folder**, shared across devices. The folder's
+name is purely cosmetic (the tab's title, or the URL itself if too long) — the
+real URL always lives in the `_url` bookmark inside, so matching never depends
+on the folder name. Inside that folder, each device that has ever opened or
+closed the URL gets **one bookmark of its own**, named exactly like the
+device, whose URL encodes that device's status (open/closed) and timestamps.
+Each device only ever writes **its own** bookmark — never another device's —
+so there's never a conflicting write to the same bookmark.
 
 - **Profiles.** A profile can be used by several devices at once (e.g.
   `default`, `work`, `school`). Exactly one is *active* per device at a time;
@@ -51,40 +58,90 @@ never a conflicting write to the same bookmark.
   profile — a device on `home` ignores another device's `work` tabs entirely.
   A profile name created on *any* device automatically becomes selectable on
   every device.
-- **Opening a tab.** As soon as you open one (or SyncMyTabs mirrors one in from
-  another device), this device's own `(device, url)` bookmark is created/marked
-  **open**. Other devices on the same profile notice — bookmark events, no
-  polling — and if they don't have it open yet, they open it too (as a
-  lightweight placeholder by default, see below) and mark their own entry open.
-- **Closing a tab.** This device's own entry flips to **closed** — the
-  bookmark isn't deleted yet, so the closure is itself a visible event other
-  devices react to: **they close their own copy too**, closing propagates
-  everywhere. Once *every* device that ever had that URL open shows closed,
-  the whole group of bookmarks for that URL is deleted for good.
+- **Opening a tab.** As soon as you open one, SyncMyTabs matches your active
+  profile, creates the URL's folder if it doesn't exist yet (with its `_url`
+  marker), and creates/marks **your own** device bookmark **open** inside it.
+  Other devices on the same profile notice — bookmark events, no polling —
+  and check every URL folder: if a folder has some device open and *they*
+  don't have a bookmark of their own in it yet, they open the tab too (as a
+  lightweight placeholder by default, see below) and add their own **open**
+  bookmark.
+- **Closing a tab.** Your own device bookmark flips to **closed**. This is
+  **sticky and final for that device**: once your bookmark exists in a
+  folder — open or closed — only *your own* later actions on that tab ever
+  change it again. Another device's open/closed state never overrides it, in
+  either direction: a device that already closed its copy is never re-opened
+  just because others are still open, and a device that's still open is never
+  forced closed just because you closed yours. A URL's folder is deleted only
+  once **every** device that ever weighed in on it shows closed.
   **Closing a whole window, or quitting the browser, never propagates** —
   only closing an individual tab does, so a shutdown never wipes the session
   everywhere. **Navigating an open tab to a different address** counts as
   closing the old URL and opening the new one — both propagate the same way.
 - Bookmarks update **immediately** on every genuine tab change (open, close,
-  navigate) — there's no need to wait for the periodic check.
+  navigate), and the SyncMyTabs folder is re-checked **every time it
+  changes** — there's no polling, no need to wait for the periodic check.
 - **Cleanup (TTL).** If a device is uninstalled, or otherwise never comes back
-  to agree "closed", its entries would otherwise linger forever. A configurable
-  safety net (default on, 21 days) deletes any entry that hasn't been touched
-  in that long. A tab you keep genuinely open is refreshed automatically well
-  before that deadline, so this never affects a live tab — only a truly
-  abandoned one.
+  to agree "closed", its bookmark would otherwise linger forever. A
+  configurable safety net (default on, **14 days**) deletes any device bookmark
+  that hasn't been touched in that long; a URL folder disappears once every
+  bookmark left in it (after that pruning) is closed, or none remain. A tab
+  you keep genuinely open is refreshed automatically well before that
+  deadline, so this never affects a live tab — only a truly abandoned one.
 - **Lazy restore** (default on). Tabs mirrored in from another device open as
   placeholders that don't hit the network until you actually view each one
   (each points at a local page that navigates to the real URL on first view),
   so a large incoming session costs almost nothing until you look at it.
 - **Self-healing.** Some third-party sync tools *recreate* bookmarks instead of
-  updating them, producing duplicate profile folders (or duplicate root
-  folders). SyncMyTabs detects these and merges them, so the tree stays clean
-  across any number of devices.
+  updating them, producing duplicate profile folders, duplicate root folders,
+  or duplicate folders for the same URL. SyncMyTabs detects these and merges
+  them, so the tree stays clean across any number of devices.
 
 ---
 
-SyncMyTabs runs on **Chromium browsers (Chrome / Brave)** and **Firefox**.
+## Tab groups (leashing) — Chrome/Brave only
+
+An independent module, layered on top of the same profile/bookmark
+mechanism, for browser **tab groups** (Chrome/Brave's own tabbing feature;
+Firefox has no such API, so this module is a silent no-op there): it keeps a
+titled group's declared pages present, and keeps links clicked inside that
+group from wandering outside them.
+
+- **Rules, per group, per profile.** You give a browser tab group a title
+  (e.g. "Work"), then declare one or more rules for it: a **match** pattern
+  (which page(s) this rule covers), an optional **leash pattern** (what a
+  clicked link must match to stay in that tab/group), and an optional
+  **reopen URL** (a page this group should never be without). Rules sync via
+  the same bookmark tree, under `SyncMyTabs/<profile>/_groups/<group
+  title>/…`, scoped by the same active-profile concept as everything else.
+- **Link leashing.** Click a link on a page inside a configured group: if it
+  matches that page's leash pattern, it navigates the same tab (or opens
+  alongside, in the *same* group, on a modifier-click); if it doesn't match,
+  it *always* opens in a fresh, **ungrouped** tab instead of derailing the
+  group. A page with no rule yet, or a rule with no leash pattern (a
+  reopen-only rule), is left completely alone — normal browser behavior. A
+  tab that isn't in any configured group is never touched by this at all.
+- **Startup reconciliation.** Once per browser launch (after a short,
+  configurable delay so the browser's own session restore finishes first),
+  SyncMyTabs reopens any group's "reopen URL" that isn't currently open
+  there, closes accidental duplicates of the same declared page (keeping the
+  oldest), and — if you turn on "close tabs matching no rule" (off by
+  default, since closing tabs automatically is destructive) — closes any tab
+  in that group that matches none of its rules at all.
+- **Untitled groups aren't supported.** A group's title is its only stable,
+  cross-device identifier (a browser's internal group id is local and
+  meaningless on another device) — an untitled group is simply invisible to
+  this module.
+- Manage it all from the popup's **"Tab groups"** section: per-group rule
+  editors (with quick-add buttons for tabs already open in that group), a
+  leashing on/off switch, the close-undeclared-tabs toggle, the startup
+  delay, and a manual "Reconcile groups now" button.
+
+---
+
+SyncMyTabs runs on **Chromium browsers (Chrome / Brave)** and **Firefox**
+(the tab-groups module above is Chrome/Brave only; everything else works
+identically on both).
 
 ## Install (developer mode)
 
@@ -131,13 +188,19 @@ Everything — status and settings alike — lives in one place: the **popup**
   regardless; this only controls the background double-check cadence.
 - **Lazy restore** (default on) — open mirrored-in tabs as placeholders that
   don't load from the network until you view each one.
-- **Cleanup / TTL** (default on, 21 days) — delete a tab's bookmark entries if
-  they haven't been updated in this many days (safety net for a device that
-  never comes back to agree "closed").
+- **Cleanup / TTL** (default on, **14 days**) — delete a device's bookmark
+  entry if it hasn't been updated in this many days (safety net for a device
+  that never comes back to agree "closed").
+- **Tab groups (this profile)** (Chrome/Brave only) — the leashing module's
+  own on/off switch, the "close tabs matching no rule" toggle (off by
+  default), the startup check delay, and per-group rule editors — see
+  [Tab groups (leashing)](#tab-groups-leashing--chromebrave-only) above.
 - **Sync now** — force an immediate check in both directions.
+- **Reconcile groups now** — force an immediate tab-groups check (normally
+  only run once per browser launch).
 - The last row shows the last mirror activity, and the extension version.
 
-Every field except the two checkboxes (which save immediately) saves when you
+Every field except the checkboxes (which save immediately) saves when you
 leave it (blur, or press Enter).
 
 ---
@@ -155,9 +218,11 @@ SyncMyTabs' own initiative):
 | Permission | Why |
 |---|---|
 | `bookmarks` | Read/write the SyncMyTabs bookmark tree |
-| `tabs` | Read open tab URLs/titles; open/close tabs to mirror and restore |
+| `tabs` | Read open tab URLs/titles; open/close/group tabs to mirror, restore, and reconcile tab groups |
+| `tabGroups` | Tab-group leashing module only (Chrome/Brave — no such API on Firefox): read a group's title, create/update a group when reopening a missing declared tab |
 | `storage` | Store this device's settings and state |
-| `alarms` | Drive the periodic double-check and cleanup sweep |
+| `alarms` | Drive the periodic double-check, cleanup sweep, and the once-per-launch tab-groups reconcile |
+| `<all_urls>` host permission + content script | Tab-group leashing module only: intercepts a link click on a page that's inside a *configured* tab group (see [Tab groups (leashing)](#tab-groups-leashing--chromebrave-only)) — an ungrouped tab is unaffected |
 
 ---
 
@@ -180,18 +245,28 @@ SyncMyTabs' own initiative):
 - **Sync visibility.** Detection of remote updates depends entirely on your
   sync tool actually propagating bookmark changes to this device's local tree.
   SyncMyTabs has no insight into whether that underlying sync is healthy.
-- **Clock-based ordering.** When devices disagree about whether a URL is open
-  or closed, the newer of the two (by each device's local clock, recorded only
-  at the moment of a genuine open/close — never invented by a routine
-  liveness check) wins. Because it's eventually-consistent over your bookmark
-  sync, a close can take a moment to propagate, and badly skewed clocks can
-  misjudge which of two truly-concurrent actions was later. Keep clocks
-  reasonably in sync (NTP is fine). Closing a whole window or quitting the
-  browser deliberately never propagates (a safety choice so a shutdown never
-  wipes the session everywhere).
-- **No migration from pre-3.0 versions.** The bookmark tree shape changed
-  (shared per-tab bookmarks instead of a snapshot folder per device). Upgrading
-  starts fresh; any old `SyncMyTabs/<device>/…` data is left in place, unused —
+- **A device's own close is sticky, not timestamp-voted.** There's no shared
+  clock and no cross-device "who's newer" comparison: once your device's
+  bookmark exists in a URL folder — open or closed — only your own later
+  actions on that tab change it again. This is deliberate (see "How it works"
+  above), but it does mean a URL can stay open on one device indefinitely
+  even after every other device has closed its copy, until that one device
+  closes its own tab too.
+- **Tab-group leashing is Chrome/Brave only, and untitled groups aren't
+  supported.** Firefox has no tab-groups API to extensions, so the whole
+  module is a silent no-op there. A group's title is its only stable,
+  cross-device identifier — give it one, or the leashing/reconcile module
+  simply can't see it.
+- **A tab grouped AFTER its page already loaded won't get leashing until
+  reloaded.** The content script asks once, on load, whether its tab is
+  currently grouped, and only attaches click listeners if so — deliberately,
+  so ordinary (ungrouped) browsing is never affected by intercepting every
+  click on every page. Dragging a tab into a group without reloading it is
+  the one case leashing won't pick up until the next reload.
+- **No migration from pre-4.0 versions.** The bookmark tree shape changed
+  (a folder per open URL, instead of one flat bookmark per (device, url)).
+  Upgrading starts fresh; any old `SyncMyTabs/<profile>/…` or
+  `SyncMyTabs/<device>/…` data from a prior version is left in place, unused —
   safe to delete by hand.
 
 ---
@@ -201,9 +276,11 @@ SyncMyTabs' own initiative):
 | File | Role |
 |---|---|
 | `manifest.json` | Manifest V3 definition, permissions, entry points (Chrome service worker + Firefox background scripts) |
-| `sync-core.js` | All the sync/reconcile logic, testable independently of a real browser (see Testing below) |
-| `background.js` | Thin wiring: real browser events → `sync-core.js` |
-| `popup.html` / `popup.js` | Toolbar popup UI — status, all settings, and profile management in one place |
+| `sync-core.js` | All the open-tab sync/reconcile logic, testable independently of a real browser (see Testing below) |
+| `groups-core.js` | The independent tab-group leashing module's logic — its own bookmark-backed rule storage, link-leash decision, and startup reconcile — same `env`-parameterized, testable style as `sync-core.js` |
+| `background.js` | Thin wiring: real browser events → `sync-core.js` / `groups-core.js` |
+| `link-leash-content.js` | Content script for the leashing module — intercepts link clicks on a tab it's confirmed is inside a configured group |
+| `popup.html` / `popup.js` | Toolbar popup UI — status, all settings, profile management, and tab-group rule editors, in one place |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page |
 | `browser-polyfill.min.js` | Mozilla's WebExtension polyfill (vendored) so `browser.*` works on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |

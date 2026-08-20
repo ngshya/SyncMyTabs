@@ -23,11 +23,22 @@
 // "navigation complete"), not a re-implementation of them.
 // ============================================================
 
-const { createSyncEngine, parseTabEntryUrl } = require("../sync-core.js");
+const { createSyncEngine } = require("../sync-core.js");
 
 let idCounter = 1;
 function nextId() {
   return String(idCounter++);
+}
+
+// Tab group ids are kept NUMERIC on purpose, unlike every other id in
+// this simulator (tabs/windows/bookmarks are all opaque strings here) —
+// mirroring the real chrome.tabGroups API, whose group ids are numbers.
+// sync-core.js's isInTabGroup / groups-core.js's isGrouped both check
+// `typeof tab.groupId === "number"`, so a string id here would silently
+// make every grouped-tab test look ungrouped.
+let groupIdCounter = 1000;
+function nextGroupId() {
+  return groupIdCounter++;
 }
 
 function makeFolder(id, parentId, title) {
@@ -83,7 +94,7 @@ class SimBookmarksApi {
     if (url !== undefined) node.url = url;
     else node.children = [];
     parent.children.push(node);
-    if (url !== undefined) this.world._notifyEvent({ type: "created", url });
+    if (url !== undefined) this.world._notifyEvent({ type: "created", title, url });
     return { ...node };
   }
 
@@ -92,7 +103,9 @@ class SimBookmarksApi {
     if (!node) throw new Error(`no such bookmark ${id}`);
     if (changes.title !== undefined) node.title = changes.title;
     if (changes.url !== undefined) node.url = changes.url;
-    if (node.url !== undefined) this.world._notifyEvent({ type: "changed", url: node.url });
+    if (node.url !== undefined) {
+      this.world._notifyEvent({ type: "changed", title: node.title, url: node.url });
+    }
     return { ...node };
   }
 
@@ -150,6 +163,18 @@ class SimTabsApi {
     return { ...tab };
   }
 
+  // Plain in-place navigation (no onUpdated dispatch here — tests that
+  // need the engine to react to a navigation use the higher-level
+  // SimDevice.navigateTab(), which calls handleTabUpdated itself; this
+  // is just the raw API groups-core.js's link-leashing calls when it
+  // decides to navigate a tab to a clicked link).
+  async update(id, changes) {
+    const tab = this.tabs.get(id);
+    if (!tab) throw new Error(`no such tab ${id}`);
+    Object.assign(tab, changes);
+    return { ...tab };
+  }
+
   // Mirrors a real quirk that matters: browser.tabs.remove() ALWAYS
   // fires tabs.onRemoved for what it removed — including removals
   // OUR OWN code triggers (e.g. reconcileMirror closing a tab because
@@ -165,6 +190,75 @@ class SimTabsApi {
       this.tabs.delete(id);
       if (this.onRemoved) this.onRemoved(id, removeInfo);
     }
+  }
+
+  // chrome.tabs.group()-alike, for groups-core.js's reconcileGroup /
+  // handleLinkClick. `groupId` moves existing tabs into an already-open
+  // group; omitting it (with `createProperties`) creates a fresh one.
+  // Returns the (possibly new) numeric group id, like the real API.
+  async group({ tabIds, groupId, createProperties }) {
+    const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
+    let gid = groupId;
+    if (gid === undefined) {
+      gid = nextGroupId();
+      const windowId = createProperties && createProperties.windowId;
+      this.tabGroupsApi._ensureGroup(gid, windowId);
+    }
+    for (const id of ids) {
+      const tab = this.tabs.get(id);
+      if (tab) tab.groupId = gid;
+    }
+    return gid;
+  }
+
+  // chrome.tabs.ungroup()-alike.
+  async ungroup(tabIdOrIds) {
+    const ids = Array.isArray(tabIdOrIds) ? tabIdOrIds : [tabIdOrIds];
+    for (const id of ids) {
+      const tab = this.tabs.get(id);
+      if (tab) tab.groupId = -1;
+    }
+  }
+}
+
+// Per-device fake chrome.tabGroups. Groups are local to one simulated
+// device/browser — exactly like the real API — never shared through
+// SimWorld's bookmark tree; only a group's RULES (stored via
+// groups-core.js) sync across devices.
+class SimTabGroupsApi {
+  constructor(tabsApi) {
+    this.tabsApi = tabsApi;
+    this.groups = new Map(); // id -> {id, title, color, windowId}
+  }
+
+  async query(queryInfo = {}) {
+    let list = Array.from(this.groups.values());
+    if (queryInfo.windowId !== undefined) {
+      list = list.filter((g) => g.windowId === queryInfo.windowId);
+    }
+    return list.map((g) => ({ ...g }));
+  }
+
+  async get(id) {
+    const g = this.groups.get(id);
+    if (!g) throw new Error(`no such group ${id}`);
+    return { ...g };
+  }
+
+  async update(id, changes) {
+    const g = this.groups.get(id);
+    if (!g) throw new Error(`no such group ${id}`);
+    Object.assign(g, changes);
+    return { ...g };
+  }
+
+  // internal: registers a fresh (initially untitled) group — called by
+  // SimTabsApi.group() when it's asked to create one.
+  _ensureGroup(id, windowId) {
+    if (!this.groups.has(id)) {
+      this.groups.set(id, { id, title: undefined, color: "grey", windowId });
+    }
+    return this.groups.get(id);
   }
 }
 
@@ -246,6 +340,8 @@ class SimDevice {
     this.world = world;
     this.deviceName = deviceName;
     this.tabsApi = new SimTabsApi();
+    this.tabGroupsApi = new SimTabGroupsApi(this.tabsApi);
+    this.tabsApi.tabGroupsApi = this.tabGroupsApi;
     this.windowsApi = new SimWindowsApi(this.tabsApi);
     this.storage = new SimStorage({
       deviceName,
@@ -257,10 +353,12 @@ class SimDevice {
     const env = {
       bookmarks: world.bookmarksApiFor(this),
       tabs: this.tabsApi,
+      tabGroups: this.tabGroupsApi,
       windows: this.windowsApi,
       storage: { local: this.storage },
       runtime: { getURL: (p) => `sim-extension://${p}` },
     };
+    this.env = env;
     this.engine = createSyncEngine(env);
     // Any tabs.remove() — ours or a "user" closing a tab via
     // closeTab() below — fires onRemoved, exactly like a real browser.
@@ -305,6 +403,32 @@ class SimDevice {
     const tab = this._findTabByUrl(url);
     if (!tab) throw new Error(`no tab open at ${url} on ${this.deviceName}`);
     tab.groupId = groupId;
+  }
+
+  // Creates (or reuses) an open, TITLED tab group in this device's
+  // default window and returns its numeric id — for groups-core.js
+  // tests that need a group to already exist before opening tabs into
+  // it, distinct from setTabGroup's bare numeric-groupId version.
+  ensureOpenGroup(title) {
+    const existing = Array.from(this.tabGroupsApi.groups.values()).find(
+      (g) => g.title === title
+    );
+    if (existing) return existing.id;
+    const id = nextGroupId();
+    this.tabGroupsApi.groups.set(id, {
+      id,
+      title,
+      color: "grey",
+      windowId: this.windowsApi.defaultWindowId,
+    });
+    return id;
+  }
+
+  // Opens a tab already inside a titled group (creating the group in
+  // this window if it doesn't exist yet).
+  async openGroupedTab(url, title, groupTitle) {
+    const groupId = this.ensureOpenGroup(groupTitle);
+    return this.openTab(url, title, { groupId });
   }
 
   // Opens a tab that's still mid-navigation (an intermediate URL,
@@ -401,15 +525,19 @@ class SimDevice {
       .sort();
   }
 
-  // This device's own bookmark entries for `profile` (default:
-  // whatever's active), decoded — [{real, state, t, h}, ...].
+  // This device's own status bookmark for `profile` (default: whatever's
+  // active), one per URL folder it has weighed in on — [{real, state,
+  // t, h}, ...].
   async myEntries(profile) {
     const p = profile || (await this.engine.getActiveProfile());
     const folder = await this.engine.getOrCreateProfileFolder(p);
-    const children = await this.world.bookmarksApiFor(this).getChildren(folder.id);
-    return children
-      .map((c) => parseTabEntryUrl(c.url))
-      .filter((info) => info && info.device === this.deviceName);
+    const tree = await this.engine.readProfileEntries(folder.id);
+    const out = [];
+    for (const [url, folderEntry] of tree) {
+      const mine = folderEntry.devices.get(this.deviceName);
+      if (mine && mine.length) out.push({ real: url, ...mine[0] });
+    }
+    return out;
   }
 }
 
@@ -458,7 +586,9 @@ class SimWorld {
         this.pending.push(Promise.resolve().then(() => dev.engine.handleBookmarkRemoved()));
       } else {
         this.pending.push(
-          Promise.resolve().then(() => dev.engine.handleBookmarkEvent(event.url))
+          Promise.resolve().then(() =>
+            dev.engine.handleBookmarkEvent(event.title, event.url)
+          )
         );
       }
     }
@@ -484,9 +614,16 @@ class SimWorld {
   async allEntries(profile) {
     // Any device's engine can resolve the folder; use the first one.
     if (!this.devices.length) return [];
-    const folder = await this.devices[0].engine.getOrCreateProfileFolder(profile);
-    const children = await this.bookmarksApiFor().getChildren(folder.id);
-    return children.map((c) => parseTabEntryUrl(c.url)).filter(Boolean);
+    const engine = this.devices[0].engine;
+    const folder = await engine.getOrCreateProfileFolder(profile);
+    const tree = await engine.readProfileEntries(folder.id);
+    const out = [];
+    for (const [url, folderEntry] of tree) {
+      for (const [device, list] of folderEntry.devices) {
+        for (const entry of list) out.push({ real: url, device, ...entry });
+      }
+    }
+    return out;
   }
 }
 

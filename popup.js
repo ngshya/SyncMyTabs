@@ -57,7 +57,7 @@ async function loadSettings() {
   intervalInput.value = syncIntervalMinutes || 1;
   lazyInput.checked = openRestoredLazy !== false; // default ON
   ttlEnabledInput.checked = ttlEnabled !== false; // default ON
-  ttlDaysInput.value = ttlDays || 21;
+  ttlDaysInput.value = ttlDays || 14;
   document.getElementById("lastActivity").textContent = lastActivityTimestamp
     ? new Date(lastActivityTimestamp).toLocaleString()
     : "none";
@@ -98,7 +98,7 @@ ttlDaysInput.addEventListener("change", async () => {
   const days = Number(ttlDaysInput.value);
   if (!days || days < 1) {
     flashStatus("Cleanup threshold must be at least 1 day", true);
-    ttlDaysInput.value = 21;
+    ttlDaysInput.value = 14;
     return;
   }
   await browser.storage.local.set({ ttlDays: days });
@@ -217,9 +217,295 @@ document.getElementById("syncNow").addEventListener("click", async () => {
   }, 1200);
 });
 
+// ------------------------------------------------------------
+// Tab groups (leashing module — see groups-core.js / CLAUDE.md).
+// Group RULES themselves sync via bookmarks (per active profile, like
+// everything else); leashEnabled/closeUndeclared/startupDelay are
+// per-device local preferences (browser.storage.local), same
+// convention as syncEnabled/ttlDays/openRestoredLazy above.
+// ------------------------------------------------------------
+const groupsLeashEnabledInput = document.getElementById("groupsLeashEnabled");
+const groupsCloseUndeclaredInput = document.getElementById("groupsCloseUndeclared");
+const groupsStartupDelayInput = document.getElementById("groupsStartupDelay");
+const groupListEl = document.getElementById("groupList");
+const groupEditorEl = document.getElementById("groupEditor");
+
+let openGroupTitle = null; // which group's editor panel is currently shown, if any
+
+async function loadGroupPrefs() {
+  const { leashEnabled, closeUndeclared, startupDelaySeconds } =
+    await browser.runtime.sendMessage({ type: "GROUPS_GET_PREFS" });
+  groupsLeashEnabledInput.checked = leashEnabled !== false;
+  groupsCloseUndeclaredInput.checked = closeUndeclared === true;
+  groupsStartupDelayInput.value = startupDelaySeconds || 15;
+}
+
+groupsLeashEnabledInput.addEventListener("change", async () => {
+  await browser.runtime.sendMessage({
+    type: "GROUPS_SET_PREFS",
+    leashEnabled: groupsLeashEnabledInput.checked,
+  });
+  flashStatus("Saved ✓");
+});
+
+groupsCloseUndeclaredInput.addEventListener("change", async () => {
+  await browser.runtime.sendMessage({
+    type: "GROUPS_SET_PREFS",
+    closeUndeclared: groupsCloseUndeclaredInput.checked,
+  });
+  flashStatus("Saved ✓");
+});
+
+groupsStartupDelayInput.addEventListener("change", async () => {
+  let seconds = Math.round(Number(groupsStartupDelayInput.value));
+  if (!Number.isFinite(seconds) || seconds < 0) seconds = 15;
+  groupsStartupDelayInput.value = seconds;
+  await browser.runtime.sendMessage({
+    type: "GROUPS_SET_PREFS",
+    startupDelaySeconds: seconds,
+  });
+  flashStatus("Saved ✓");
+});
+
+async function renderGroups() {
+  const { titles, rulesCounts, openTitles } = await browser.runtime.sendMessage({
+    type: "GROUPS_LIST",
+  });
+  groupListEl.innerHTML = "";
+
+  for (const title of titles) {
+    const row = document.createElement("div");
+    row.className = "group-row";
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "name";
+    nameEl.textContent = title;
+    row.appendChild(nameEl);
+
+    const countEl = document.createElement("span");
+    countEl.className = "rule-count";
+    const n = rulesCounts[title] || 0;
+    countEl.textContent = n === 1 ? "1 rule" : `${n} rules`;
+    row.appendChild(countEl);
+
+    if (openTitles.includes(title)) {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = "Open";
+      row.appendChild(badge);
+    }
+
+    const editBtn = document.createElement("button");
+    editBtn.className = "secondary";
+    editBtn.textContent = "Edit";
+    editBtn.addEventListener("click", () => openGroupEditor(title));
+    row.appendChild(editBtn);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "danger";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", async () => {
+      await browser.runtime.sendMessage({ type: "GROUPS_DELETE", title });
+      if (openGroupTitle === title) closeGroupEditor();
+      flashStatus("Deleted ✓");
+      await renderGroups();
+    });
+    row.appendChild(deleteBtn);
+
+    groupListEl.appendChild(row);
+  }
+}
+
+document.getElementById("addGroup").addEventListener("click", () => {
+  const input = document.getElementById("newGroupName");
+  const title = input.value.trim();
+  if (!title) return;
+  input.value = "";
+  openGroupEditor(title);
+});
+document.getElementById("newGroupName").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("addGroup").click();
+});
+
+function closeGroupEditor() {
+  openGroupTitle = null;
+  groupEditorEl.hidden = true;
+  groupEditorEl.innerHTML = "";
+}
+
+async function openGroupEditor(title) {
+  openGroupTitle = title;
+  const { rules, openTabs } = await browser.runtime.sendMessage({
+    type: "GROUPS_GET",
+    title,
+  });
+  paintGroupEditor(title, rules, openTabs);
+}
+
+// Collects every rule row currently in the DOM, saves the whole set
+// (an empty set deletes the group — see groups-core.js), then repaints
+// both the editor (fresh state) and the group list (rule count/badge).
+async function saveRulesFromEditor(title, openTabs) {
+  const rows = groupEditorEl.querySelectorAll(".rule-editor-row");
+  const rules = Array.from(rows)
+    .map((row) => ({
+      match: row.querySelector(".rule-match").value.trim(),
+      pattern: row.querySelector(".rule-pattern").value.trim(),
+      openUrl: row.querySelector(".rule-open-url").value.trim(),
+    }))
+    .filter((r) => r.match); // a rule needs at least a page to identify it
+
+  await browser.runtime.sendMessage({ type: "GROUPS_SET", title, rules });
+  flashStatus("Saved ✓");
+  if (rules.length === 0) {
+    closeGroupEditor();
+  } else {
+    paintGroupEditor(title, rules, openTabs);
+  }
+  await renderGroups();
+}
+
+function buildRuleEditorRow(title, rule, openTabs) {
+  const row = document.createElement("div");
+  row.className = "rule-editor-row";
+
+  const matchLabel = document.createElement("label");
+  matchLabel.textContent = "Match (which page this rule applies to)";
+  const matchInput = document.createElement("input");
+  matchInput.className = "rule-match";
+  matchInput.placeholder = "*://example.com/*";
+  matchInput.value = rule.match || "";
+  matchLabel.appendChild(matchInput);
+  row.appendChild(matchLabel);
+
+  const patternLabel = document.createElement("label");
+  patternLabel.textContent = "Leash pattern (links must match this to stay in-group)";
+  const patternInput = document.createElement("input");
+  patternInput.className = "rule-pattern";
+  patternInput.placeholder = "*://example.com/*";
+  patternInput.value = rule.pattern || "";
+  patternLabel.appendChild(patternInput);
+  row.appendChild(patternLabel);
+
+  const openUrlLabel = document.createElement("label");
+  openUrlLabel.textContent = "Reopen if missing on startup (optional)";
+  const openUrlInput = document.createElement("input");
+  openUrlInput.className = "rule-open-url";
+  openUrlInput.placeholder = "https://example.com/";
+  openUrlInput.value = rule.openUrl || "";
+  openUrlLabel.appendChild(openUrlInput);
+  row.appendChild(openUrlLabel);
+
+  for (const input of [matchInput, patternInput, openUrlInput]) {
+    input.addEventListener("change", () => saveRulesFromEditor(title, openTabs));
+  }
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.className = "danger delete-rule";
+  deleteBtn.textContent = "Delete rule";
+  deleteBtn.addEventListener("click", () => {
+    row.remove();
+    saveRulesFromEditor(title, openTabs);
+  });
+  row.appendChild(deleteBtn);
+
+  return row;
+}
+
+function paintGroupEditor(title, rules, openTabs) {
+  groupEditorEl.hidden = false;
+  groupEditorEl.innerHTML = "";
+
+  const heading = document.createElement("div");
+  heading.className = "editor-title";
+  heading.textContent = `Editing "${title}"`;
+  groupEditorEl.appendChild(heading);
+
+  const ruleList = document.createElement("div");
+  for (const rule of rules) {
+    ruleList.appendChild(buildRuleEditorRow(title, rule, openTabs));
+  }
+  groupEditorEl.appendChild(ruleList);
+
+  const addRuleBtn = document.createElement("button");
+  addRuleBtn.className = "secondary";
+  addRuleBtn.textContent = "Add rule";
+  addRuleBtn.addEventListener("click", () => {
+    ruleList.appendChild(buildRuleEditorRow(title, {}, openTabs));
+  });
+  groupEditorEl.appendChild(addRuleBtn);
+
+  // Quick-add: one button per currently-open tab in this group whose
+  // URL isn't already covered by a rule — prefills match/pattern/openUrl
+  // from that tab in one click.
+  const existingMatches = new Set(rules.map((r) => r.match));
+  const candidates = (openTabs || []).filter(
+    (t) => !existingMatches.has(defaultMatchFor(t.url))
+  );
+  if (candidates.length > 0) {
+    const quickAddTitle = document.createElement("div");
+    quickAddTitle.className = "section-title";
+    quickAddTitle.textContent = "Quick add from open tabs";
+    groupEditorEl.appendChild(quickAddTitle);
+    for (const tab of candidates) {
+      const item = document.createElement("div");
+      item.className = "quick-add-item";
+      const label = document.createElement("span");
+      label.textContent = tab.title || tab.url;
+      item.appendChild(label);
+      const btn = document.createElement("button");
+      btn.className = "secondary";
+      btn.textContent = "Use this page";
+      btn.addEventListener("click", () => {
+        const match = defaultMatchFor(tab.url);
+        ruleList.appendChild(
+          buildRuleEditorRow(title, { match, pattern: match, openUrl: tab.url }, openTabs)
+        );
+        saveRulesFromEditor(title, openTabs);
+      });
+      item.appendChild(btn);
+      groupEditorEl.appendChild(item);
+    }
+  }
+
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "secondary";
+  closeBtn.textContent = "Close";
+  closeBtn.addEventListener("click", () => closeGroupEditor());
+  groupEditorEl.appendChild(closeBtn);
+}
+
+// Suggested "match" for a URL: domain + full path, query/fragment
+// dropped — same heuristic as groups-core.js's own defaultMatchForUrl,
+// duplicated here since the popup doesn't load groups-core.js directly.
+function defaultMatchFor(url) {
+  try {
+    const u = new URL(url);
+    return `*://${u.hostname}${u.pathname}*`;
+  } catch (e) {
+    return "*";
+  }
+}
+
+document.getElementById("groupsReconcileNow").addEventListener("click", async () => {
+  const btn = document.getElementById("groupsReconcileNow");
+  const original = btn.textContent;
+  btn.textContent = "Checking...";
+  btn.disabled = true;
+  await browser.runtime.sendMessage({ type: "GROUPS_RECONCILE_NOW" });
+  btn.textContent = "Done ✓";
+  await renderGroups();
+  setTimeout(() => {
+    btn.textContent = original;
+    btn.disabled = false;
+  }, 1200);
+});
+
 document.getElementById("version").textContent =
   "v" + browser.runtime.getManifest().version;
 
 refreshSyncState();
 loadSettings();
 renderProfiles();
+loadGroupPrefs();
+renderGroups();
