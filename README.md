@@ -196,6 +196,11 @@ Everything — status and settings alike — lives in one place: the **popup**
 - **Cleanup / TTL** (default on, **14 days**) — delete a device's bookmark
   entry if it hasn't been updated in this many days (safety net for a device
   that never comes back to agree "closed").
+- **Close duplicate tabs with the same URL** (default **off** — closing tabs
+  automatically is destructive) — periodically closes any extra local tabs
+  that share the exact same URL, keeping the oldest. Matching is by exact
+  URL string, so e.g. a trailing-slash or query-string difference isn't
+  considered a duplicate.
 - **Tab groups (this profile)** (Chrome/Brave only) — the leashing module's
   own on/off switch, the "close tabs matching no rule" toggle (off by
   default), the startup check delay, and per-group rule editors — see
@@ -250,6 +255,13 @@ SyncMyTabs' own initiative):
 - **Sync visibility.** Detection of remote updates depends entirely on your
   sync tool actually propagating bookmark changes to this device's local tree.
   SyncMyTabs has no insight into whether that underlying sync is healthy.
+- **URLs are matched as exact strings, never normalized.** `https://a.com`
+  and `https://a.com/` (or with/without `www`, a different query string,
+  etc.) are treated as two distinct URLs — each can end up with its own
+  folder and its own mirrored tab, which can look like a duplicate even
+  though the code sees two different URLs. The opt-in "close duplicate
+  tabs" cleanup only catches *exact*-URL duplicates on one device; it can't
+  merge two near-identical URLs into one.
 - **Closing and reopening are both contagious.** There's no shared clock and
   no cross-device "who's newer" comparison — closing a tab anywhere closes it
   everywhere, and reopening it anywhere reopens it on every device that had
