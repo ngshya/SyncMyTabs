@@ -33,19 +33,35 @@ const ROOT_NAME = "SyncMyTabs";
 const LEGACY_ROOT_NAMES = ["OpenTabSync", "Live Tabs Sync"];
 
 const DEFAULT_PROFILE = "default";
-const DEFAULT_TTL_DAYS = 21;
+const DEFAULT_TTL_DAYS = 1;
 const DEFAULT_INTERVAL_MINUTES = 1;
 
-// Every tab-entry bookmark's url starts with this and packs its
-// metadata as query params: u=<real url>, d=<device>, s=open|closed,
-// t=<last STATE-CHANGE time>, h=<last HEARTBEAT time>. `t` and `h` are
-// deliberately separate: `t` only ever moves on a genuine open/close
-// transition and drives open-vs-closed precedence when devices
-// disagree; `h` is bumped by routine liveness heartbeats (so TTL
-// cleanup doesn't sweep a tab that's simply been open a long time).
-// Conflating the two was the root of the open-time race fixed in
-// 2.6.2 — keeping them apart avoids reintroducing that class of bug.
-const TAB_URL_BASE = "https://syncmytabs.local/tab";
+// Bookmark tree shape (see CLAUDE.md):
+//   SyncMyTabs/<profile>/<one folder per URL>/{_url, <device1>, <device2>, …}
+// The per-URL folder's title is purely cosmetic (tab title, or the URL
+// itself, truncated) — matching a URL to its folder is ALWAYS done by
+// reading the `_url` child, never by folder title, so title length/
+// collisions/encoding are never a correctness concern.
+const URL_MARKER_TITLE = "_url";
+const FOLDER_TITLE_MAX_LEN = 80;
+
+function folderTitleFor(title, url) {
+  const base = (title && title.trim()) || url;
+  return base.length > FOLDER_TITLE_MAX_LEN
+    ? base.slice(0, FOLDER_TITLE_MAX_LEN - 1) + "…"
+    : base;
+}
+
+// Each device's own status bookmark inside a URL folder is titled with
+// the device's name (exact, unencoded) and its url packs open|closed
+// plus two timestamps: t=<last STATE-CHANGE time>, h=<last HEARTBEAT
+// time>. Deliberately separate: `t` only ever moves on a genuine local
+// open/close transition; `h` is bumped by routine liveness heartbeats
+// (so TTL cleanup doesn't sweep a tab that's simply been open a long
+// time). Conflating the two was the root of the open-time race fixed
+// in 2.6.2 — keeping them apart avoids reintroducing that class of bug,
+// and `h` (not `t`) is what folder-level TTL staleness checks.
+const STATUS_URL_BASE = "https://syncmytabs.local/status";
 
 // "Other Bookmarks" folder id: "2" on Chrome/Brave, "unfiled_____" on
 // Firefox. Resolved at runtime from the bookmark tree, these are only
@@ -70,34 +86,30 @@ function isInTabGroup(t) {
   return typeof t.groupId === "number" && t.groupId !== -1;
 }
 
-function buildTabEntryUrl({ real, device, state, t, h }) {
-  return (
-    `${TAB_URL_BASE}?u=${encodeURIComponent(real)}` +
-    `&d=${encodeURIComponent(device)}` +
-    `&s=${state}&t=${t}&h=${h}`
-  );
+function buildDeviceStatusUrl({ state, t, h }) {
+  return `${STATUS_URL_BASE}?s=${state}&t=${t}&h=${h}`;
 }
 
-function parseTabEntryUrl(url) {
-  if (!url || !url.startsWith(TAB_URL_BASE)) return null;
+function parseDeviceStatusUrl(url) {
+  if (!url || !url.startsWith(STATUS_URL_BASE)) return null;
   try {
     const p = new URL(url).searchParams;
-    const real = p.get("u");
-    const device = p.get("d");
     const state = p.get("s");
-    if (!real || !device || (state !== "open" && state !== "closed")) {
-      return null;
-    }
+    if (state !== "open" && state !== "closed") return null;
     const t = Number(p.get("t")) || 0;
     const h = Number(p.get("h")) || t;
-    return { real, device, state, t, h };
+    return { state, t, h };
   } catch (e) {
     return null;
   }
 }
 
-function isTabEntryBookmark(url) {
-  return !!parseTabEntryUrl(url);
+// Whether a bookmark-tree change is one we care about: either the `_url`
+// marker of a newly-created URL folder, or a device status bookmark
+// (created or updated). Anything else (the user's own unrelated
+// bookmarks, a plain folder by itself) is ignored.
+function isRelevantBookmarkChange(title, url) {
+  return title === URL_MARKER_TITLE || !!parseDeviceStatusUrl(url);
 }
 
 // ------------------------------------------------------------
@@ -238,13 +250,14 @@ function createSyncEngine(env) {
   // (status !== "complete") are excluded entirely — see CLAUDE.md for
   // why (the phantom-duplicate-entry bug this guards against).
   //
-  // Tabs inside a browser tab group are deliberately left out of `urls`/
-  // `titleByUrl`/`tabIdsByUrl` too: a grouped tab never gets its own
-  // bookmark entry, and mirror-driven open/close never touches one
-  // (reconcileMirror only ever closes ids drawn from `tabIdsByUrl`). They
-  // ARE still counted in `allUrls`, which exists purely so callers that
-  // just want to know "is this URL already open here at all" (avoiding a
-  // duplicate open) don't ignore a tab merely because it's grouped.
+  // Pinned tabs and tabs inside a browser tab group are deliberately
+  // left out of `urls`/`titleByUrl`/`tabIdsByUrl` too: neither ever gets
+  // its own bookmark entry, and mirror-driven open/close never touches
+  // one (reconcileMirror only ever closes ids drawn from `tabIdsByUrl`).
+  // They ARE still counted in `allUrls`, which exists purely so callers
+  // that just want to know "is this URL already open here at all"
+  // (avoiding a duplicate open) don't ignore a tab merely because it's
+  // pinned or grouped.
   async function snapshotOwnTabs() {
     const urls = new Set();
     const allUrls = new Set();
@@ -255,7 +268,7 @@ function createSyncEngine(env) {
       const real = realUrlOfTab(t);
       if (!isHttpUrl(real)) continue;
       allUrls.add(real);
-      if (isInTabGroup(t)) continue;
+      if (t.pinned || isInTabGroup(t)) continue;
       urls.add(real);
       if (!titleByUrl.has(real)) titleByUrl.set(real, t.title || real);
       if (!tabIdsByUrl.has(real)) tabIdsByUrl.set(real, []);
@@ -292,31 +305,88 @@ function createSyncEngine(env) {
   // startup, or a bookmark-change reaction.
   // ==========================================================
 
-  // Registers/refreshes THIS device's own "open" entries against its
-  // live tabs. Safe to call from anywhere — it only ever creates/
-  // refreshes "open" entries or revives a "closed" one a tab was
-  // genuinely reopened at; it never closes anything.
-  async function reconcileMyOpenEntries(profileFolderId, deviceName) {
+  // Reads a whole profile folder's tree in one pass: every per-URL
+  // subfolder's real url (its `_url` child) and every device's status
+  // bookmark inside it. Self-healing: if a sync-tool race left two
+  // folders for the SAME url (two devices creating it at once), the
+  // second one's device bookmarks are moved into the first (canonical)
+  // folder and the duplicate folder is removed — the same spirit as
+  // mergeFolderInto, just keyed by url match instead of title match.
+  //
+  // Returns Map<realUrl, { folderId, urlBookmarkId,
+  //   devices: Map<deviceName, {id,state,t,h}[]> }>. `devices` values
+  // are arrays (not a single entry) because a duplicate device
+  // bookmark within one folder (same race) is possible too; callers
+  // that only care about their OWN device dedupe it defensively (see
+  // reconcileMyOpenEntries), callers that aggregate across devices
+  // (reconcileMirror/cleanupProfileFolder) just flatten every entry.
+  async function readProfileEntries(profileFolderId) {
+    const byUrl = new Map();
     const children = await env.bookmarks.getChildren(profileFolderId);
-    const mine = new Map(); // real url -> {id, ...parsed}
-    const dupeIds = [];
-    for (const c of children) {
-      const info = parseTabEntryUrl(c.url);
-      if (!info || info.device !== deviceName) continue;
-      const existing = mine.get(info.real);
-      if (!existing) {
-        mine.set(info.real, { id: c.id, ...info });
-      } else if (info.t >= existing.t) {
-        dupeIds.push(existing.id);
-        mine.set(info.real, { id: c.id, ...info });
+    for (const folder of children) {
+      if (folder.url) continue; // a stray bookmark directly in the profile folder; ignore
+      const kids = await env.bookmarks.getChildren(folder.id);
+      const urlBm = kids.find((k) => k.title === URL_MARKER_TITLE && k.url);
+      if (!urlBm) continue; // malformed/incomplete folder; ignore
+
+      const devices = new Map();
+      for (const k of kids) {
+        if (k.id === urlBm.id) continue;
+        const info = parseDeviceStatusUrl(k.url);
+        if (!info) continue;
+        if (!devices.has(k.title)) devices.set(k.title, []);
+        devices.get(k.title).push({ id: k.id, ...info });
+      }
+
+      const existing = byUrl.get(urlBm.url);
+      if (existing) {
+        for (const [devName, list] of devices) {
+          for (const entry of list) {
+            try {
+              await env.bookmarks.move(entry.id, { parentId: existing.folderId });
+            } catch (e) {}
+            if (!existing.devices.has(devName)) existing.devices.set(devName, []);
+            existing.devices.get(devName).push(entry);
+          }
+        }
+        try {
+          await env.bookmarks.removeTree(folder.id);
+        } catch (e) {}
       } else {
-        dupeIds.push(c.id);
+        byUrl.set(urlBm.url, {
+          folderId: folder.id,
+          folderTitle: folder.title,
+          urlBookmarkId: urlBm.id,
+          devices,
+        });
       }
     }
-    for (const id of dupeIds) {
-      try {
-        await env.bookmarks.remove(id);
-      } catch (e) {}
+    return byUrl;
+  }
+
+  // Registers/refreshes THIS device's own "open" entries against its
+  // live tabs. Safe to call from anywhere — it only ever creates a new
+  // URL folder, creates/refreshes an "open" entry, or revives a
+  // "closed" one a tab was genuinely reopened at; it never closes
+  // anything.
+  async function reconcileMyOpenEntries(profileFolderId, deviceName) {
+    const entries = await readProfileEntries(profileFolderId);
+
+    // Defensive: collapse any duplicate status bookmarks for MY OWN
+    // device within a folder (a sync-tool race) down to the most
+    // recently changed one.
+    for (const folderEntry of entries.values()) {
+      const mineList = folderEntry.devices.get(deviceName);
+      if (mineList && mineList.length > 1) {
+        mineList.sort((a, b) => b.t - a.t);
+        const [keep, ...dupes] = mineList;
+        for (const d of dupes) {
+          try {
+            await env.bookmarks.remove(d.id);
+          } catch (e) {}
+        }
+        folderEntry.devices.set(deviceName, [keep]);
+      }
     }
 
     const { urls: current, titleByUrl } = await snapshotOwnTabs();
@@ -324,134 +394,146 @@ function createSyncEngine(env) {
     const heartbeatMs = await heartbeatIntervalMs();
 
     for (const url of current) {
-      const entry = mine.get(url);
+      const folderEntry = entries.get(url);
+      const mine = folderEntry && folderEntry.devices.get(deviceName)?.[0];
       const title = titleByUrl.get(url) || url;
-      if (!entry) {
+
+      if (!folderEntry) {
         try {
-          await env.bookmarks.create({
+          const folder = await env.bookmarks.create({
             parentId: profileFolderId,
-            title,
-            url: buildTabEntryUrl({
-              real: url,
-              device: deviceName,
-              state: "open",
-              t: now,
-              h: now,
-            }),
+            title: folderTitleFor(title, url),
+          });
+          await env.bookmarks.create({
+            parentId: folder.id,
+            title: URL_MARKER_TITLE,
+            url,
+          });
+          await env.bookmarks.create({
+            parentId: folder.id,
+            title: deviceName,
+            url: buildDeviceStatusUrl({ state: "open", t: now, h: now }),
           });
         } catch (e) {}
-      } else if (entry.state === "closed") {
+      } else if (!mine) {
+        try {
+          await env.bookmarks.create({
+            parentId: folderEntry.folderId,
+            title: deviceName,
+            url: buildDeviceStatusUrl({ state: "open", t: now, h: now }),
+          });
+        } catch (e) {}
+      } else if (mine.state === "closed") {
         // Genuine reopen: always safe to record, regardless of when
         // it's detected.
         try {
-          await env.bookmarks.update(entry.id, {
-            title,
-            url: buildTabEntryUrl({
-              real: url,
-              device: deviceName,
-              state: "open",
-              t: now,
-              h: now,
-            }),
+          await env.bookmarks.update(mine.id, {
+            url: buildDeviceStatusUrl({ state: "open", t: now, h: now }),
           });
         } catch (e) {}
-      } else if (now - entry.h > heartbeatMs) {
+      } else if (now - mine.h > heartbeatMs) {
         // Still open: only bump the heartbeat, never `t` — otherwise a
         // routine liveness touch could outrace a genuine close recorded
         // elsewhere (the exact race fixed in 2.6.2).
         try {
-          await env.bookmarks.update(entry.id, {
-            url: buildTabEntryUrl({
-              real: url,
-              device: deviceName,
-              state: "open",
-              t: entry.t,
-              h: now,
-            }),
+          await env.bookmarks.update(mine.id, {
+            url: buildDeviceStatusUrl({ state: "open", t: mine.t, h: now }),
           });
         } catch (e) {}
       }
     }
   }
 
-  // Flips THIS device's own entries to "closed" for URLs it had
-  // tracked as open but no longer has live. ONLY ever called from
+  // Flips THIS device's own entry to "closed" for URLs it had tracked
+  // as open but no longer has live. ONLY ever called from
   // handleTabRemoved / handleTabUpdated.
   async function closeMyGoneTabs(profileFolderId, deviceName) {
-    const children = await env.bookmarks.getChildren(profileFolderId);
+    const entries = await readProfileEntries(profileFolderId);
     const { urls: current } = await snapshotOwnTabs();
     const now = Date.now();
-    for (const c of children) {
-      const info = parseTabEntryUrl(c.url);
-      if (!info || info.device !== deviceName || info.state !== "open") {
-        continue;
-      }
-      if (current.has(info.real)) continue;
+    for (const [url, folderEntry] of entries) {
+      const mine = folderEntry.devices.get(deviceName)?.[0];
+      if (!mine || mine.state !== "open") continue;
+      if (current.has(url)) continue;
       try {
-        await env.bookmarks.update(c.id, {
-          url: buildTabEntryUrl({ ...info, state: "closed", t: now, h: now }),
+        await env.bookmarks.update(mine.id, {
+          url: buildDeviceStatusUrl({ state: "closed", t: now, h: now }),
         });
       } catch (e) {}
     }
   }
 
-  // Mirrors the group's aggregate state onto this device's live tabs.
-  async function reconcileMirror(profileFolderId) {
-    const children = await env.bookmarks.getChildren(profileFolderId);
-    const groups = new Map(); // real url -> [{id, title, ...parsed}]
-    for (const c of children) {
-      const info = parseTabEntryUrl(c.url);
-      if (!info) continue;
-      if (!groups.has(info.real)) groups.set(info.real, []);
-      groups.get(info.real).push({ id: c.id, title: c.title, ...info });
-    }
+  // Mirrors the shared state onto this device's live tabs, and deletes
+  // any URL folder every device has now closed. Per-device state is
+  // NOT re-derived from a cross-device timestamp vote (the old model):
+  // once THIS device's own entry says "closed", it stays closed here
+  // regardless of what other devices still show — only this device's
+  // own genuine open/close actions (reconcileMyOpenEntries /
+  // closeMyGoneTabs) ever change it. A device that hasn't weighed in
+  // yet (no entry of its own) mirrors in whatever's open elsewhere.
+  async function reconcileMirror(profileFolderId, deviceName) {
+    const entries = await readProfileEntries(profileFolderId);
+    const { allUrls } = await snapshotOwnTabs();
 
-    const { urls: current, allUrls, tabIdsByUrl } = await snapshotOwnTabs();
-
-    const idsToClose = [];
     const toOpen = [];
-    for (const [url, entries] of groups) {
-      const openEntries = entries.filter((e) => e.state === "open");
-      const closedEntries = entries.filter((e) => e.state === "closed");
-      const latestOpenT = openEntries.reduce(
-        (m, e) => Math.max(m, e.t),
-        -Infinity
-      );
-      const latestCloseT = closedEntries.reduce(
-        (m, e) => Math.max(m, e.t),
-        -Infinity
-      );
-      const present = latestOpenT > latestCloseT;
+    const foldersToDelete = [];
 
-      // Duplicate-open check uses `allUrls` (grouped tabs included): a
-      // URL the user already has open in a tab group is still "already
-      // here" and must not get a second, ungrouped tab opened next to
-      // it. Mirror-driven close, by contrast, only ever draws ids from
-      // `tabIdsByUrl`, which excludes grouped tabs by construction — a
-      // remote close never reaches into a tab group the user built
-      // locally.
-      if (present && !allUrls.has(url)) {
-        const best = openEntries.sort((a, b) => b.t - a.t)[0];
-        toOpen.push({ url, title: (best && best.title) || url });
-      } else if (!present && current.has(url)) {
-        for (const id of tabIdsByUrl.get(url) || []) idsToClose.push(id);
+    for (const [url, folderEntry] of entries) {
+      const allEntries = [];
+      for (const list of folderEntry.devices.values()) allEntries.push(...list);
+      if (allEntries.length === 0) continue; // malformed folder, leave for cleanupProfileFolder
+
+      const allClosed = allEntries.every((e) => e.state === "closed");
+      if (allClosed) {
+        foldersToDelete.push(folderEntry.folderId);
+        continue;
+      }
+
+      const mine = folderEntry.devices.get(deviceName)?.[0];
+      if (mine) continue; // I've already weighed in (open or closed) — never overridden by others
+
+      const anyOpen = allEntries.some((e) => e.state === "open");
+      // Duplicate-open check uses `allUrls` (pinned/grouped tabs
+      // included): a URL the user already has open there is still
+      // "already here" and must not get a second, untracked tab opened
+      // next to it. There's no "close a local tab" branch here — under
+      // this model only THIS device's own genuine close (via
+      // closeMyGoneTabs) ever closes its own tab; see the function
+      // comment above.
+      if (anyOpen && !allUrls.has(url)) {
+        toOpen.push({ url, title: folderEntry.folderTitle || url });
       }
     }
 
-    if (idsToClose.length) {
+    for (const folderId of foldersToDelete) {
       try {
-        await env.tabs.remove(idsToClose);
+        await env.bookmarks.removeTree(folderId);
       } catch (e) {}
     }
     if (toOpen.length) {
       await performAdd(toOpen);
     }
-    if (toOpen.length || idsToClose.length) {
+    if (toOpen.length || foldersToDelete.length) {
       await env.storage.local.set({ lastActivityTimestamp: Date.now() });
     }
   }
 
-  // TTL sweep + closed-group cleanup for a profile.
+  // TTL sweep for a profile: deletes an ENTIRE url folder once nothing
+  // in it has been touched (any device's heartbeat) in `ttlDays` — the
+  // safety net for a topic nobody's device is still actively
+  // maintaining. Also deletes any folder where every device already
+  // agrees "closed" (unconditional, not gated on TTL being enabled) —
+  // this duplicates reconcileMirror's own immediate check, run here too
+  // as a periodic backstop in case that event-driven pass was ever
+  // missed.
+  // TTL is evaluated PER DEVICE ENTRY, not per folder: pruning only the
+  // stale entry (not the whole folder) is what keeps a device that's
+  // gone for good from leaving a permanent "ghost open" marker that
+  // other devices keep mirroring in, while a folder still genuinely
+  // maintained by at least one other device is left alone. The folder
+  // itself is only ever deleted as a CONSEQUENCE of that pruning (or of
+  // reconcileMirror's own immediate check) — once every entry left in
+  // it is closed, or none are left at all.
   async function cleanupProfileFolder(profile) {
     const { ttlEnabled, ttlDays } = await env.storage.local.get([
       "ttlEnabled",
@@ -463,38 +545,34 @@ function createSyncEngine(env) {
     const now = Date.now();
 
     const profileFolder = await getOrCreateProfileFolder(profile);
-    let children = await env.bookmarks.getChildren(profileFolder.id);
+    const entries = await readProfileEntries(profileFolder.id);
 
     if (enabled) {
-      const stale = children.filter((c) => {
-        const info = parseTabEntryUrl(c.url);
-        if (!info) return false;
-        return now - (info.h || info.t) > ttlMs;
-      });
-      for (const c of stale) {
-        try {
-          await env.bookmarks.remove(c.id);
-        } catch (e) {}
-      }
-      if (stale.length) {
-        children = await env.bookmarks.getChildren(profileFolder.id);
+      for (const folderEntry of entries.values()) {
+        for (const list of folderEntry.devices.values()) {
+          for (const entry of list) {
+            if (now - (entry.h || entry.t || 0) > ttlMs) {
+              try {
+                await env.bookmarks.remove(entry.id);
+              } catch (e) {}
+              entry.removedByTtl = true;
+            }
+          }
+        }
       }
     }
 
-    const groups = new Map();
-    for (const c of children) {
-      const info = parseTabEntryUrl(c.url);
-      if (!info) continue;
-      if (!groups.has(info.real)) groups.set(info.real, []);
-      groups.get(info.real).push({ id: c.id, state: info.state });
-    }
-    for (const entries of groups.values()) {
-      if (entries.every((e) => e.state === "closed")) {
-        for (const e of entries) {
-          try {
-            await env.bookmarks.remove(e.id);
-          } catch (err) {}
-        }
+    for (const folderEntry of entries.values()) {
+      const remaining = [];
+      for (const list of folderEntry.devices.values()) {
+        for (const entry of list) if (!entry.removedByTtl) remaining.push(entry);
+      }
+      const allClosed =
+        remaining.length > 0 && remaining.every((e) => e.state === "closed");
+      if (allClosed || remaining.length === 0) {
+        try {
+          await env.bookmarks.removeTree(folderEntry.folderId);
+        } catch (e) {}
       }
     }
   }
@@ -508,9 +586,9 @@ function createSyncEngine(env) {
 
     if (checkClosed) await closeMyGoneTabs(profileFolder.id, deviceName);
     await reconcileMyOpenEntries(profileFolder.id, deviceName);
-    await reconcileMirror(profileFolder.id);
-    // Re-sync once more: the mirror pass may have opened/closed local
-    // tabs, so make sure this device's own entries reflect that too.
+    await reconcileMirror(profileFolder.id, deviceName);
+    // Re-sync once more: the mirror pass may have opened tabs locally,
+    // so make sure this device's own entries reflect that too.
     await reconcileMyOpenEntries(profileFolder.id, deviceName);
   }
 
@@ -625,10 +703,11 @@ function createSyncEngine(env) {
     return scheduleReconcile({ checkClosed: true });
   }
 
-  // Reaction to a remote (or our own) tab-entry bookmark change.
-  // Never triggers a close — see the safety rule.
-  function handleBookmarkEvent(url) {
-    if (!isTabEntryBookmark(url)) return reconcileTail;
+  // Reaction to a remote (or our own) tab-entry bookmark change: an
+  // `_url` marker's creation, or a device status bookmark's creation/
+  // update. Never triggers a close — see the safety rule.
+  function handleBookmarkEvent(title, url) {
+    if (!isRelevantBookmarkChange(title, url)) return reconcileTail;
     return scheduleReconcile();
   }
 
@@ -679,6 +758,7 @@ function createSyncEngine(env) {
     snapshotOwnTabs,
     isSyncEnabled,
     heartbeatIntervalMs,
+    readProfileEntries,
     reconcileMyOpenEntries,
     closeMyGoneTabs,
     reconcileMirror,
@@ -707,13 +787,14 @@ if (typeof module !== "undefined" && module.exports) {
     DEFAULT_PROFILE,
     DEFAULT_TTL_DAYS,
     DEFAULT_INTERVAL_MINUTES,
-    TAB_URL_BASE,
+    URL_MARKER_TITLE,
+    STATUS_URL_BASE,
     OTHER_BOOKMARKS_PARENT_ID,
     FIREFOX_UNFILED_ID,
     isHttpUrl,
-    buildTabEntryUrl,
-    parseTabEntryUrl,
-    isTabEntryBookmark,
+    buildDeviceStatusUrl,
+    parseDeviceStatusUrl,
+    isRelevantBookmarkChange,
     createSyncEngine,
   };
 }

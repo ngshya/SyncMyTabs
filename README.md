@@ -32,18 +32,25 @@ The extension maintains one root folder in your bookmarks with this shape:
 ```
 SyncMyTabs/                    ← root folder (in "Other Bookmarks")
 ├── default/                   ← one folder per profile (shared across devices)
-│   ├── "Example page"         ← one bookmark per (device, url) — see below
-│   ├── "Another page"
+│   ├── "Example page"/        ← one folder per open URL
+│   │   ├── _url                ← the real URL (folder name is cosmetic only)
+│   │   ├── laptop-A             ← one bookmark per device that's weighed in
+│   │   └── phone-B              ← its URL encodes that device's open/closed status
+│   ├── "Another page"/
+│   │   └── …
 │   └── …
 └── work/
     └── …
 ```
 
-Every open tab is a **bookmark shared across devices**, one per `(device,
-url)` pair. Its title is the page title; its metadata (which device, open or
-closed, and two timestamps) is packed into the bookmark's own URL. Each device
-only ever writes **its own** entries — never another device's — so there's
-never a conflicting write to the same bookmark.
+Every open URL gets its **own folder**, shared across devices. The folder's
+name is purely cosmetic (the tab's title, or the URL itself if too long) — the
+real URL always lives in the `_url` bookmark inside, so matching never depends
+on the folder name. Inside that folder, each device that has ever opened or
+closed the URL gets **one bookmark of its own**, named exactly like the
+device, whose URL encodes that device's status (open/closed) and timestamps.
+Each device only ever writes **its own** bookmark — never another device's —
+so there's never a conflicting write to the same bookmark.
 
 - **Profiles.** A profile can be used by several devices at once (e.g.
   `default`, `work`, `school`). Exactly one is *active* per device at a time;
@@ -51,36 +58,44 @@ never a conflicting write to the same bookmark.
   profile — a device on `home` ignores another device's `work` tabs entirely.
   A profile name created on *any* device automatically becomes selectable on
   every device.
-- **Opening a tab.** As soon as you open one (or SyncMyTabs mirrors one in from
-  another device), this device's own `(device, url)` bookmark is created/marked
-  **open**. Other devices on the same profile notice — bookmark events, no
-  polling — and if they don't have it open yet, they open it too (as a
-  lightweight placeholder by default, see below) and mark their own entry open.
-- **Closing a tab.** This device's own entry flips to **closed** — the
-  bookmark isn't deleted yet, so the closure is itself a visible event other
-  devices react to: **they close their own copy too**, closing propagates
-  everywhere. Once *every* device that ever had that URL open shows closed,
-  the whole group of bookmarks for that URL is deleted for good.
+- **Opening a tab.** As soon as you open one, SyncMyTabs matches your active
+  profile, creates the URL's folder if it doesn't exist yet (with its `_url`
+  marker), and creates/marks **your own** device bookmark **open** inside it.
+  Other devices on the same profile notice — bookmark events, no polling —
+  and check every URL folder: if a folder has some device open and *they*
+  don't have a bookmark of their own in it yet, they open the tab too (as a
+  lightweight placeholder by default, see below) and add their own **open**
+  bookmark.
+- **Closing a tab.** Your own device bookmark flips to **closed**. This is
+  **sticky and final for that device**: once your bookmark exists in a
+  folder — open or closed — only *your own* later actions on that tab ever
+  change it again. Another device's open/closed state never overrides it, in
+  either direction: a device that already closed its copy is never re-opened
+  just because others are still open, and a device that's still open is never
+  forced closed just because you closed yours. A URL's folder is deleted only
+  once **every** device that ever weighed in on it shows closed.
   **Closing a whole window, or quitting the browser, never propagates** —
   only closing an individual tab does, so a shutdown never wipes the session
   everywhere. **Navigating an open tab to a different address** counts as
   closing the old URL and opening the new one — both propagate the same way.
 - Bookmarks update **immediately** on every genuine tab change (open, close,
-  navigate) — there's no need to wait for the periodic check.
+  navigate), and the SyncMyTabs folder is re-checked **every time it
+  changes** — there's no polling, no need to wait for the periodic check.
 - **Cleanup (TTL).** If a device is uninstalled, or otherwise never comes back
-  to agree "closed", its entries would otherwise linger forever. A configurable
-  safety net (default on, 21 days) deletes any entry that hasn't been touched
-  in that long. A tab you keep genuinely open is refreshed automatically well
-  before that deadline, so this never affects a live tab — only a truly
-  abandoned one.
+  to agree "closed", its bookmark would otherwise linger forever. A
+  configurable safety net (default on, **1 day**) deletes any device bookmark
+  that hasn't been touched in that long; a URL folder disappears once every
+  bookmark left in it (after that pruning) is closed, or none remain. A tab
+  you keep genuinely open is refreshed automatically well before that
+  deadline, so this never affects a live tab — only a truly abandoned one.
 - **Lazy restore** (default on). Tabs mirrored in from another device open as
   placeholders that don't hit the network until you actually view each one
   (each points at a local page that navigates to the real URL on first view),
   so a large incoming session costs almost nothing until you look at it.
 - **Self-healing.** Some third-party sync tools *recreate* bookmarks instead of
-  updating them, producing duplicate profile folders (or duplicate root
-  folders). SyncMyTabs detects these and merges them, so the tree stays clean
-  across any number of devices.
+  updating them, producing duplicate profile folders, duplicate root folders,
+  or duplicate folders for the same URL. SyncMyTabs detects these and merges
+  them, so the tree stays clean across any number of devices.
 
 ---
 
@@ -131,9 +146,9 @@ Everything — status and settings alike — lives in one place: the **popup**
   regardless; this only controls the background double-check cadence.
 - **Lazy restore** (default on) — open mirrored-in tabs as placeholders that
   don't load from the network until you view each one.
-- **Cleanup / TTL** (default on, 21 days) — delete a tab's bookmark entries if
-  they haven't been updated in this many days (safety net for a device that
-  never comes back to agree "closed").
+- **Cleanup / TTL** (default on, **1 day**) — delete a device's bookmark
+  entry if it hasn't been updated in this many days (safety net for a device
+  that never comes back to agree "closed").
 - **Sync now** — force an immediate check in both directions.
 - The last row shows the last mirror activity, and the extension version.
 
@@ -180,18 +195,17 @@ SyncMyTabs' own initiative):
 - **Sync visibility.** Detection of remote updates depends entirely on your
   sync tool actually propagating bookmark changes to this device's local tree.
   SyncMyTabs has no insight into whether that underlying sync is healthy.
-- **Clock-based ordering.** When devices disagree about whether a URL is open
-  or closed, the newer of the two (by each device's local clock, recorded only
-  at the moment of a genuine open/close — never invented by a routine
-  liveness check) wins. Because it's eventually-consistent over your bookmark
-  sync, a close can take a moment to propagate, and badly skewed clocks can
-  misjudge which of two truly-concurrent actions was later. Keep clocks
-  reasonably in sync (NTP is fine). Closing a whole window or quitting the
-  browser deliberately never propagates (a safety choice so a shutdown never
-  wipes the session everywhere).
-- **No migration from pre-3.0 versions.** The bookmark tree shape changed
-  (shared per-tab bookmarks instead of a snapshot folder per device). Upgrading
-  starts fresh; any old `SyncMyTabs/<device>/…` data is left in place, unused —
+- **A device's own close is sticky, not timestamp-voted.** There's no shared
+  clock and no cross-device "who's newer" comparison: once your device's
+  bookmark exists in a URL folder — open or closed — only your own later
+  actions on that tab change it again. This is deliberate (see "How it works"
+  above), but it does mean a URL can stay open on one device indefinitely
+  even after every other device has closed its copy, until that one device
+  closes its own tab too.
+- **No migration from pre-4.0 versions.** The bookmark tree shape changed
+  (a folder per open URL, instead of one flat bookmark per (device, url)).
+  Upgrading starts fresh; any old `SyncMyTabs/<profile>/…` or
+  `SyncMyTabs/<device>/…` data from a prior version is left in place, unused —
   safe to delete by hand.
 
 ---
