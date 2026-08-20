@@ -134,7 +134,7 @@ class SimTabsApi {
     return Array.from(this.tabs.values()).map((t) => ({ ...t }));
   }
 
-  async create({ url, title, active, windowId, status }) {
+  async create({ url, title, active, windowId, status, groupId }) {
     const id = nextId();
     const tab = {
       id,
@@ -144,6 +144,7 @@ class SimTabsApi {
       status: status || "complete",
       active: !!active,
       windowId: windowId || "1",
+      groupId: groupId === undefined ? -1 : groupId,
     };
     this.tabs.set(id, tab);
     return { ...tab };
@@ -278,12 +279,32 @@ class SimDevice {
   }
 
   // Opens a tab that completes navigation immediately (the common
-  // case for tests). Returns the tab.
-  async openTab(url, title) {
-    const tab = await this.tabsApi.create({ url, title, active: true, status: "complete" });
+  // case for tests). Returns the tab. `opts.groupId` simulates opening
+  // directly into a browser tab group (Chrome/Brave tabGroups) —
+  // omitted/-1 means ungrouped.
+  async openTab(url, title, opts = {}) {
+    const tab = await this.tabsApi.create({
+      url,
+      title,
+      active: true,
+      status: "complete",
+      groupId: opts.groupId,
+    });
     await this.engine.handleTabUpdated(tab.id, { status: "complete" });
     await this.world.flush();
     return tab;
+  }
+
+  // Simulates dragging an already-open tab into (or out of, with
+  // groupId -1) a browser tab group. Deliberately does NOT fire any
+  // engine event: a real browser's tabs.onUpdated for a groupId change
+  // never carries status "complete" (grouping doesn't reload the page),
+  // so nothing reacts until some other live tab event triggers the next
+  // reconcile — exactly what a test wants to exercise.
+  setTabGroup(url, groupId) {
+    const tab = this._findTabByUrl(url);
+    if (!tab) throw new Error(`no tab open at ${url} on ${this.deviceName}`);
+    tab.groupId = groupId;
   }
 
   // Opens a tab that's still mid-navigation (an intermediate URL,

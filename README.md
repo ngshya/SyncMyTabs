@@ -163,9 +163,17 @@ SyncMyTabs' own initiative):
 
 ## Known limitations
 
-- **No more pinned tabs / tab groups.** These were dropped when the sync
-  mechanism was redesigned around shared per-tab bookmarks. Pinning/grouping is
-  purely local now and isn't synced.
+- **No more pinned tabs.** Dropped when the sync mechanism was redesigned
+  around shared per-tab bookmarks. Pinning is purely local now and isn't
+  synced (a pinned tab still syncs like any other open tab; only the "pinned"
+  attribute itself doesn't carry over).
+- **Tabs inside a browser tab group are skipped entirely, not just
+  un-grouped.** On Chromium browsers with tab groups (Chrome/Brave), a tab
+  you've put in a group is treated as invisible to sync in both directions:
+  it never gets its own bookmark entry, it's never closed by a remote device,
+  and an incoming remote open won't duplicate it. Firefox has no tab-group
+  API exposed to extensions, so this is a no-op there — every tab syncs
+  normally.
 - **Firefox differences.** SyncMyTabs works on Firefox; the bookmark-root id
   differs (Chrome `"2"` vs Firefox `"unfiled_____"`), handled automatically by
   the runtime resolver.
