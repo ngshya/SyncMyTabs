@@ -387,11 +387,23 @@ exist (same cross-browser rule as the rest of the codebase).
   ```
   SyncMyTabs/<profile>/_groups/<group title>/<one bookmark per rule>
   ```
-  A rule bookmark's `title` is its own `match` pattern (human-readable in a
-  plain bookmark manager); the rule data itself is packed into the
-  bookmark's `url` (`buildGroupRuleUrl`/`parseGroupRuleUrl`, same
-  `URLSearchParams`-based encoding style as `sync-core.js`'s device status
-  bookmarks): `m`=match, `p`=leash pattern, `o`=reopen URL. **The group's
+  A rule bookmark's `title` is its own `pattern` (or, for an openUrl-only
+  rule, its `openUrl` — human-readable in a plain bookmark manager); the
+  rule data itself is packed into the bookmark's `url`
+  (`buildGroupRuleUrl`/`parseGroupRuleUrl`, same `URLSearchParams`-based
+  encoding style as `sync-core.js`'s device status bookmarks): `p`=leash
+  pattern, `o`=reopen URL. A rule has only these two fields — `pattern`
+  decides BOTH which rule covers a tab's current page AND what a clicked
+  link must match to stay in-group (one field, one job, done twice); an
+  earlier version had a third, separate `match` field for the "which page"
+  half, which turned out to be a real footgun (a rule silently failing to
+  resolve because `match` and `pattern` had drifted apart) for no strong
+  enough use case, so it was dropped. An openUrl-only rule (no pattern at
+  all) never resolves for any tab — see `findRuleForTabUrl` — and exists
+  purely as a startup "make sure this exact URL is open somewhere"
+  declaration; `tabSatisfiesRule` is what `reconcileGroup`'s
+  missing/duplicate/undeclared checks use to test a tab against a rule
+  (pattern if set, else an exact `openUrl` match). **The group's
   TITLE is the only stable, cross-device key** — a browser's own numeric
   tab-group id is local and meaningless on another device — so an untitled
   group is deliberately unsupported (mirrors the original TabGroupsLeash's
@@ -429,7 +441,7 @@ exist (same cross-browser rule as the rest of the codebase).
   read from it), since it's called on every leashed click.
 - **The content script (`link-leash-content.js`) doesn't intercept every
   click on every page**, unlike the original TabGroupsLeash — it first asks
-  the background page `AM_I_GROUPED` and only attaches its `click`/
+  the background page `GROUP_LEASH_INFO` and only attaches its `click`/
   `auxclick` capture-phase listeners if the tab is actually grouped at load
   time. This is a deliberate improvement over a naive port: capturing +
   `preventDefault`-ing every click on every page (including sites whose own
@@ -438,6 +450,40 @@ exist (same cross-browser rule as the rest of the codebase).
   of (ungrouped) tabs would be a real regression risk. The trade-off: a tab
   grouped AFTER its page already loaded won't get leashing until reloaded
   (see Known limitations).
+- **A plain click on an already-matching link is left COMPLETELY alone —
+  no `preventDefault`, no message sent at all.** This is not an
+  optimization, it's a correctness fix: routing that case through
+  `handleLinkClick`'s `env.tabs.update()` (a hard, address-bar-equivalent
+  navigation) breaks any client-side-routed page — Telegram Web and
+  similar SPAs using pushState/hash routing for in-app navigation expect a
+  lightweight same-document transition from their OWN router, not a full
+  reload, and a forced reload can bounce the app back to its default view
+  instead of landing on the clicked destination (this shipped as a real
+  bug once — a matching link's URL would visibly change then snap back).
+  The `GROUP_LEASH_INFO` handshake response (`{grouped, pattern}`, from
+  `getLeashInfoFor`) is therefore cached in the content script and
+  re-checked **synchronously** on every click — not re-fetched per click
+  — so the decision to skip interception can be made before the native
+  click would otherwise be prevented. The content script also patches
+  `history.pushState`/`replaceState` and listens for `hashchange`/
+  `popstate` to refresh that cache on every SPA-internal route change (the
+  content script itself is never re-injected by these, only a real
+  navigation does that) — otherwise the cached pattern could go stale for
+  a tab that stays grouped across many in-app navigations. Only a
+  NON-matching link, or a MODIFIER-click on a matching one, still goes
+  through `handleLinkClick` — which remains the authoritative decision-maker
+  (re-validates via its own `resolvePatternFor` using the live tab) for
+  every case that does reach it, exactly as before this fix.
+- **Groups can be pinned to the start of the tab strip.** The
+  `groupsPinToStart` local preference (default off), checked in
+  `reconcileGroups()`, moves every reconciled group (via
+  `env.tabGroups.move(groupId, {index})`) to the start of its window on
+  EVERY reconcile — not just when something was reopened — so it stays put
+  even if the user (or the browser) moves it in between. Multiple pinned
+  groups stack in title order (`getAllGroupTitles`'s own sort) via
+  consecutive indices (0, 1, 2, …) assigned in `reconcileGroups()` and
+  passed down to each `reconcileGroup()` call, rather than every pinned
+  group independently fighting over index 0.
 - **Startup reconcile only, never mid-session**, and only for the active
   profile's groups that have at least one saved rule. Delayed
   (`groupsStartupDelaySeconds`, default 15s) so the browser's own session

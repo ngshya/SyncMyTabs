@@ -226,6 +226,7 @@ document.getElementById("syncNow").addEventListener("click", async () => {
 // ------------------------------------------------------------
 const groupsLeashEnabledInput = document.getElementById("groupsLeashEnabled");
 const groupsCloseUndeclaredInput = document.getElementById("groupsCloseUndeclared");
+const groupsPinToStartInput = document.getElementById("groupsPinToStart");
 const groupsStartupDelayInput = document.getElementById("groupsStartupDelay");
 const groupListEl = document.getElementById("groupList");
 const groupEditorEl = document.getElementById("groupEditor");
@@ -233,10 +234,11 @@ const groupEditorEl = document.getElementById("groupEditor");
 let openGroupTitle = null; // which group's editor panel is currently shown, if any
 
 async function loadGroupPrefs() {
-  const { leashEnabled, closeUndeclared, startupDelaySeconds } =
+  const { leashEnabled, closeUndeclared, startupDelaySeconds, pinToStart } =
     await browser.runtime.sendMessage({ type: "GROUPS_GET_PREFS" });
   groupsLeashEnabledInput.checked = leashEnabled !== false;
   groupsCloseUndeclaredInput.checked = closeUndeclared === true;
+  groupsPinToStartInput.checked = pinToStart === true;
   groupsStartupDelayInput.value = startupDelaySeconds || 15;
 }
 
@@ -252,6 +254,14 @@ groupsCloseUndeclaredInput.addEventListener("change", async () => {
   await browser.runtime.sendMessage({
     type: "GROUPS_SET_PREFS",
     closeUndeclared: groupsCloseUndeclaredInput.checked,
+  });
+  flashStatus("Saved ✓");
+});
+
+groupsPinToStartInput.addEventListener("change", async () => {
+  await browser.runtime.sendMessage({
+    type: "GROUPS_SET_PREFS",
+    pinToStart: groupsPinToStartInput.checked,
   });
   flashStatus("Saved ✓");
 });
@@ -349,11 +359,10 @@ async function saveRulesFromEditor(title, openTabs) {
   const rows = groupEditorEl.querySelectorAll(".rule-editor-row");
   const rules = Array.from(rows)
     .map((row) => ({
-      match: row.querySelector(".rule-match").value.trim(),
       pattern: row.querySelector(".rule-pattern").value.trim(),
       openUrl: row.querySelector(".rule-open-url").value.trim(),
     }))
-    .filter((r) => r.match); // a rule needs at least a page to identify it
+    .filter((r) => r.pattern || r.openUrl); // a rule needs at least one to mean anything
 
   await browser.runtime.sendMessage({ type: "GROUPS_SET", title, rules });
   flashStatus("Saved ✓");
@@ -369,17 +378,9 @@ function buildRuleEditorRow(title, rule, openTabs) {
   const row = document.createElement("div");
   row.className = "rule-editor-row";
 
-  const matchLabel = document.createElement("label");
-  matchLabel.textContent = "Match (which page this rule applies to)";
-  const matchInput = document.createElement("input");
-  matchInput.className = "rule-match";
-  matchInput.placeholder = "*://example.com/*";
-  matchInput.value = rule.match || "";
-  matchLabel.appendChild(matchInput);
-  row.appendChild(matchLabel);
-
   const patternLabel = document.createElement("label");
-  patternLabel.textContent = "Leash pattern (links must match this to stay in-group)";
+  patternLabel.textContent =
+    "Leash pattern (which pages this covers, and what links must match to stay in-group)";
   const patternInput = document.createElement("input");
   patternInput.className = "rule-pattern";
   patternInput.placeholder = "*://example.com/*";
@@ -396,7 +397,7 @@ function buildRuleEditorRow(title, rule, openTabs) {
   openUrlLabel.appendChild(openUrlInput);
   row.appendChild(openUrlLabel);
 
-  for (const input of [matchInput, patternInput, openUrlInput]) {
+  for (const input of [patternInput, openUrlInput]) {
     input.addEventListener("change", () => saveRulesFromEditor(title, openTabs));
   }
 
@@ -436,11 +437,11 @@ function paintGroupEditor(title, rules, openTabs) {
   groupEditorEl.appendChild(addRuleBtn);
 
   // Quick-add: one button per currently-open tab in this group whose
-  // URL isn't already covered by a rule — prefills match/pattern/openUrl
-  // from that tab in one click.
-  const existingMatches = new Set(rules.map((r) => r.match));
+  // URL isn't already covered by a rule — prefills pattern/openUrl from
+  // that tab in one click.
+  const existingPatterns = new Set(rules.map((r) => r.pattern));
   const candidates = (openTabs || []).filter(
-    (t) => !existingMatches.has(defaultMatchFor(t.url))
+    (t) => !existingPatterns.has(defaultPatternFor(t.url))
   );
   if (candidates.length > 0) {
     const quickAddTitle = document.createElement("div");
@@ -457,10 +458,8 @@ function paintGroupEditor(title, rules, openTabs) {
       btn.className = "secondary";
       btn.textContent = "Use this page";
       btn.addEventListener("click", () => {
-        const match = defaultMatchFor(tab.url);
-        ruleList.appendChild(
-          buildRuleEditorRow(title, { match, pattern: match, openUrl: tab.url }, openTabs)
-        );
+        const pattern = defaultPatternFor(tab.url);
+        ruleList.appendChild(buildRuleEditorRow(title, { pattern, openUrl: tab.url }, openTabs));
         saveRulesFromEditor(title, openTabs);
       });
       item.appendChild(btn);
@@ -475,10 +474,10 @@ function paintGroupEditor(title, rules, openTabs) {
   groupEditorEl.appendChild(closeBtn);
 }
 
-// Suggested "match" for a URL: domain + full path, query/fragment
-// dropped — same heuristic as groups-core.js's own defaultMatchForUrl,
+// Suggested pattern for a URL: domain + full path, query/fragment
+// dropped — same heuristic as groups-core.js's own defaultPatternForUrl,
 // duplicated here since the popup doesn't load groups-core.js directly.
-function defaultMatchFor(url) {
+function defaultPatternFor(url) {
   try {
     const u = new URL(url);
     return `*://${u.hostname}${u.pathname}*`;

@@ -19,8 +19,8 @@ test("group rules set on one device are readable on another (same profile)", asy
   const gb = groupsEngineFor(b);
 
   const rules = [
-    { match: "*://example.com/*", pattern: "*://example.com/*", openUrl: "" },
-    { match: "*://docs.example.com/*", pattern: "", openUrl: "https://docs.example.com/" },
+    { pattern: "*://example.com/*", openUrl: "" },
+    { pattern: "", openUrl: "https://docs.example.com/" },
   ];
   await ga.setGroupSettingsForActiveProfile("Work", rules);
 
@@ -38,9 +38,7 @@ test("group rules are scoped to a profile: a device on a different profile doesn
   const ga = groupsEngineFor(a);
   const gb = groupsEngineFor(b);
 
-  await ga.setGroupSettingsForActiveProfile("Research", [
-    { match: "*://example.com/*", pattern: "*://example.com/*" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Research", [{ pattern: "*://example.com/*" }]);
 
   const seenOnB = await gb.listGroupsForActiveProfile();
   assert.deepEqual(seenOnB.titles, []);
@@ -51,9 +49,7 @@ test("setGroupSettingsForActiveProfile with an empty rule list deletes the group
   const a = world.addDevice({ deviceName: "A" });
   const ga = groupsEngineFor(a);
 
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { match: "*://example.com/*", pattern: "*://example.com/*" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [{ pattern: "*://example.com/*" }]);
   assert.deepEqual((await ga.listGroupsForActiveProfile()).titles, ["Work"]);
 
   await ga.setGroupSettingsForActiveProfile("Work", []);
@@ -65,26 +61,32 @@ test("deleteGroupSettingsForActiveProfile removes a group outright", async () =>
   const a = world.addDevice({ deviceName: "A" });
   const ga = groupsEngineFor(a);
 
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { match: "*://example.com/*", pattern: "*://example.com/*" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [{ pattern: "*://example.com/*" }]);
   await ga.deleteGroupSettingsForActiveProfile("Work");
   assert.deepEqual((await ga.listGroupsForActiveProfile()).titles, []);
 });
 
-test("a rule with no match is dropped defensively", async () => {
+test("a rule with neither pattern nor openUrl is dropped defensively", async () => {
   const world = new SimWorld();
   const a = world.addDevice({ deviceName: "A" });
   const ga = groupsEngineFor(a);
 
   await ga.setGroupSettingsForActiveProfile("Work", [
-    { match: "", pattern: "*://example.com/*" },
-    { match: "*://example.com/*", pattern: "*://example.com/*" },
+    { pattern: "", openUrl: "" },
+    { pattern: "*://example.com/*" },
   ]);
   const settings = await ga.getGroupForEditing("Work");
-  assert.deepEqual(settings.rules, [
-    { match: "*://example.com/*", pattern: "*://example.com/*", openUrl: "" },
-  ]);
+  assert.deepEqual(settings.rules, [{ pattern: "*://example.com/*", openUrl: "" }]);
+});
+
+test("an openUrl-only rule (no pattern) is kept", async () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const ga = groupsEngineFor(a);
+
+  await ga.setGroupSettingsForActiveProfile("Work", [{ openUrl: "https://example.com/home" }]);
+  const settings = await ga.getGroupForEditing("Work");
+  assert.deepEqual(settings.rules, [{ pattern: "", openUrl: "https://example.com/home" }]);
 });
 
 test("a duplicate group folder (third-party sync race) is merged on read", async () => {
@@ -98,13 +100,13 @@ test("a duplicate group folder (third-party sync race) is merged on read", async
   await a.env.bookmarks.create({
     parentId: dup1.id,
     title: "*://a.example/*",
-    url: require("../groups-core.js").buildGroupRuleUrl({ match: "*://a.example/*", pattern: "*://a.example/*" }),
+    url: require("../groups-core.js").buildGroupRuleUrl({ pattern: "*://a.example/*" }),
   });
   const dup2 = await a.env.bookmarks.create({ parentId: root.id, title: "Work" });
   await a.env.bookmarks.create({
     parentId: dup2.id,
     title: "*://b.example/*",
-    url: require("../groups-core.js").buildGroupRuleUrl({ match: "*://b.example/*", pattern: "*://b.example/*" }),
+    url: require("../groups-core.js").buildGroupRuleUrl({ pattern: "*://b.example/*" }),
   });
 
   const titles = await ga.getAllGroupTitles(profileFolderId);
@@ -119,9 +121,7 @@ test("groups_root folder doesn't interfere with sync-core's own URL-folder recon
   const b = world.addDevice({ deviceName: "B" });
   const ga = groupsEngineFor(a);
 
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { match: "*://example.com/*", pattern: "*://example.com/*" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [{ pattern: "*://example.com/*" }]);
 
   // Ordinary tab sync must still work fine with a "_groups" sibling
   // folder present under the same profile.

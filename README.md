@@ -108,34 +108,39 @@ titled group's declared pages present, and keeps links clicked inside that
 group from wandering outside them.
 
 - **Rules, per group, per profile.** You give a browser tab group a title
-  (e.g. "Work"), then declare one or more rules for it: a **match** pattern
-  (which page(s) this rule covers), an optional **leash pattern** (what a
-  clicked link must match to stay in that tab/group), and an optional
+  (e.g. "Work"), then declare one or more rules for it: a **leash pattern**
+  (which page(s) this rule covers, AND what a clicked link must match to
+  stay in that tab/group — one field does both jobs) and an optional
   **reopen URL** (a page this group should never be without). Rules sync via
   the same bookmark tree, under `SyncMyTabs/<profile>/_groups/<group
   title>/…`, scoped by the same active-profile concept as everything else.
 - **Link leashing.** Click a link on a page inside a configured group: if it
   matches that page's leash pattern, it navigates the same tab (or opens
-  alongside, in the *same* group, on a modifier-click); if it doesn't match,
-  it *always* opens in a fresh, **ungrouped** tab instead of derailing the
-  group. A page with no rule yet, or a rule with no leash pattern (a
-  reopen-only rule), is left completely alone — normal browser behavior. A
-  tab that isn't in any configured group is never touched by this at all.
+  alongside, in the *same* group, on a modifier-click) — **without
+  reloading the page**, so client-side-routed apps (Telegram Web and
+  similar single-page apps) handle the navigation themselves instead of
+  getting force-reloaded; if it doesn't match, it *always* opens in a
+  fresh, **ungrouped** tab instead of derailing the group. A page with no
+  rule yet, or a rule with no leash pattern (a reopen-only rule), is left
+  completely alone — normal browser behavior. A tab that isn't in any
+  configured group is never touched by this at all.
 - **Startup reconciliation.** Once per browser launch (after a short,
   configurable delay so the browser's own session restore finishes first),
   SyncMyTabs reopens any group's "reopen URL" that isn't currently open
   there, closes accidental duplicates of the same declared page (keeping the
   oldest), and — if you turn on "close tabs matching no rule" (off by
   default, since closing tabs automatically is destructive) — closes any tab
-  in that group that matches none of its rules at all.
+  in that group that matches none of its rules at all. Turning on "pin
+  configured groups to the start of the tab bar" also keeps every
+  reconciled group pinned at the start of its window on every check.
 - **Untitled groups aren't supported.** A group's title is its only stable,
   cross-device identifier (a browser's internal group id is local and
   meaningless on another device) — an untitled group is simply invisible to
   this module.
 - Manage it all from the popup's **"Tab groups"** section: per-group rule
   editors (with quick-add buttons for tabs already open in that group), a
-  leashing on/off switch, the close-undeclared-tabs toggle, the startup
-  delay, and a manual "Reconcile groups now" button.
+  leashing on/off switch, the close-undeclared-tabs toggle, the pin-to-start
+  toggle, the startup delay, and a manual "Reconcile groups now" button.
 
 ---
 

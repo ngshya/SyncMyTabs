@@ -252,6 +252,18 @@ class SimTabGroupsApi {
     return { ...g };
   }
 
+  // chrome.tabGroups.move()-alike. The simulator doesn't model full tab-
+  // strip adjacency/reordering (no other test needs that level of
+  // fidelity) — it just records the requested position on the group
+  // itself, which tests read back directly to verify pinning behavior.
+  async move(id, { index, windowId } = {}) {
+    const g = this.groups.get(id);
+    if (!g) throw new Error(`no such group ${id}`);
+    g.position = index;
+    if (windowId !== undefined) g.windowId = windowId;
+    return { ...g };
+  }
+
   // internal: registers a fresh (initially untitled) group — called by
   // SimTabsApi.group() when it's asked to create one.
   _ensureGroup(id, windowId) {
