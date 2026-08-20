@@ -1,0 +1,8 @@
+{
+  "name": "syncmytabs",
+  "private": true,
+  "description": "Test-only package.json for SyncMyTabs — the extension itself has no build step and no runtime dependencies. See CLAUDE.md.",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

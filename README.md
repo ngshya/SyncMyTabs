@@ -198,16 +198,32 @@ SyncMyTabs' own initiative):
 | File | Role |
 |---|---|
 | `manifest.json` | Manifest V3 definition, permissions, entry points (Chrome service worker + Firefox background scripts) |
-| `background.js` | Background logic — all sync/save/restore |
+| `sync-core.js` | All the sync/reconcile logic, testable independently of a real browser (see Testing below) |
+| `background.js` | Thin wiring: real browser events → `sync-core.js` |
 | `popup.html` / `popup.js` | Toolbar popup UI |
 | `options.html` / `options.js` | Settings page UI |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page |
 | `browser-polyfill.min.js` | Mozilla's WebExtension polyfill (vendored) so `browser.*` works on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
+| `test/` | Test suite (see Testing below) |
 
 There is no build step — the repository *is* the unpacked extension. To hack on
 it, edit the files and hit **Reload** on the extension (`chrome://extensions` or
 `about:debugging` on Firefox).
+
+## Testing
+
+```bash
+npm test
+```
+
+The sync/reconcile logic (`sync-core.js`) is factored so it never calls
+`browser.*` directly — it takes an `env` object instead, which lets the exact
+same code run against a simulated multi-device environment
+(`test/sim-env.js`) in plain Node, no real browser needed. Tests spin up
+2-4 simulated devices sharing one profile, open/close/navigate tabs on them,
+and assert the mirror converges to the right state — see `CLAUDE.md` for how
+it's put together and how to add more.
 
 ## Releases & packaging
 
