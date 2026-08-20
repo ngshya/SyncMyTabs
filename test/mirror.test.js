@@ -2,11 +2,11 @@
 // window never propagates, navigating a tab counts as closing the old
 // URL and opening the new one, and profiles stay independent.
 //
-// Close semantics: once a device has weighed in on a URL (its own
-// status bookmark exists, open OR closed), only THAT device's own
-// future open/close actions ever change it again — it's never
-// overridden just because another device's state changed. A folder
-// only disappears once EVERY device that ever weighed in shows closed.
+// Close semantics: CONTAGIOUS. The moment any device's own status
+// bookmark in a folder reads "closed", every other device that still
+// shows "open" follows — closing its own matching tab(s) and flipping
+// its own entry closed too — until every device agrees closed, at
+// which point the folder is deleted.
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
@@ -23,7 +23,7 @@ test("opening a tab on A mirrors it onto B (same profile)", async () => {
   assert.deepEqual(b.openUrls(), ["https://example.com/"]);
 });
 
-test("closing a tab on A does not force it closed on B once B has mirrored its own copy in", async () => {
+test("closing a tab on A also closes B's mirrored copy, and deletes the folder", async () => {
   const world = new SimWorld();
   const a = world.addDevice({ deviceName: "A" });
   const b = world.addDevice({ deviceName: "B" });
@@ -35,18 +35,11 @@ test("closing a tab on A does not force it closed on B once B has mirrored its o
   await b.tick();
 
   assert.deepEqual(a.openUrls(), []);
-  // B already registered its own "open" entry when it mirrored the tab
-  // in — that's sticky, unaffected by A's close.
-  assert.deepEqual(b.openUrls(), ["https://example.com/"]);
-
-  // Only once B ALSO closes its own copy does every device agree
-  // closed, and the whole folder disappears.
-  await b.closeTab("https://example.com/");
-  await a.tick();
-  assert.deepEqual(await world.allEntries("default"), []);
+  assert.deepEqual(b.openUrls(), [], "B must follow A's close");
+  assert.deepEqual(await world.allEntries("default"), [], "the folder disappears once everyone agrees closed");
 });
 
-test("closing the mirrored copy on B does not force A's original closed either", async () => {
+test("closing the mirrored copy on B forces A's original closed too", async () => {
   const world = new SimWorld();
   const a = world.addDevice({ deviceName: "A" });
   const b = world.addDevice({ deviceName: "B" });
@@ -58,7 +51,7 @@ test("closing the mirrored copy on B does not force A's original closed either",
   await a.tick();
 
   assert.deepEqual(b.openUrls(), []);
-  assert.deepEqual(a.openUrls(), ["https://example.com/"]);
+  assert.deepEqual(a.openUrls(), [], "A must follow B's close, even though A opened it first");
 });
 
 test("closing a whole window (isWindowClosing) never propagates", async () => {
@@ -80,7 +73,7 @@ test("closing a whole window (isWindowClosing) never propagates", async () => {
   assert.equal(mine[0].state, "open");
 });
 
-test("navigating an open tab closes the old URL and opens the new one on that device; other devices' own tabs are unaffected", async () => {
+test("navigating an open tab closes the old URL and opens the new one on that device; the other device follows the close and mirrors the new URL", async () => {
   const world = new SimWorld();
   const a = world.addDevice({ deviceName: "A" });
   const b = world.addDevice({ deviceName: "B" });
@@ -94,16 +87,17 @@ test("navigating an open tab closes the old URL and opens the new one on that de
   // A itself: old closed (gone locally), new open.
   assert.deepEqual(a.openUrls(), ["https://new.example/"]);
   const mineA = await a.myEntries("default");
-  assert.equal(mineA.find((e) => e.real === "https://old.example/").state, "closed");
   assert.equal(mineA.find((e) => e.real === "https://new.example/").state, "open");
 
-  // B's own tab never moved — A's navigation has no bearing on it. B
-  // mirrors in the new URL too, but keeps its own still-genuinely-open
-  // old tab (nobody told B to close it).
-  assert.deepEqual(b.openUrls().sort(), [
-    "https://new.example/",
-    "https://old.example/",
-  ]);
+  // B follows A's close of the old URL (contagious) — since both A and
+  // B end up closed, the old.example folder disappears entirely — and
+  // mirrors in the new one A just opened.
+  assert.deepEqual(b.openUrls(), ["https://new.example/"]);
+  assert.equal(
+    mineA.find((e) => e.real === "https://old.example/"),
+    undefined,
+    "the old URL's folder is gone once every device agrees closed"
+  );
 });
 
 test("profiles are independent: a device on a different profile ignores the update", async () => {
@@ -130,7 +124,7 @@ test("a device that switches into the shared profile catches up immediately", as
   assert.deepEqual(b.openUrls(), ["https://example.com/"]);
 });
 
-test("the update-tabs batch helper opens and closes in one call", async () => {
+test("the update-tabs batch helper opens and closes in one call, and the close propagates", async () => {
   const world = new SimWorld();
   const a = world.addDevice({ deviceName: "A" });
   const b = world.addDevice({ deviceName: "B" });
@@ -143,11 +137,7 @@ test("the update-tabs batch helper opens and closes in one call", async () => {
   await a.updateTabs({ close: ["https://one.example/"] });
   await b.tick();
 
-  // A closed its own copy of one.example; B's own mirrored copy is
-  // sticky and stays open until B closes it itself.
+  // A closed its own copy of one.example; B's mirrored copy follows.
   assert.deepEqual(a.openUrls(), ["https://two.example/"]);
-  assert.deepEqual(b.openUrls().sort(), [
-    "https://one.example/",
-    "https://two.example/",
-  ]);
+  assert.deepEqual(b.openUrls(), ["https://two.example/"]);
 });

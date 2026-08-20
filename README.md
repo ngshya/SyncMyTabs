@@ -66,14 +66,14 @@ so there's never a conflicting write to the same bookmark.
   don't have a bookmark of their own in it yet, they open the tab too (as a
   lightweight placeholder by default, see below) and add their own **open**
   bookmark.
-- **Closing a tab.** Your own device bookmark flips to **closed**. This is
-  **sticky and final for that device**: once your bookmark exists in a
-  folder — open or closed — only *your own* later actions on that tab ever
-  change it again. Another device's open/closed state never overrides it, in
-  either direction: a device that already closed its copy is never re-opened
-  just because others are still open, and a device that's still open is never
-  forced closed just because you closed yours. A URL's folder is deleted only
-  once **every** device that ever weighed in on it shows closed.
+- **Closing a tab.** Your own device bookmark flips to **closed** — and this
+  is **contagious**: every other device that still shows the URL open
+  follows suit automatically, closing its own matching tab and flipping its
+  own bookmark closed too, until every device agrees and the folder is
+  deleted. **Reopening propagates too**: opening the URL again resets any
+  device that had already caught up to the earlier close, so it re-opens
+  its own tab automatically as well — a device that never closed at all in
+  the meantime is left completely untouched either way.
   **Closing a whole window, or quitting the browser, never propagates** —
   only closing an individual tab does, so a shutdown never wipes the session
   everywhere. **Navigating an open tab to a different address** counts as
@@ -245,13 +245,14 @@ SyncMyTabs' own initiative):
 - **Sync visibility.** Detection of remote updates depends entirely on your
   sync tool actually propagating bookmark changes to this device's local tree.
   SyncMyTabs has no insight into whether that underlying sync is healthy.
-- **A device's own close is sticky, not timestamp-voted.** There's no shared
-  clock and no cross-device "who's newer" comparison: once your device's
-  bookmark exists in a URL folder — open or closed — only your own later
-  actions on that tab change it again. This is deliberate (see "How it works"
-  above), but it does mean a URL can stay open on one device indefinitely
-  even after every other device has closed its copy, until that one device
-  closes its own tab too.
+- **Closing and reopening are both contagious.** There's no shared clock and
+  no cross-device "who's newer" comparison — closing a tab anywhere closes it
+  everywhere, and reopening it anywhere reopens it on every device that had
+  already caught up to the earlier close (see "How it works" above). This is
+  deliberate, but it means a reopen can't tell a peer's *stale* closed state
+  (left over from a since-undone close) apart from that same peer's *own*,
+  separate, intentional close — a reopen anywhere forces a reopen on every
+  currently-closed device, regardless of why each one is closed.
 - **Tab-group leashing is Chrome/Brave only, and untitled groups aren't
   supported.** Firefox has no tab-groups API to extensions, so the whole
   module is a silent no-op there. A group's title is its only stable,
