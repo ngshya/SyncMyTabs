@@ -77,11 +77,6 @@ never a conflicting write to the same bookmark.
   placeholders that don't hit the network until you actually view each one
   (each points at a local page that navigates to the real URL on first view),
   so a large incoming session costs almost nothing until you look at it.
-- **Manual restore.** The popup's **Restore from device** picks any
-  profile/device pair and opens its currently-open tabs on demand, via
-  **Replace** or **Add** — handy to seed a new device, or to just peek at
-  another profile's tabs without switching to it (peeked tabs are never
-  registered as this device's own, so they don't get mirrored elsewhere).
 - **Self-healing.** Some third-party sync tools *recreate* bookmarks instead of
   updating them, producing duplicate profile folders (or duplicate root
   folders). SyncMyTabs detects these and merges them, so the tree stays clean
@@ -118,32 +113,32 @@ Then, on either browser:
 
 ## Usage
 
-**Popup** (toolbar icon):
+Everything — status and settings alike — lives in one place: the **popup**
+(click the toolbar icon). There's no separate settings page.
 
 - **Synchronization on/off** — a switch that **pauses sync in both directions**:
   while off, this device neither pushes its own tab changes nor reacts to other
   devices'. The toolbar icon changes to a greyed-out "paused" icon (with an
-  **OFF** badge) so the state is obvious. Manual **Restore from device** still
-  works. Sync resumes exactly where it left off when you switch it back on.
-- See this device's name, check interval, and the last mirror activity.
-- Switch the **active profile** and immediately sync under it.
+  **OFF** badge) so the state is obvious. Sync resumes exactly where it left
+  off when you switch it back on.
+- **Device name** — tags the tabs this device opens, so others know where they
+  came from. Saved as soon as you leave the field.
+- **Profiles** — manage which profiles exist, which one is active on this
+  device, and switch instantly. Removing one from the list only removes it
+  from *this device's* picker — data already saved under that name, on this or
+  any other device, is kept and stays restorable.
+- **Check interval** (default 1 minute) — opens/closes sync immediately
+  regardless; this only controls the background double-check cadence.
+- **Lazy restore** (default on) — open mirrored-in tabs as placeholders that
+  don't load from the network until you view each one.
+- **Cleanup / TTL** (default on, 21 days) — delete a tab's bookmark entries if
+  they haven't been updated in this many days (safety net for a device that
+  never comes back to agree "closed").
 - **Sync now** — force an immediate check in both directions.
-- **Restore from device** — pick any profile, then any device that currently
-  has tabs open under it, and open them via **Replace** or **Add**.
+- The last row shows the last mirror activity, and the extension version.
 
-**Settings** (options page):
-
-| Setting | Default | Description |
-|---|---|---|
-| Device name | — | Tags the tabs this device opens, so others know where they came from |
-| Profiles | `default` | Manage which profiles exist and which is active |
-| Check interval | 1 minute | Opens/closes are detected immediately; this only controls the background double-check cadence |
-| Lazy restore | On | Open mirrored-in tabs as placeholders that don't load from the network until you view each one |
-| Cleanup (TTL) | On, 21 days | Delete a tab's bookmark entries if they haven't been updated in this many days (safety net for a device that never comes back to agree "closed") |
-
-Removing a profile from the list only removes it from *this device's* picker —
-any tab data already saved under that name, on this or any other device, is kept
-and stays restorable.
+Every field except the two checkboxes (which save immediately) saves when you
+leave it (blur, or press Enter).
 
 ---
 
@@ -200,8 +195,7 @@ SyncMyTabs' own initiative):
 | `manifest.json` | Manifest V3 definition, permissions, entry points (Chrome service worker + Firefox background scripts) |
 | `sync-core.js` | All the sync/reconcile logic, testable independently of a real browser (see Testing below) |
 | `background.js` | Thin wiring: real browser events → `sync-core.js` |
-| `popup.html` / `popup.js` | Toolbar popup UI |
-| `options.html` / `options.js` | Settings page UI |
+| `popup.html` / `popup.js` | Toolbar popup UI — status, all settings, and profile management in one place |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page |
 | `browser-polyfill.min.js` | Mozilla's WebExtension polyfill (vendored) so `browser.*` works on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
@@ -227,21 +221,26 @@ it's put together and how to add more.
 
 ## Releases & packaging
 
-Packaging is automated. To cut a release:
+Packaging is automated, and cutting a release just means bumping the version:
 
-1. Bump `version` in `manifest.json` (semver) and commit.
-2. Tag it and push the tag:
-   ```bash
-   git tag v3.0.0 && git push origin v3.0.0
-   ```
+1. Bump `version` in `manifest.json` (semver) and commit/merge it to `main`.
 
-The [`release` workflow](.github/workflows/release.yml) then checks that the tag
-matches the manifest version, syntax-checks the JS, and builds **two store-ready
-zips** — `syncmytabs-<version>-chrome.zip` and `syncmytabs-<version>-firefox.zip`
-— each with a manifest tailored to its store (Chrome: service worker only;
-Firefox: background scripts only), then publishes both as a **GitHub
-Release** on the [Releases page](../../releases). Upload the Chrome zip to the
-Chrome Web Store and the Firefox zip to [AMO](https://addons.mozilla.org).
+That's it — merging to `main` with a new version **automatically** triggers the
+[`release` workflow](.github/workflows/release.yml), which syntax-checks the JS,
+runs the test suite, and builds **two store-ready zips** —
+`syncmytabs-<version>-chrome.zip` and `syncmytabs-<version>-firefox.zip` — each
+with a manifest tailored to its store (Chrome: service worker only; Firefox:
+background scripts only), then publishes both as a **GitHub Release** on the
+[Releases page](../../releases). A merge that *doesn't* bump the version (e.g. a
+docs-only change) is a no-op for this workflow — it doesn't fail, it just has
+nothing new to release.
+
+You can still cut a release the old way if you'd rather not wait for a merge:
+push a matching tag (`git tag v3.0.0 && git push origin v3.0.0`), or trigger it
+manually from the Actions tab (`Release` → `Run workflow`).
+
+Upload the Chrome zip to the Chrome Web Store and the Firefox zip to
+[AMO](https://addons.mozilla.org).
 
 For publishing, see [`PRIVACY.md`](PRIVACY.md) (privacy policy) and
 [`PERMISSIONS.md`](PERMISSIONS.md) (per-permission justifications).

@@ -7,7 +7,9 @@
     :root { color-scheme: light dark; }
     body {
       font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-      width: 260px;
+      width: 320px;
+      max-height: 560px;
+      overflow-y: auto;
       padding: 14px;
       background: #ffffff;
       color: #1a1a1a;
@@ -21,10 +23,22 @@
       gap: 8px;
     }
     .row strong { color: #111; text-align: right; }
+    input[type="text"], input[type="number"], select {
+      width: 100%;
+      padding: 7px 8px;
+      font-size: 13px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      box-sizing: border-box;
+      background: white;
+      color: inherit;
+    }
+    label.field { display: block; font-size: 12px; color: #666; margin-top: 12px; }
+    label.field input { margin-top: 3px; }
     button {
       width: 100%;
       margin-top: 10px;
-      padding: 10px 0;
+      padding: 9px 0;
       background: #2563eb;
       color: white;
       border: none;
@@ -35,37 +49,25 @@
     }
     button:hover { background: #1d4ed8; }
     button:disabled { background: #93b4f0; cursor: default; }
-    select {
-      width: 100%;
-      margin-top: 4px;
-      padding: 6px 8px;
-      font-size: 13px;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-      box-sizing: border-box;
-    }
+    .secondary { background: #444; }
+    .secondary:hover { background: #333; }
+    .danger { background: #dc2626; }
+    .danger:hover { background: #b91c1c; }
     .section-title {
       font-size: 12px;
       color: #888;
       margin-top: 16px;
-      margin-bottom: 2px;
+      margin-bottom: 4px;
       text-transform: uppercase;
       letter-spacing: 0.03em;
     }
-    .button-row {
-      display: flex;
-      gap: 8px;
-    }
-    .button-row button { margin-top: 6px; }
-    .secondary { background: #444; }
-    .secondary:hover { background: #333; }
     .inline-row {
       display: flex;
       gap: 6px;
       align-items: center;
       margin-top: 4px;
     }
-    .inline-row select { margin-top: 0; }
+    .inline-row input, .inline-row select { margin-top: 0; }
     .inline-row button {
       width: auto;
       margin-top: 0;
@@ -73,6 +75,36 @@
       font-size: 12px;
       white-space: nowrap;
     }
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #444;
+      margin-top: 10px;
+    }
+    .checkbox-row input { width: auto; }
+    .ttl-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+    .ttl-row label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #444; flex: 1; }
+    .ttl-row input[type="number"] { width: 56px; }
+    .profile-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 0;
+      border-bottom: 1px solid #eee;
+      font-size: 12px;
+    }
+    .profile-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .profile-row .badge {
+      font-size: 10px;
+      color: #2563eb;
+      border: 1px solid #2563eb;
+      border-radius: 4px;
+      padding: 1px 5px;
+      white-space: nowrap;
+    }
+    .profile-row button { width: auto; margin-top: 0; padding: 4px 8px; font-size: 11px; }
     .sync-bar {
       display: flex;
       align-items: center;
@@ -82,7 +114,7 @@
       border-bottom: 1px solid #eee;
     }
     .sync-label { font-size: 13px; font-weight: 600; color: #111; }
-    .switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+    .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
     .switch input { opacity: 0; width: 0; height: 0; }
     .slider {
       position: absolute; inset: 0; background: #c7ccd4;
@@ -100,23 +132,31 @@
       border: 1px solid #fed7aa; border-radius: 6px;
       padding: 6px 8px; margin-bottom: 10px;
     }
+    #status {
+      font-size: 12px; color: #16a34a; text-align: center;
+      min-height: 14px; margin-top: 6px;
+    }
     .version {
       font-size: 11px; color: #9aa0a6; text-align: center;
-      margin-top: 14px;
+      margin-top: 10px;
     }
     @media (prefers-color-scheme: dark) {
       body { background: #1e1f22; color: #e6e6e6; }
       .row { color: #b8bcc4; }
       .row strong { color: #f1f1f1; }
-      select {
+      input[type="text"], input[type="number"], select {
         background: #2a2b2e;
         color: #e6e6e6;
         border-color: #44464b;
       }
+      label.field { color: #9aa0a6; }
       .section-title { color: #9aa0a6; }
+      .checkbox-row, .ttl-row label { color: #b8bcc4; }
       button:disabled { background: #2b3a63; color: #9db2e0; }
       .secondary { background: #3a3b3f; }
       .secondary:hover { background: #46474c; }
+      .profile-row { border-bottom-color: #333; }
+      .profile-row .badge { color: #7aa2ff; border-color: #7aa2ff; }
       .sync-bar { border-bottom-color: #33353a; }
       .sync-label { color: #f1f1f1; }
       .slider { background: #4b4d52; }
@@ -138,27 +178,42 @@
     Paused — this device won't send or receive tab updates.
   </div>
 
-  <div class="row"><span>Device</span><strong id="deviceName">—</strong></div>
-  <div class="row"><span>Interval</span><strong id="interval">—</strong></div>
-  <div class="row"><span>Last activity</span><strong id="lastActivity">—</strong></div>
+  <label class="field">
+    Device name
+    <input type="text" id="deviceName" placeholder="e.g. laptop-vivobook" />
+  </label>
 
-  <div class="section-title">Active profile</div>
+  <div class="section-title">Profiles</div>
+  <div id="profileList"></div>
   <div class="inline-row">
-    <select id="activeProfileSelect"></select>
-    <button id="switchProfile" class="secondary">Switch</button>
+    <input type="text" id="newProfileName" placeholder="New profile name" />
+    <button id="addProfile" class="secondary">Add</button>
+  </div>
+
+  <div class="section-title">Sync settings</div>
+  <label class="field" title="Opens/closes still sync immediately — this only sets the background double-check">
+    Check interval (minutes)
+    <input type="number" id="intervalMinutes" min="1" step="1" />
+  </label>
+  <label class="checkbox-row">
+    <input type="checkbox" id="openRestoredLazy" />
+    Open mirrored tabs lazily (load only when viewed)
+  </label>
+  <div class="ttl-row">
+    <label>
+      <input type="checkbox" id="ttlEnabled" />
+      Clean up stale entries after
+    </label>
+    <input type="number" id="ttlDays" min="1" step="1" />
+    <span style="font-size: 12px;">days</span>
   </div>
 
   <button id="syncNow">Sync now</button>
+  <div id="status"></div>
 
-  <div class="section-title">Restore from device</div>
-  <select id="restoreProfileSelect"></select>
-  <select id="deviceSelect"></select>
-  <div class="button-row">
-    <button id="restoreReplace">Replace</button>
-    <button id="restoreAdd" class="secondary">Add</button>
+  <div class="row" style="margin-top: 10px;">
+    <span>Last activity</span><strong id="lastActivity">—</strong>
   </div>
-  <div id="restoreStatus" style="font-size: 12px; margin-top: 6px; color: #16a34a;"></div>
-
   <div class="version" id="version"></div>
 
   <script src="browser-polyfill.min.js"></script>

@@ -1,13 +1,21 @@
 name: Release
 
-# Two ways to cut a release:
-#   1. Push a version tag:   git tag v2.2.1 && git push origin v2.2.1
-#   2. Actions tab -> "Release" -> "Run workflow" (workflow_dispatch): builds
-#      from the chosen ref and tags/releases as v<manifest version>.
-# Either way it builds the store-ready zip and publishes it as a GitHub Release.
+# Three ways to cut a release:
+#   1. Merge/push to main: automatic — if manifest.json's version isn't
+#      already released, it's built and published. If it IS already
+#      released (e.g. a doc-only merge that didn't bump the version),
+#      the release job is skipped, not failed.
+#   2. Push a version tag:   git tag v2.2.1 && git push origin v2.2.1
+#   3. Actions tab -> "Release" -> "Run workflow" (workflow_dispatch): builds
+#      from the chosen ref and tags/releases as v<manifest version>; fails
+#      loudly if that version was already released (bump it first).
+# All three build the same store-ready zips and publish them as a GitHub
+# Release.
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
   workflow_dispatch:
@@ -20,8 +28,65 @@ permissions:
   contents: write
 
 jobs:
-  package:
+  check:
     runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.decide.outputs.should_release }}
+      version: ${{ steps.decide.outputs.version }}
+      tag: ${{ steps.decide.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Decide whether to release
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MANIFEST_VERSION="$(node -p "require('./manifest.json').version")"
+
+          if [ "${{ github.event_name }}" = "push" ] && [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            # Triggered by a pushed tag: it must match the manifest version.
+            TAG="${GITHUB_REF_NAME}"
+            if [ "${TAG#v}" != "$MANIFEST_VERSION" ]; then
+              echo "::error::Tag $TAG does not match manifest.json version $MANIFEST_VERSION"
+              exit 1
+            fi
+            SHOULD_RELEASE=true
+          else
+            # Push to main, or a manual run: derive the tag from the
+            # manifest.
+            TAG="v$MANIFEST_VERSION"
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+                # An explicit manual request for an already-released
+                # version is almost certainly a mistake — fail loudly.
+                echo "::error::Release $TAG already exists — bump the version in manifest.json"
+                exit 1
+              fi
+              # A push to main that didn't bump the version (e.g. a
+              # docs-only merge) — nothing new to release, not an error.
+              echo "Release $TAG already exists — nothing to do for this push."
+              SHOULD_RELEASE=false
+            else
+              SHOULD_RELEASE=true
+            fi
+          fi
+
+          echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "version=$MANIFEST_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "should_release=$SHOULD_RELEASE tag=$TAG (manifest $MANIFEST_VERSION) via ${{ github.event_name }}"
+
+  package:
+    needs: check
+    if: needs.check.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      TAG: ${{ needs.check.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,37 +96,11 @@ jobs:
           ref: ${{ github.event.inputs.ref || github.ref }}
           fetch-depth: 0
 
-      - name: Determine version and tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          MANIFEST_VERSION="$(node -p "require('./manifest.json').version")"
-          if [ "${{ github.event_name }}" = "push" ]; then
-            # Triggered by a pushed tag: it must match the manifest version.
-            TAG="${GITHUB_REF_NAME}"
-            if [ "${TAG#v}" != "$MANIFEST_VERSION" ]; then
-              echo "::error::Tag $TAG does not match manifest.json version $MANIFEST_VERSION"
-              exit 1
-            fi
-          else
-            # Manual run: derive the tag from the manifest and refuse to
-            # clobber an existing release (bump the version instead).
-            TAG="v$MANIFEST_VERSION"
-            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              echo "::error::Release $TAG already exists — bump the version in manifest.json"
-              exit 1
-            fi
-          fi
-          echo "VERSION=$MANIFEST_VERSION" >> "$GITHUB_ENV"
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
-          echo "Building $TAG (manifest $MANIFEST_VERSION) via ${{ github.event_name }}"
-
       - name: Syntax-check JavaScript
         run: |
           node --check background.js
           node --check sync-core.js
           node --check popup.js
-          node --check options.js
           node --check lazy.js
 
       - name: Run test suite
@@ -85,7 +124,7 @@ jobs:
             fs.writeFileSync("manifest.firefox.json", JSON.stringify(firefox, null, 2));
           '
 
-          COMMON="background.js sync-core.js browser-polyfill.min.js popup.html popup.js options.html options.js lazy.html lazy.js icons"
+          COMMON="background.js sync-core.js browser-polyfill.min.js popup.html popup.js lazy.html lazy.js icons"
           mkdir -p build/chrome build/firefox
           cp -r $COMMON build/chrome/ && cp manifest.chrome.json build/chrome/manifest.json
           cp -r $COMMON build/firefox/ && cp manifest.firefox.json build/firefox/manifest.json
@@ -105,9 +144,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # For a manual run the tag doesn't exist yet, so create it at the
-          # commit we built; for a tag push it already exists and --target
-          # is ignored.
+          # For a manual run or a push to main the tag doesn't exist yet,
+          # so create it at the commit we built; for a tag push it
+          # already exists and --target is ignored.
           gh release create "$TAG" "$CHROME_ZIP" "$FIREFOX_ZIP" \
             --title "$TAG" \
             --target "$GITHUB_SHA" \

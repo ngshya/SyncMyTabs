@@ -224,12 +224,6 @@ function createSyncEngine(env) {
     return activeProfile || DEFAULT_PROFILE;
   }
 
-  // Tabs opened for an explicit, one-off "peek" at a NON-active profile
-  // (see MANUAL_RESTORE) are deliberately excluded from tracking — they
-  // must never register themselves under the wrong (active) profile.
-  // In-memory only, per engine instance (per running service worker).
-  const manualPeekTabIds = new Set();
-
   // Snapshot of this device's own currently-open, real (non-placeholder-
   // pending, http/https) tabs. Tabs still mid-navigation
   // (status !== "complete") are excluded entirely — see CLAUDE.md for
@@ -239,7 +233,6 @@ function createSyncEngine(env) {
     const titleByUrl = new Map();
     const tabIdsByUrl = new Map();
     for (const t of await env.tabs.query({})) {
-      if (manualPeekTabIds.has(t.id)) continue;
       if (t.status && t.status !== "complete") continue;
       const real = realUrlOfTab(t);
       if (!isHttpUrl(real)) continue;
@@ -530,7 +523,10 @@ function createSyncEngine(env) {
     return openRestoredLazy !== false;
   }
 
-  async function performAdd(entries, opts = {}) {
+  // Opens `entries` ({url,title}) alongside the current tabs, skipping
+  // any already open. Used by reconcileMirror to mirror in URLs that
+  // are open elsewhere but not here yet.
+  async function performAdd(entries) {
     const lazy = await openRestoredLazily();
     const { urls: alreadyOpen } = await snapshotOwnTabs();
     const toOpen = entries.filter((e) => !alreadyOpen.has(e.url));
@@ -545,63 +541,27 @@ function createSyncEngine(env) {
       targetWindow = null;
     }
 
-    const createdIds = [];
     if (targetWindow) {
       for (const entry of toOpen) {
         try {
-          const tab = await env.tabs.create({
+          await env.tabs.create({
             windowId: targetWindow.id,
             url: lazy ? lazyUrlFor(entry) : entry.url,
             active: !lazy,
           });
-          createdIds.push(tab.id);
         } catch (e) {}
       }
     } else {
-      let win;
       try {
-        win = await env.windows.create({
+        await env.windows.create({
           url: toOpen.map((e) => (lazy ? lazyUrlFor(e) : e.url)),
         });
-      } catch (e) {
-        win = null;
-      }
-      for (const t of (win && win.tabs) || []) createdIds.push(t.id);
-    }
-
-    if (opts.exemptFromTracking) {
-      for (const id of createdIds) manualPeekTabIds.add(id);
-    }
-  }
-
-  async function performReplace(entries, opts = {}) {
-    const lazy = await openRestoredLazily();
-    const openUrls = entries.map((e) => (lazy ? lazyUrlFor(e) : e.url));
-
-    const oldWindows = await env.windows.getAll({ populate: false });
-    const oldWindowIds = oldWindows.map((w) => w.id);
-
-    let created;
-    try {
-      created = await env.windows.create({ url: openUrls });
-    } catch (e) {
-      created = null;
-    }
-    if (!created) return;
-
-    if (opts.exemptFromTracking) {
-      for (const t of created.tabs || []) manualPeekTabIds.add(t.id);
-    }
-
-    for (const winId of oldWindowIds) {
-      try {
-        await env.windows.remove(winId);
       } catch (e) {}
     }
   }
 
   // ------------------------------------------------------------
-  // Listing helpers for the popup/options UI.
+  // Listing helper for the popup/options UI's profile pickers.
   // ------------------------------------------------------------
   async function listAllKnownProfiles() {
     const root = await getOrCreateRootFolder();
@@ -614,30 +574,6 @@ function createSyncEngine(env) {
     return Array.from(found).sort();
   }
 
-  async function listDevicesForProfile(profile) {
-    const profileFolder = await getOrCreateProfileFolder(profile);
-    const children = await env.bookmarks.getChildren(profileFolder.id);
-    const found = new Set();
-    for (const c of children) {
-      const info = parseTabEntryUrl(c.url);
-      if (info && info.state === "open") found.add(info.device);
-    }
-    return Array.from(found).sort();
-  }
-
-  async function getOpenEntriesForDeviceProfile(device, profile) {
-    const profileFolder = await getOrCreateProfileFolder(profile);
-    const children = await env.bookmarks.getChildren(profileFolder.id);
-    const out = [];
-    for (const c of children) {
-      const info = parseTabEntryUrl(c.url);
-      if (info && info.device === device && info.state === "open") {
-        out.push({ url: info.real, title: c.title });
-      }
-    }
-    return out;
-  }
-
   // ------------------------------------------------------------
   // Event-wiring handlers: the "when X happens, do Y" glue, factored
   // out here (not just the underlying reconcile primitives) so tests
@@ -648,7 +584,6 @@ function createSyncEngine(env) {
 
   // One of the two places a close is ever detected.
   function handleTabRemoved(tabId, removeInfo) {
-    manualPeekTabIds.delete(tabId);
     if (removeInfo && removeInfo.isWindowClosing) return reconcileTail; // shutdown/window close
     return scheduleReconcile({ checkClosed: true });
   }
@@ -705,8 +640,6 @@ function createSyncEngine(env) {
     // constants, re-exported for convenience
     DEFAULT_PROFILE,
     DEFAULT_TTL_DAYS,
-    // internals exposed for advanced test assertions
-    manualPeekTabIds,
     // core
     getRootParentId,
     getOrCreateRootFolder,
@@ -726,10 +659,7 @@ function createSyncEngine(env) {
     scheduleReconcile,
     openRestoredLazily,
     performAdd,
-    performReplace,
     listAllKnownProfiles,
-    listDevicesForProfile,
-    getOpenEntriesForDeviceProfile,
     // wiring handlers
     handleTabRemoved,
     handleTabUpdated,

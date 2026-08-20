@@ -30,9 +30,8 @@ Firefox.** Keep this in mind in every change:
   `webextension-polyfill` (or an equivalent shim) — don't reintroduce raw
   `chrome.*` promise calls that only work on Chrome.
 - The manifest carries both backgrounds (`service_worker` for Chrome, `scripts`
-  for Firefox) and `options_ui`; `browser_specific_settings.gecko` pins the
-  Firefox id / min version. When you touch the manifest, keep both browsers
-  loadable.
+  for Firefox); `browser_specific_settings.gecko` pins the Firefox id / min
+  version. When you touch the manifest, keep both browsers loadable.
 - There is no automated cross-browser test here — verify manually in **both**
   Chrome (`chrome://extensions` → Load unpacked) and Firefox
   (`about:debugging` → Load Temporary Add-on).
@@ -54,11 +53,10 @@ Firefox.** Keep this in mind in every change:
 
 | File | Role |
 |---|---|
-| `manifest.json` | Manifest V3, permissions, entry points, **version**; dual background (Chrome `service_worker` + Firefox `scripts`), `options_ui`, `browser_specific_settings.gecko` |
+| `manifest.json` | Manifest V3, permissions, entry points, **version**; dual background (Chrome `service_worker` + Firefox `scripts`), `browser_specific_settings.gecko` |
 | `sync-core.js` | **All the sync/reconcile logic**, factored out of `background.js` and parameterized over an `env` (bookmarks/tabs/windows/storage/runtime) instead of calling `browser.*` directly — see "Testing" below. Plain script, no import/export syntax (loaded via `importScripts`/`background.scripts` like the polyfill); `module.exports` at the bottom is a Node-only no-op elsewhere. |
 | `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s `engine.handle*()` functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
-| `popup.html` / `popup.js` | Toolbar popup UI |
-| `options.html` / `options.js` | Settings page UI |
+| `popup.html` / `popup.js` | The **only** UI — toolbar popup holding status and all settings (device name, profiles, interval, lazy restore, TTL). No separate options page; `browser.runtime.onInstalled` opens `popup.html` as a plain tab for first-run setup, since popups can't be opened programmatically. |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page (loads the real URL only when the tab is first viewed) |
 | `browser-polyfill.min.js` | Vendored Mozilla WebExtension polyfill so `browser.*` is promise-based on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
@@ -67,12 +65,17 @@ Firefox.** Keep this in mind in every change:
 There is **no build step** — the repository *is* the unpacked extension (the
 polyfill is vendored, not built; `package.json` exists only for `npm test`, no
 runtime dependencies). The only CI is a **release workflow**
-(`.github/workflows/release.yml`): pushing a `v*` tag whose number matches
-`manifest.json` syntax-checks the JS, **runs the test suite**, builds **two**
-store-ready zips from the dual dev manifest — a Chrome one (`service_worker`
-only) and a Firefox one (`scripts` only) — runs `web-ext lint` on the Firefox
-build, and publishes both as a GitHub Release. Store-listing docs live in
-`PRIVACY.md` and `PERMISSIONS.md`.
+(`.github/workflows/release.yml`), which **fires automatically on every push
+to `main`** — i.e. every PR merge — and checks whether `manifest.json`'s
+`version` is already released; if it's new, it syntax-checks the JS, **runs
+the test suite**, builds **two** store-ready zips from the dual dev manifest —
+a Chrome one (`service_worker` only) and a Firefox one (`scripts` only) — runs
+`web-ext lint` on the Firefox build, and publishes both as a GitHub Release.
+A merge that doesn't bump the version is a no-op for this workflow (skipped,
+not failed). It can also be triggered by pushing a matching `v*` tag, or
+manually from the Actions tab — both fail loudly instead of skipping if that
+version was already released. Store-listing docs live in `PRIVACY.md` and
+`PERMISSIONS.md`.
 
 ## Testing
 
@@ -132,14 +135,14 @@ that violates either should make one fail).
    `sync-core.js`, not `background.js` — see "Testing" above.
 3. **Syntax-check** any JS you touched:
    ```bash
-   node --check background.js && node --check sync-core.js && node --check popup.js && node --check options.js
+   node --check background.js && node --check sync-core.js && node --check popup.js
    ```
 4. **Run the test suite** (`npm test`) — see "Testing" above. Add/update
    tests for any reconcile-logic change.
 5. **Manually verify** in the browser when behavior changes: load the folder via
    `chrome://extensions` → *Load unpacked*, then hit **Reload** on the extension
    after each change. The test suite covers the reconcile logic; it can't
-   exercise the real `browser.*` APIs, the popup/options UI, or the manifest.
+   exercise the real `browser.*` APIs, the popup UI, or the manifest.
 6. If behavior or the public surface changed, **bump `version` in
    `manifest.json`** (semver) and update `README.md`.
 7. Commit with a clear message, then **push to `claude/svil`**.
@@ -224,14 +227,6 @@ open/close-time blob; that's gone — no migration, see Known limitations).
   threshold, regardless of state or which device wrote it — sanctioned because
   an entry that stale is, by construction, either genuinely abandoned or would
   have been heartbeat-refreshed by its own device if it weren't.
-- **Manual restore exemption.** `MANUAL_RESTORE` for a profile that ISN'T the
-  active one opens tabs with `exemptFromTracking: true` (`performAdd` /
-  `performReplace`), which adds their tab ids to the in-memory
-  `manualPeekTabIds` set. `snapshotOwnTabs` excludes these everywhere, so a
-  one-off peek at another profile's tabs never gets registered as this
-  device's own entry under the (wrong, active) profile. Restoring the
-  *active* profile doesn't need the exemption — that's the correct bucket
-  anyway, so the ordinary reconcile picks it up naturally.
 - **Parent folder id** is resolved at runtime from the bookmark tree
   (`getRootParentId`), cached, with a fallback to Chrome/Brave's `"2"`. Do not
   hardcode `"2"` in new code — go through the resolver so Firefox support stays
@@ -248,8 +243,7 @@ open/close-time blob; that's gone — no migration, see Known limitations).
   paused, nothing touches bookmarks in either direction. The toolbar icon
   swaps to the `icons/icon*-off.png` set plus an "OFF" badge via
   `updateActionIcon`, driven off `chrome.storage.onChanged` so the popup
-  toggle is the single source of truth. Manual restore stays available (it's
-  an explicit user action) — it's not gated on `syncEnabled`.
+  toggle is the single source of truth.
 - **No pinned tabs / tab groups.** Dropped in the v3 redesign to keep the
   per-tab-bookmark schema simple. Don't reintroduce them without discussion.
 - **Self-healing.** Third-party sync tools sometimes recreate rather than
