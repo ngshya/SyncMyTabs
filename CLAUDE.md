@@ -53,14 +53,16 @@ Firefox.** Keep this in mind in every change:
 
 | File | Role |
 |---|---|
-| `manifest.json` | Manifest V3, permissions, entry points, **version**; dual background (Chrome `service_worker` + Firefox `scripts`), `browser_specific_settings.gecko` |
-| `sync-core.js` | **All the sync/reconcile logic**, factored out of `background.js` and parameterized over an `env` (bookmarks/tabs/windows/storage/runtime) instead of calling `browser.*` directly — see "Testing" below. Plain script, no import/export syntax (loaded via `importScripts`/`background.scripts` like the polyfill); `module.exports` at the bottom is a Node-only no-op elsewhere. |
-| `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s `engine.handle*()` functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
-| `popup.html` / `popup.js` | The **only** UI — toolbar popup holding status and all settings (device name, profiles, interval, lazy restore, TTL). No separate options page; `browser.runtime.onInstalled` opens `popup.html` as a plain tab for first-run setup, since popups can't be opened programmatically. |
+| `manifest.json` | Manifest V3, permissions, entry points, **version**; dual background (Chrome `service_worker` + Firefox `scripts`), `browser_specific_settings.gecko`, the tab-group leashing module's `<all_urls>` content script |
+| `sync-core.js` | **All the open-tab sync/reconcile logic**, factored out of `background.js` and parameterized over an `env` (bookmarks/tabs/windows/storage/runtime) instead of calling `browser.*` directly — see "Testing" below. Plain script, no import/export syntax (loaded via `importScripts`/`background.scripts` like the polyfill); `module.exports` at the bottom is a Node-only no-op elsewhere. |
+| `groups-core.js` | **The independent tab-group leashing module** (see its own "Tab-group leashing" section below) — same `env`-parameterized style as `sync-core.js`, plus takes the already-created sync engine instance (`createGroupsEngine(env, syncEngine)`) to reuse `getActiveProfile`/`getOrCreateProfileFolder`/`mergeFolderInto`/`isSyncEnabled` rather than re-implementing them. Chrome/Brave only (feature-detects `env.tabGroups`, a silent no-op on Firefox). |
+| `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s / `groups-core.js`'s `engine.handle*()` functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
+| `link-leash-content.js` | Content script for the leashing module — see its section below |
+| `popup.html` / `popup.js` | The **only** UI — toolbar popup holding status, all settings (device name, profiles, interval, lazy restore, TTL), and tab-group rule editors. No separate options page; `browser.runtime.onInstalled` opens `popup.html` as a plain tab for first-run setup, since popups can't be opened programmatically. |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page (loads the real URL only when the tab is first viewed) |
 | `browser-polyfill.min.js` | Vendored Mozilla WebExtension polyfill so `browser.*` is promise-based on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
-| `test/` | The test suite for `sync-core.js` — see "Testing" below |
+| `test/` | The test suite for `sync-core.js` and `groups-core.js` — see "Testing" below |
 
 There is **no build step** — the repository *is* the unpacked extension (the
 polyfill is vendored, not built; `package.json` exists only for `npm test`, no
@@ -115,6 +117,22 @@ also monkey-patch `Date.now()` (see `withFakeClock` in
 `test/ttl-cleanup.test.js`) rather than waiting in real time — always restore
 it in a `finally`.
 
+`test/sim-env.js` also fakes `env.tabGroups` per device (`SimTabGroupsApi`:
+`query`/`get`/`update`) plus `env.tabs.group()`/`.ungroup()`/`.update()`, for
+`groups-core.js` tests. Tab groups are per-device local state (a `Map`, not
+routed through `SimWorld`'s shared tree) — exactly like the real
+`chrome.tabGroups` API, only the group's RULES sync via the shared bookmark
+tree. Group ids from these fakes are deliberately kept **numeric**
+(`nextGroupId()`, distinct from every other id in the simulator, which are
+opaque strings) because `isInTabGroup`/`groups-core.js`'s `isGrouped` both
+type-check `typeof tab.groupId === "number"` to match the real API — use
+`SimDevice.ensureOpenGroup(title)` / `openGroupedTab(url, title, groupTitle)`
+in a test, never a raw `nextId()`-derived id, or the "grouped" check will
+silently read as false. `groups-core.js` tests build their own engine
+directly — `createGroupsEngine(device.env, device.engine)` — rather than
+going through a `SimDevice` helper, since it's a separate module from
+`sync-core.js`'s own engine.
+
 Run the suite:
 ```bash
 npm test                    # same as: node --test test/*.test.js
@@ -122,11 +140,11 @@ npm test                    # same as: node --test test/*.test.js
 (`node --test test/` — a bare directory path, no glob — misbehaves on at
 least some Node versions; always pass the explicit glob.)
 
-When you change reconcile behavior in `sync-core.js`, add/update a test in
-`test/` alongside it — this is the actual regression net for the safety rules
-documented below (the phantom-duplicate-entry guard and the "closes are only
-detected from a live tab event" rule both have regression tests; a change
-that violates either should make one fail).
+When you change reconcile behavior in `sync-core.js` or `groups-core.js`,
+add/update a test in `test/` alongside it — this is the actual regression net
+for the safety rules documented below (the phantom-duplicate-entry guard and
+the "closes are only detected from a live tab event" rule both have
+regression tests; a change that violates either should make one fail).
 
 ## How to work on it
 
@@ -313,6 +331,88 @@ limitations).
   Add to that list rather than breaking migration if the name ever changes
   again. This is unrelated to (and unaffected by) the v3→v4 schema change.
 
+## Tab-group leashing module (`groups-core.js`)
+
+A separate, independent module ported from the standalone TabGroupsLeash
+extension: link "leashing" for a browser tab group (a clicked link either
+navigates in place / opens alongside in the SAME group if it matches that
+tab's configured pattern, or always opens in a fresh UNGROUPED tab
+otherwise) plus a startup reconcile (reopen a group's missing "essential"
+tabs, close duplicates, optionally close undeclared ones). Chrome/Brave
+only — Firefox has no `tabGroups` API, so every function here
+feature-detects `env.tabGroups` and no-ops without it, never assumed to
+exist (same cross-browser rule as the rest of the codebase).
+
+- **Bookmark tree shape**, SIBLING to the per-URL folders under each
+  profile (and invisible to `sync-core.js`'s `readProfileEntries`, which
+  only ever recognizes a folder that has its own `_url` marker child — a
+  `_groups` folder never does, so the two coexist with zero interference):
+  ```
+  SyncMyTabs/<profile>/_groups/<group title>/<one bookmark per rule>
+  ```
+  A rule bookmark's `title` is its own `match` pattern (human-readable in a
+  plain bookmark manager); the rule data itself is packed into the
+  bookmark's `url` (`buildGroupRuleUrl`/`parseGroupRuleUrl`, same
+  `URLSearchParams`-based encoding style as `sync-core.js`'s device status
+  bookmarks): `m`=match, `p`=leash pattern, `o`=reopen URL. **The group's
+  TITLE is the only stable, cross-device key** — a browser's own numeric
+  tab-group id is local and meaningless on another device — so an untitled
+  group is deliberately unsupported (mirrors the original TabGroupsLeash's
+  own "no reliable sync key" reasoning for its local-only fallback, which
+  this port doesn't carry over: "always use bookmarks to sync" ruled out a
+  local-storage-only fallback that can't sync in the first place).
+- **Config, not tab state — different sync model on purpose.** Unlike
+  open/closed tab entries, a group's rules are just replaced wholesale on
+  every edit (`setGroupSettings` deletes the old rule set, writes the new
+  one) — there's no per-device-final/sticky semantics here, because unlike
+  a tab's open/closed state, group rules aren't something each device
+  independently observes; they're shared configuration a user edits from
+  any device. Two devices editing the SAME group concurrently is
+  last-write-wins (whichever bookmark write lands last), same trade-off the
+  original TabGroupsLeash already had with `chrome.storage.sync.set` — an
+  accepted limitation for infrequently-edited config data, not a bug.
+- **Only the RULES sync via bookmarks — local per-device preferences don't.**
+  Whether leashing is on at all (`groupsLeashEnabled`), whether the startup
+  reconcile also closes undeclared tabs (`groupsCloseUndeclaredTabs`), and
+  the startup delay (`groupsStartupDelaySeconds`) all live in
+  `env.storage.local`, same convention as `syncEnabled`/`ttlDays`/
+  `openRestoredLazy` — per-device operational toggles, not shared config.
+- **Scoped by the SAME active-profile concept as the rest of the
+  extension.** `activeProfileFolderId()` resolves through
+  `syncEngine.getActiveProfile()`/`getOrCreateProfileFolder()` — a device on
+  a different profile never sees, mirrors, or reconciles another profile's
+  groups. Each profile has its own independent set of group definitions,
+  exactly as requested.
+- **Link leashing is read-only-cheap for the common case.**
+  `resolvePatternFor(tab)` bails out immediately (no bookmark read at all)
+  unless the tab is ACTUALLY grouped (`typeof tab.groupId === "number" &&
+  tab.groupId !== -1`, same check as `sync-core.js`'s `isInTabGroup`) —
+  every click on every ordinary, ungrouped tab costs nothing. `readGroupSettings`
+  itself is also deliberately read-only (never creates a folder just to
+  read from it), since it's called on every leashed click.
+- **The content script (`link-leash-content.js`) doesn't intercept every
+  click on every page**, unlike the original TabGroupsLeash — it first asks
+  the background page `AM_I_GROUPED` and only attaches its `click`/
+  `auxclick` capture-phase listeners if the tab is actually grouped at load
+  time. This is a deliberate improvement over a naive port: capturing +
+  `preventDefault`-ing every click on every page (including sites whose own
+  JS also listens for link clicks, e.g. SPA client-side routers) just to
+  fall back to default behavior server-side for the overwhelming majority
+  of (ungrouped) tabs would be a real regression risk. The trade-off: a tab
+  grouped AFTER its page already loaded won't get leashing until reloaded
+  (see Known limitations).
+- **Startup reconcile only, never mid-session**, and only for the active
+  profile's groups that have at least one saved rule. Delayed
+  (`groupsStartupDelaySeconds`, default 15s) so the browser's own session
+  restore has time to finish repopulating windows/tabs/groups first —
+  reconciling against a still-incomplete snapshot could wrongly judge a
+  not-yet-restored tab "missing" or "duplicate". Alarm registration for
+  this delay lives in `background.js` (browser-chrome-only bits), same as
+  the main sync alarm — `groups-core.js` itself only exposes the callable
+  `reconcileGroups()`/`handleGroupsAlarm()`.
+- **`reconcileGroups()` also respects the master `syncEnabled` switch** —
+  pausing sync pauses the whole extension, groups module included.
+
 ## Known limitations (don't "fix" without discussion)
 
 - Chrome/Brave and Firefox are both supported targets (see **Cross-browser
@@ -329,3 +429,12 @@ limitations).
   `SyncMyTabs/<device>/…` (pre-3.0) tree is left in place, unused. Don't add
   migration code for it without the user asking — this was a deliberate
   decision.
+- The tab-group leashing module (`groups-core.js`) is Chrome/Brave only
+  (Firefox has no `tabGroups` API) and doesn't support untitled groups (no
+  stable cross-device key) — see its own section above. Group RULES are
+  last-write-wins on concurrent cross-device edits (config data, not tab
+  state — see that section for why this is a different, and accepted,
+  trade-off from the sticky tab-close model). A tab dragged into a group
+  after its page already loaded doesn't get leashing until reloaded, by
+  design (see that section's content-script note) — don't "fix" this by
+  reverting to intercepting every click on every page.

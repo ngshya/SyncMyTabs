@@ -140,6 +140,70 @@
       font-size: 11px; color: #9aa0a6; text-align: center;
       margin-top: 10px;
     }
+    .group-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 0;
+      border-bottom: 1px solid #eee;
+      font-size: 12px;
+    }
+    .group-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .group-row .rule-count { font-size: 10px; color: #888; white-space: nowrap; }
+    .group-row .badge {
+      font-size: 10px;
+      color: #16a34a;
+      border: 1px solid #16a34a;
+      border-radius: 4px;
+      padding: 1px 5px;
+      white-space: nowrap;
+    }
+    .group-row button { width: auto; margin-top: 0; padding: 4px 8px; font-size: 11px; }
+    #groupEditor {
+      margin-top: 8px;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      background: #fafafa;
+    }
+    #groupEditor .editor-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+    .rule-editor-row {
+      border-bottom: 1px solid #eee;
+      padding: 6px 0;
+    }
+    .rule-editor-row:last-child { border-bottom: none; }
+    .rule-editor-row label {
+      display: block;
+      font-size: 10px;
+      color: #888;
+      margin-top: 4px;
+    }
+    .rule-editor-row input {
+      width: 100%;
+      padding: 5px 6px;
+      font-size: 12px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      box-sizing: border-box;
+      background: white;
+      color: inherit;
+      margin-top: 2px;
+    }
+    .rule-editor-row .delete-rule {
+      width: auto;
+      margin-top: 4px;
+      padding: 3px 8px;
+      font-size: 11px;
+    }
+    .quick-add-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      padding: 3px 0;
+    }
+    .quick-add-item span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .quick-add-item button { width: auto; margin-top: 0; padding: 3px 7px; font-size: 10px; }
     @media (prefers-color-scheme: dark) {
       body { background: #1e1f22; color: #e6e6e6; }
       .row { color: #b8bcc4; }
@@ -163,6 +227,13 @@
       .paused-note {
         color: #fcd9a8; background: #3a2c17; border-color: #6b4f24;
       }
+      .group-row { border-bottom-color: #333; }
+      .group-row .rule-count { color: #9aa0a6; }
+      .group-row .badge { color: #4ade80; border-color: #4ade80; }
+      #groupEditor { background: #26272b; border-color: #3a3b3f; }
+      .rule-editor-row { border-bottom-color: #333; }
+      .rule-editor-row label { color: #9aa0a6; }
+      .rule-editor-row input { background: #2a2b2e; color: #e6e6e6; border-color: #44464b; }
     }
   </style>
 </head>
@@ -207,6 +278,27 @@
     <input type="number" id="ttlDays" min="1" step="1" />
     <span style="font-size: 12px;">days</span>
   </div>
+
+  <div class="section-title" title="Chrome/Brave only — links clicked inside a titled tab group either navigate in place, or always open in a fresh ungrouped tab; missing group tabs reopen automatically. Rules sync via bookmarks, per profile, same as tabs.">Tab groups (this profile)</div>
+  <label class="checkbox-row">
+    <input type="checkbox" id="groupsLeashEnabled" />
+    Leash links in configured groups
+  </label>
+  <label class="checkbox-row">
+    <input type="checkbox" id="groupsCloseUndeclared" />
+    Close tabs matching no rule (on startup check)
+  </label>
+  <label class="field">
+    Startup check delay (seconds)
+    <input type="number" id="groupsStartupDelay" min="0" step="1" />
+  </label>
+  <div id="groupList"></div>
+  <div class="inline-row">
+    <input type="text" id="newGroupName" placeholder="New group title (must match an open browser tab group)" />
+    <button id="addGroup" class="secondary">Add</button>
+  </div>
+  <div id="groupEditor" hidden></div>
+  <button id="groupsReconcileNow" class="secondary">Reconcile groups now</button>
 
   <button id="syncNow">Sync now</button>
   <div id="status"></div>

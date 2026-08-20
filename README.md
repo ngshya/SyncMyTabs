@@ -99,7 +99,49 @@ so there's never a conflicting write to the same bookmark.
 
 ---
 
-SyncMyTabs runs on **Chromium browsers (Chrome / Brave)** and **Firefox**.
+## Tab groups (leashing) — Chrome/Brave only
+
+An independent module, layered on top of the same profile/bookmark
+mechanism, for browser **tab groups** (Chrome/Brave's own tabbing feature;
+Firefox has no such API, so this module is a silent no-op there): it keeps a
+titled group's declared pages present, and keeps links clicked inside that
+group from wandering outside them.
+
+- **Rules, per group, per profile.** You give a browser tab group a title
+  (e.g. "Work"), then declare one or more rules for it: a **match** pattern
+  (which page(s) this rule covers), an optional **leash pattern** (what a
+  clicked link must match to stay in that tab/group), and an optional
+  **reopen URL** (a page this group should never be without). Rules sync via
+  the same bookmark tree, under `SyncMyTabs/<profile>/_groups/<group
+  title>/…`, scoped by the same active-profile concept as everything else.
+- **Link leashing.** Click a link on a page inside a configured group: if it
+  matches that page's leash pattern, it navigates the same tab (or opens
+  alongside, in the *same* group, on a modifier-click); if it doesn't match,
+  it *always* opens in a fresh, **ungrouped** tab instead of derailing the
+  group. A page with no rule yet, or a rule with no leash pattern (a
+  reopen-only rule), is left completely alone — normal browser behavior. A
+  tab that isn't in any configured group is never touched by this at all.
+- **Startup reconciliation.** Once per browser launch (after a short,
+  configurable delay so the browser's own session restore finishes first),
+  SyncMyTabs reopens any group's "reopen URL" that isn't currently open
+  there, closes accidental duplicates of the same declared page (keeping the
+  oldest), and — if you turn on "close tabs matching no rule" (off by
+  default, since closing tabs automatically is destructive) — closes any tab
+  in that group that matches none of its rules at all.
+- **Untitled groups aren't supported.** A group's title is its only stable,
+  cross-device identifier (a browser's internal group id is local and
+  meaningless on another device) — an untitled group is simply invisible to
+  this module.
+- Manage it all from the popup's **"Tab groups"** section: per-group rule
+  editors (with quick-add buttons for tabs already open in that group), a
+  leashing on/off switch, the close-undeclared-tabs toggle, the startup
+  delay, and a manual "Reconcile groups now" button.
+
+---
+
+SyncMyTabs runs on **Chromium browsers (Chrome / Brave)** and **Firefox**
+(the tab-groups module above is Chrome/Brave only; everything else works
+identically on both).
 
 ## Install (developer mode)
 
@@ -149,10 +191,16 @@ Everything — status and settings alike — lives in one place: the **popup**
 - **Cleanup / TTL** (default on, **14 days**) — delete a device's bookmark
   entry if it hasn't been updated in this many days (safety net for a device
   that never comes back to agree "closed").
+- **Tab groups (this profile)** (Chrome/Brave only) — the leashing module's
+  own on/off switch, the "close tabs matching no rule" toggle (off by
+  default), the startup check delay, and per-group rule editors — see
+  [Tab groups (leashing)](#tab-groups-leashing--chromebrave-only) above.
 - **Sync now** — force an immediate check in both directions.
+- **Reconcile groups now** — force an immediate tab-groups check (normally
+  only run once per browser launch).
 - The last row shows the last mirror activity, and the extension version.
 
-Every field except the two checkboxes (which save immediately) saves when you
+Every field except the checkboxes (which save immediately) saves when you
 leave it (blur, or press Enter).
 
 ---
@@ -170,9 +218,11 @@ SyncMyTabs' own initiative):
 | Permission | Why |
 |---|---|
 | `bookmarks` | Read/write the SyncMyTabs bookmark tree |
-| `tabs` | Read open tab URLs/titles; open/close tabs to mirror and restore |
+| `tabs` | Read open tab URLs/titles; open/close/group tabs to mirror, restore, and reconcile tab groups |
+| `tabGroups` | Tab-group leashing module only (Chrome/Brave — no such API on Firefox): read a group's title, create/update a group when reopening a missing declared tab |
 | `storage` | Store this device's settings and state |
-| `alarms` | Drive the periodic double-check and cleanup sweep |
+| `alarms` | Drive the periodic double-check, cleanup sweep, and the once-per-launch tab-groups reconcile |
+| `<all_urls>` host permission + content script | Tab-group leashing module only: intercepts a link click on a page that's inside a *configured* tab group (see [Tab groups (leashing)](#tab-groups-leashing--chromebrave-only)) — an ungrouped tab is unaffected |
 
 ---
 
@@ -202,6 +252,17 @@ SyncMyTabs' own initiative):
   above), but it does mean a URL can stay open on one device indefinitely
   even after every other device has closed its copy, until that one device
   closes its own tab too.
+- **Tab-group leashing is Chrome/Brave only, and untitled groups aren't
+  supported.** Firefox has no tab-groups API to extensions, so the whole
+  module is a silent no-op there. A group's title is its only stable,
+  cross-device identifier — give it one, or the leashing/reconcile module
+  simply can't see it.
+- **A tab grouped AFTER its page already loaded won't get leashing until
+  reloaded.** The content script asks once, on load, whether its tab is
+  currently grouped, and only attaches click listeners if so — deliberately,
+  so ordinary (ungrouped) browsing is never affected by intercepting every
+  click on every page. Dragging a tab into a group without reloading it is
+  the one case leashing won't pick up until the next reload.
 - **No migration from pre-4.0 versions.** The bookmark tree shape changed
   (a folder per open URL, instead of one flat bookmark per (device, url)).
   Upgrading starts fresh; any old `SyncMyTabs/<profile>/…` or
@@ -215,9 +276,11 @@ SyncMyTabs' own initiative):
 | File | Role |
 |---|---|
 | `manifest.json` | Manifest V3 definition, permissions, entry points (Chrome service worker + Firefox background scripts) |
-| `sync-core.js` | All the sync/reconcile logic, testable independently of a real browser (see Testing below) |
-| `background.js` | Thin wiring: real browser events → `sync-core.js` |
-| `popup.html` / `popup.js` | Toolbar popup UI — status, all settings, and profile management in one place |
+| `sync-core.js` | All the open-tab sync/reconcile logic, testable independently of a real browser (see Testing below) |
+| `groups-core.js` | The independent tab-group leashing module's logic — its own bookmark-backed rule storage, link-leash decision, and startup reconcile — same `env`-parameterized, testable style as `sync-core.js` |
+| `background.js` | Thin wiring: real browser events → `sync-core.js` / `groups-core.js` |
+| `link-leash-content.js` | Content script for the leashing module — intercepts link clicks on a tab it's confirmed is inside a configured group |
+| `popup.html` / `popup.js` | Toolbar popup UI — status, all settings, profile management, and tab-group rule editors, in one place |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page |
 | `browser-polyfill.min.js` | Mozilla's WebExtension polyfill (vendored) so `browser.*` works on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
