@@ -55,36 +55,94 @@ Firefox.** Keep this in mind in every change:
 | File | Role |
 |---|---|
 | `manifest.json` | Manifest V3, permissions, entry points, **version**; dual background (Chrome `service_worker` + Firefox `scripts`), `options_ui`, `browser_specific_settings.gecko` |
-| `background.js` | Background logic — all sync / save / restore (uses `browser.*`; loads the polyfill via `importScripts` on Chrome) |
+| `sync-core.js` | **All the sync/reconcile logic**, factored out of `background.js` and parameterized over an `env` (bookmarks/tabs/windows/storage/runtime) instead of calling `browser.*` directly — see "Testing" below. Plain script, no import/export syntax (loaded via `importScripts`/`background.scripts` like the polyfill); `module.exports` at the bottom is a Node-only no-op elsewhere. |
+| `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s `engine.handle*()` functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
 | `popup.html` / `popup.js` | Toolbar popup UI |
 | `options.html` / `options.js` | Settings page UI |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page (loads the real URL only when the tab is first viewed) |
 | `browser-polyfill.min.js` | Vendored Mozilla WebExtension polyfill so `browser.*` is promise-based on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
+| `test/` | The test suite for `sync-core.js` — see "Testing" below |
 
 There is **no build step** — the repository *is* the unpacked extension (the
-polyfill is vendored, not built). There is no test suite. The only CI is a
-**release workflow** (`.github/workflows/release.yml`): pushing a `v*` tag whose
-number matches `manifest.json` builds **two** store-ready zips from the dual dev
-manifest — a Chrome one (`service_worker` only) and a Firefox one (`scripts`
-only) — runs `web-ext lint` on the Firefox build, and publishes
-both as a GitHub Release. Store-listing docs live in `PRIVACY.md` and
-`PERMISSIONS.md`.
+polyfill is vendored, not built; `package.json` exists only for `npm test`, no
+runtime dependencies). The only CI is a **release workflow**
+(`.github/workflows/release.yml`): pushing a `v*` tag whose number matches
+`manifest.json` syntax-checks the JS, **runs the test suite**, builds **two**
+store-ready zips from the dual dev manifest — a Chrome one (`service_worker`
+only) and a Firefox one (`scripts` only) — runs `web-ext lint` on the Firefox
+build, and publishes both as a GitHub Release. Store-listing docs live in
+`PRIVACY.md` and `PERMISSIONS.md`.
+
+## Testing
+
+`sync-core.js` holds all the sync logic as a factory, `createSyncEngine(env)`,
+that never touches `browser.*` directly — every bookmark/tab/window/storage/
+runtime call goes through the `env` object passed in. In the real extension
+`background.js` calls `createSyncEngine(browser)`; the test suite instead
+builds a **simulated multi-device environment** (`test/sim-env.js`) and calls
+`createSyncEngine(fakeEnv)` for each simulated device — so the exact same
+reconcile code runs in both places, not a re-implementation of it.
+
+`sync-core.js` also exports the **event-wiring decisions** as
+`engine.handle*()` functions (`handleTabRemoved`, `handleTabUpdated`,
+`handleBookmarkEvent`, `handleAlarm`, `handleStartup`, `handleSyncNow`,
+`handleSwitchProfileAndSave`) — e.g. "an `isWindowClosing` removal is
+ignored", "only `status === 'complete'` counts as a finished navigation".
+`background.js`'s real listeners are one-line calls into these; `sim-env.js`'s
+`SimDevice` methods (`openTab`, `closeTab`, `navigateTab`, `tick`, `startup`,
+`switchProfile`, `updateTabs`, …) call the **same** functions when simulating
+a browser event. This means a test exercises the real wiring, not just the
+reconcile internals — e.g. the simulator's `tabs.remove()` fires `onRemoved`
+even for a removal `reconcileMirror` itself triggered, exactly like a real
+browser, which is what makes a mirror-driven close correctly flip the closing
+device's own bookmark entry too.
+
+`test/sim-env.js`'s `SimWorld` holds one **shared, in-memory bookmark tree**
+that every simulated device's `env.bookmarks` reads/writes — i.e. bookmark
+sync is simulated as instantaneous. That's the right simplification for
+testing whether the reconcile logic itself converges to the correct
+open/closed state (which is most of what there is to test); it does NOT model
+sync propagation delay, so it can't catch a timing-dependent race on its own
+— those stay a documented, accepted architectural trade-off (see Known
+limitations). `world.disconnectDevice(device)` simulates a device going
+permanently offline (uninstalled, or just never coming back) for TTL tests,
+since otherwise every registered device reacts to every change. TTL tests
+also monkey-patch `Date.now()` (see `withFakeClock` in
+`test/ttl-cleanup.test.js`) rather than waiting in real time — always restore
+it in a `finally`.
+
+Run the suite:
+```bash
+npm test                    # same as: node --test test/*.test.js
+```
+(`node --test test/` — a bare directory path, no glob — misbehaves on at
+least some Node versions; always pass the explicit glob.)
+
+When you change reconcile behavior in `sync-core.js`, add/update a test in
+`test/` alongside it — this is the actual regression net for the safety rules
+documented below (the phantom-duplicate-entry guard and the "closes are only
+detected from a live tab event" rule both have regression tests; a change
+that violates either should make one fail).
 
 ## How to work on it
 
 1. **Switch to `claude/svil`** (see above) before editing.
-2. Edit the plain JS/HTML files directly.
+2. Edit the plain JS/HTML files directly. Sync/reconcile logic changes go in
+   `sync-core.js`, not `background.js` — see "Testing" above.
 3. **Syntax-check** any JS you touched:
    ```bash
-   node --check background.js && node --check popup.js && node --check options.js
+   node --check background.js && node --check sync-core.js && node --check popup.js && node --check options.js
    ```
-4. **Manually verify** in the browser when behavior changes: load the folder via
+4. **Run the test suite** (`npm test`) — see "Testing" above. Add/update
+   tests for any reconcile-logic change.
+5. **Manually verify** in the browser when behavior changes: load the folder via
    `chrome://extensions` → *Load unpacked*, then hit **Reload** on the extension
-   after each change. There is no automated way to exercise the extension.
-5. If behavior or the public surface changed, **bump `version` in
+   after each change. The test suite covers the reconcile logic; it can't
+   exercise the real `browser.*` APIs, the popup/options UI, or the manifest.
+6. If behavior or the public surface changed, **bump `version` in
    `manifest.json`** (semver) and update `README.md`.
-6. Commit with a clear message, then **push to `claude/svil`**.
+7. Commit with a clear message, then **push to `claude/svil`**.
 
 ## Architecture notes & conventions (v3 — shared per-tab bookmarks)
 
@@ -115,29 +173,45 @@ open/close-time blob; that's gone — no migration, see Known limitations).
   slow to hear about a remote close could out-race it just by refreshing its
   own "still open" timestamp on a schedule. Keep them separate if you touch
   this.
-- **SAFETY RULE: closes are detected in exactly one place.**
-  `closeMyGoneTabs` (which flips this device's own entries open→closed) is
-  called **only** from `browser.tabs.onRemoved` (guarded against
-  `isWindowClosing`). It is deliberately never called from the alarm,
-  `onStartup`, or a bookmark-change reaction, because those rely on comparing
-  tracked-open entries against a `browser.tabs.query()` snapshot that isn't
-  guaranteed complete at those moments — most notably right after startup,
-  before session restore has repopulated windows. Treating that gap as "the
-  user closed everything" would propagate a close for the entire session
-  just because the browser started up slowly. Opening/mirroring
-  (`reconcileMyOpenEntries`, `reconcileMirror`), by contrast, is always safe
-  to run broadly — worst case a tab is registered a little late, which
-  self-heals on the next trigger, never destructive. Preserve this asymmetry
-  if you touch the reconcile pipeline.
+- **SAFETY RULE: closes are only ever detected from a live, specific-tab
+  event.** `closeMyGoneTabs` (which flips this device's own entries
+  open→closed) is called **only** from `browser.tabs.onRemoved` (guarded
+  against `isWindowClosing`) and from `browser.tabs.onUpdated` once a
+  navigation completes — both are genuine, real-time signals about ONE
+  particular tab, reported while the browser is definitely running
+  normally. Calling it on `onUpdated(complete)` too is what makes
+  navigating an open tab to a different URL equivalent to closing the old
+  URL and opening the new one, instead of a silent in-place swap. It is
+  deliberately never called from the alarm, `onStartup`, or a
+  bookmark-change reaction, because those aren't tied to any one tab's
+  event — they just compare tracked-open entries against a whole
+  `browser.tabs.query()` snapshot that isn't guaranteed complete at those
+  moments — most notably right after startup, before session restore has
+  repopulated windows. Treating that gap as "the user closed everything"
+  would propagate a close for the entire session just because the browser
+  started up slowly. Opening/mirroring (`reconcileMyOpenEntries`,
+  `reconcileMirror`), by contrast, is always safe to run broadly — worst
+  case a tab is registered a little late, which self-heals on the next
+  trigger, never destructive. Preserve this asymmetry if you touch the
+  reconcile pipeline.
+- **`snapshotOwnTabs` skips tabs still loading** (`status !== "complete"`).
+  A tab's url/pendingUrl can pass through transient values while
+  navigating (a redirect chain, for instance); registering one of those
+  as "open" would create a permanent phantom entry nothing ever closes,
+  since the tab itself never goes away — it just finishes loading. This
+  is the same guard the `tabs.onUpdated` listener already applies to
+  itself; `snapshotOwnTabs` extends it to the alarm and bookmark-event
+  triggers too, which aren't gated on any one tab's load state.
 - **The reconcile pipeline** (`runReconcile`, invoked through
   `scheduleReconcile` which serializes/coalesces concurrent triggers — never
   call `runReconcile` directly): `closeMyGoneTabs` (only if `checkClosed`) →
   `reconcileMyOpenEntries` → `reconcileMirror` → `reconcileMyOpenEntries`
   again (so this device's own entries reflect whatever the mirror pass just
-  opened/closed locally). Triggered from `tabs.onRemoved` (`checkClosed:
-  true`), `tabs.onUpdated` on navigation complete (open-detection only), the
-  alarm, `onStartup`, and reactions to bookmark create/change events under
-  the active profile folder.
+  opened/closed locally). Triggered with `checkClosed: true` from
+  `tabs.onRemoved` and `tabs.onUpdated` on navigation complete (see the
+  safety rule above), and without it from the alarm, `onStartup`, and
+  reactions to bookmark create/change events under the active profile
+  folder.
 - **Closing propagates; deletion needs full agreement.** A close never
   deletes the bookmark immediately — it flips `s=closed` so the closure is an
   observable event other devices react to (closing their own copy and
@@ -199,10 +273,6 @@ open/close-time blob; that's gone — no migration, see Known limitations).
   note above). This is architectural — there is no shared clock — so treat a
   badly-skewed-clock edge case as a documented trade-off, not a bug. Keep
   clocks reasonably in sync (NTP is fine).
-- Navigating a tab to a new URL (without closing the tab) is not treated as
-  closing the old URL — only the literal `tabs.onRemoved` event does, per the
-  safety rule above. This is an intentional, accepted gap, not a bug to fix
-  by broadening where `closeMyGoneTabs` is called from.
 - No migration from pre-3.0 versions. An upgrading user's old
   `SyncMyTabs/<device>/…` tree is left in place, unused. Don't add migration
   code for it without the user asking — this was a deliberate decision.

@@ -63,7 +63,10 @@ never a conflicting write to the same bookmark.
   the whole group of bookmarks for that URL is deleted for good.
   **Closing a whole window, or quitting the browser, never propagates** —
   only closing an individual tab does, so a shutdown never wipes the session
-  everywhere.
+  everywhere. **Navigating an open tab to a different address** counts as
+  closing the old URL and opening the new one — both propagate the same way.
+- Bookmarks update **immediately** on every genuine tab change (open, close,
+  navigate) — there's no need to wait for the periodic check.
 - **Cleanup (TTL).** If a device is uninstalled, or otherwise never comes back
   to agree "closed", its entries would otherwise linger forever. A configurable
   safety net (default on, 21 days) deletes any entry that hasn't been touched
@@ -182,8 +185,7 @@ SyncMyTabs' own initiative):
   misjudge which of two truly-concurrent actions was later. Keep clocks
   reasonably in sync (NTP is fine). Closing a whole window or quitting the
   browser deliberately never propagates (a safety choice so a shutdown never
-  wipes the session everywhere); a tab you navigate away from (without closing
-  its tab) is also not treated as closed.
+  wipes the session everywhere).
 - **No migration from pre-3.0 versions.** The bookmark tree shape changed
   (shared per-tab bookmarks instead of a snapshot folder per device). Upgrading
   starts fresh; any old `SyncMyTabs/<device>/…` data is left in place, unused —
@@ -196,16 +198,32 @@ SyncMyTabs' own initiative):
 | File | Role |
 |---|---|
 | `manifest.json` | Manifest V3 definition, permissions, entry points (Chrome service worker + Firefox background scripts) |
-| `background.js` | Background logic — all sync/save/restore |
+| `sync-core.js` | All the sync/reconcile logic, testable independently of a real browser (see Testing below) |
+| `background.js` | Thin wiring: real browser events → `sync-core.js` |
 | `popup.html` / `popup.js` | Toolbar popup UI |
 | `options.html` / `options.js` | Settings page UI |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page |
 | `browser-polyfill.min.js` | Mozilla's WebExtension polyfill (vendored) so `browser.*` works on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
+| `test/` | Test suite (see Testing below) |
 
 There is no build step — the repository *is* the unpacked extension. To hack on
 it, edit the files and hit **Reload** on the extension (`chrome://extensions` or
 `about:debugging` on Firefox).
+
+## Testing
+
+```bash
+npm test
+```
+
+The sync/reconcile logic (`sync-core.js`) is factored so it never calls
+`browser.*` directly — it takes an `env` object instead, which lets the exact
+same code run against a simulated multi-device environment
+(`test/sim-env.js`) in plain Node, no real browser needed. Tests spin up
+2-4 simulated devices sharing one profile, open/close/navigate tabs on them,
+and assert the mirror converges to the right state — see `CLAUDE.md` for how
+it's put together and how to add more.
 
 ## Releases & packaging
 
