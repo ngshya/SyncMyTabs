@@ -36,22 +36,38 @@
 // readProfileEntries, which only ever recognizes a folder that has its
 // own `_url` marker child — a "_groups" folder never does):
 //   SyncMyTabs/<profile>/_groups/<group title>/<one bookmark per rule>
-// A rule bookmark's title is its own "match" pattern (human-readable in
-// a plain bookmark manager); the actual rule data is packed into the
-// bookmark's url (buildGroupRuleUrl/parseGroupRuleUrl) — same
-// URLSearchParams-based encoding style as sync-core.js's device status
-// bookmarks. Group titles are the stable cross-device key (a browser's
-// own tabGroups id is local-only and meaningless on another device) —
-// an UNTITLED group has no such key and is deliberately unsupported
-// here, exactly as the original TabGroupsLeash documents for its own
-// "no reliable sync key" reason.
+// A rule bookmark's title is its own "pattern" (or, for an openUrl-only
+// rule, its openUrl — human-readable in a plain bookmark manager); the
+// actual rule data is packed into the bookmark's url
+// (buildGroupRuleUrl/parseGroupRuleUrl) — same URLSearchParams-based
+// encoding style as sync-core.js's device status bookmarks. Group
+// titles are the stable cross-device key (a browser's own tabGroups id
+// is local-only and meaningless on another device) — an UNTITLED group
+// has no such key and is deliberately unsupported here, exactly as the
+// original TabGroupsLeash documents for its own "no reliable sync key"
+// reason.
+//
+// A rule has just two fields: `pattern` (what a clicked link must match
+// to stay in-group — see resolvePatternForTab — AND, doubling as the
+// "which page is this rule for" check, what decides which rule covers
+// the tab's CURRENT page in the first place) and `openUrl` (the exact
+// URL the startup reconcile reopens if nothing matching is currently
+// open). The original TabGroupsLeash (and this module's own first
+// version) had a THIRD field, "match", separate from "pattern" —
+// letting a rule apply to a narrower or broader set of pages than the
+// links it leashes to. That split turned out to be a real footgun in
+// practice (a rule silently failing to resolve for a page because
+// "match" and "pattern" had drifted out of sync) with no correspondingly
+// strong use case, so it's gone: one field does both jobs. An
+// openUrl-only rule (no pattern at all) still works exactly as before —
+// it just never resolves for ANY tab (nothing to leash), existing purely
+// as a startup "make sure this exact URL is open somewhere" declaration.
 const GROUPS_ROOT_TITLE = "_groups";
 const GROUP_RULE_URL_BASE = "https://syncmytabs.local/group-rule";
 const DEFAULT_STARTUP_DELAY_SECONDS = 15;
 
-function buildGroupRuleUrl({ match, pattern, openUrl }) {
+function buildGroupRuleUrl({ pattern, openUrl }) {
   const params = new URLSearchParams();
-  if (match) params.set("m", match);
   if (pattern) params.set("p", pattern);
   if (openUrl) params.set("o", openUrl);
   return `${GROUP_RULE_URL_BASE}?${params.toString()}`;
@@ -62,11 +78,10 @@ function parseGroupRuleUrl(url) {
   try {
     const p = new URL(url).searchParams;
     const rule = {
-      match: p.get("m") || "",
       pattern: p.get("p") || "",
       openUrl: p.get("o") || "",
     };
-    if (!rule.match && !rule.pattern && !rule.openUrl) return null;
+    if (!rule.pattern && !rule.openUrl) return null;
     return rule;
   } catch (e) {
     return null;
@@ -97,9 +112,9 @@ function matchesPattern(url, pattern) {
   }
 }
 
-// Suggested "match" pattern for a specific page: domain + full path
-// (every path segment kept, query string and fragment dropped).
-function defaultMatchForUrl(url) {
+// Suggested pattern for a specific page: domain + full path (every path
+// segment kept, query string and fragment dropped).
+function defaultPatternForUrl(url) {
   try {
     const u = new URL(url);
     return `*://${u.hostname}${u.pathname}*`;
@@ -108,27 +123,39 @@ function defaultMatchForUrl(url) {
   }
 }
 
-// Finds the most specific rule (longest "match" wins) whose "match"
+// Finds the most specific rule (longest "pattern" wins) whose "pattern"
 // covers the given tab URL. `groupSettings` is the {rules: [...]} shape
-// readGroupSettings returns.
+// readGroupSettings returns. An openUrl-only rule (no pattern at all)
+// never participates here — see the file header comment.
 function findRuleForTabUrl(groupSettings, tabUrl) {
   if (!groupSettings || !Array.isArray(groupSettings.rules)) return null;
   let best = null;
   for (const rule of groupSettings.rules) {
-    if (rule.match && matchesPattern(tabUrl, rule.match)) {
-      if (!best || rule.match.length > best.match.length) best = rule;
+    if (rule.pattern && matchesPattern(tabUrl, rule.pattern)) {
+      if (!best || rule.pattern.length > best.pattern.length) best = rule;
     }
   }
   return best;
 }
 
 // The pattern clicked links in this tab must match, or null when no
-// rule covers this tab's current page yet (an unleashed tab), or the
-// matching rule has no "pattern" (an openUrl-only, presence-guarantee
-// rule) — callers should treat null as "leave it alone", not "block".
+// rule covers this tab's current page yet (an unleashed tab) — callers
+// should treat null as "leave it alone", not "block".
 function resolvePatternForTab(groupSettings, tabUrl) {
   const rule = findRuleForTabUrl(groupSettings, tabUrl);
-  return rule && rule.pattern ? rule.pattern : null;
+  return rule ? rule.pattern : null;
+}
+
+// Whether a tab's URL satisfies a rule for presence-checking purposes
+// (used by reconcileGroup's missing/duplicate detection, and the
+// closeUndeclaredTabs check): matches its pattern if it has one, else
+// falls back to an exact match against openUrl (an openUrl-only rule
+// has nothing else to check presence against).
+function tabSatisfiesRule(tabUrl, rule) {
+  if (!tabUrl || !rule) return false;
+  if (rule.pattern) return matchesPattern(tabUrl, rule.pattern);
+  if (rule.openUrl) return tabUrl === rule.openUrl;
+  return false;
 }
 
 // ------------------------------------------------------------
@@ -206,15 +233,14 @@ function createGroupsEngine(env, syncEngine) {
     return { rules };
   }
 
-  // Replaces a group's whole rule set. A rule needs at least a "match"
-  // to identify which page it applies to (same requirement as the
-  // original extension's own DOM-collection filter) — anything without
-  // one is dropped defensively. An empty (or now-empty) rule set deletes
-  // the group folder outright rather than leaving a ruleless orphan
-  // behind, mirroring the original's own "nothing left to identify it
+  // Replaces a group's whole rule set. A rule needs at least a "pattern"
+  // or an "openUrl" to mean anything — anything without either is
+  // dropped defensively. An empty (or now-empty) rule set deletes the
+  // group folder outright rather than leaving a ruleless orphan behind,
+  // mirroring the original extension's own "nothing left to identify it
   // by" cleanup.
   async function setGroupSettings(profileFolderId, title, rules) {
-    const clean = (rules || []).filter((r) => r && r.match);
+    const clean = (rules || []).filter((r) => r && (r.pattern || r.openUrl));
     if (clean.length === 0) {
       await deleteGroupSettings(profileFolderId, title);
       return;
@@ -231,7 +257,7 @@ function createGroupsEngine(env, syncEngine) {
       try {
         await env.bookmarks.create({
           parentId: folder.id,
-          title: rule.match,
+          title: rule.pattern || rule.openUrl,
           url: buildGroupRuleUrl(rule),
         });
       } catch (e) {}
@@ -328,6 +354,11 @@ function createGroupsEngine(env, syncEngine) {
     return v || DEFAULT_STARTUP_DELAY_SECONDS;
   }
 
+  async function pinGroupsToStartEnabled() {
+    const { groupsPinToStart } = await env.storage.local.get("groupsPinToStart");
+    return groupsPinToStart === true; // default OFF (repositioning tabs is surprising)
+  }
+
   // ---- link leashing ----
 
   // The pattern clicked links in `tab` must match, or null if this tab
@@ -344,6 +375,19 @@ function createGroupsEngine(env, syncEngine) {
     const profileFolderId = await activeProfileFolderId();
     const settings = await readGroupSettings(profileFolderId, group.title);
     return resolvePatternForTab(settings, tab.url);
+  }
+
+  // For link-leash-content.js's initial handshake: whether this tab is
+  // grouped/leashed at all, and its currently-resolved pattern (if any)
+  // — so the content script can decide SYNCHRONOUSLY, per click, whether
+  // to intercept at all, instead of an async round-trip on every click.
+  // See handleLinkClick's own comment on why a plain, matching click
+  // must NOT be intercepted.
+  async function getLeashInfoFor(tab) {
+    if (!(await isLeashEnabled())) return { grouped: false, pattern: null };
+    const grouped = !!env.tabGroups && isGrouped(tab);
+    const pattern = grouped ? await resolvePatternFor(tab) : null;
+    return { grouped, pattern };
   }
 
   async function fallbackOpen(href, tab, modifiers) {
@@ -423,29 +467,37 @@ function createGroupsEngine(env, syncEngine) {
     if (titles.length === 0) return;
 
     const closeUndeclared = await closeUndeclaredTabsEnabled();
+    const pinToStart = await pinGroupsToStartEnabled();
     let allGroups = [];
     try {
       allGroups = await env.tabGroups.query({});
     } catch (e) {}
 
+    // Groups pinned to the start stack in title order (getAllGroupTitles
+    // is already sorted) — each successive one gets the next index, so
+    // e.g. "Chats" then "Work" ends up [Chats][Work][...everything else],
+    // a stable, predictable order rather than fighting over index 0.
+    let nextPinIndex = 0;
     for (const title of titles) {
       const settings = await readGroupSettings(profileFolderId, title);
       const rules = settings.rules || [];
       if (rules.length === 0) continue; // nothing declared for this group
-      await reconcileGroup(title, rules, allGroups, closeUndeclared);
+      const pinIndex = pinToStart ? nextPinIndex++ : null;
+      await reconcileGroup(title, rules, allGroups, closeUndeclared, pinIndex);
     }
   }
 
-  async function reconcileGroup(title, rules, allGroups, closeUndeclared) {
+  async function reconcileGroup(title, rules, allGroups, closeUndeclared, pinIndex) {
     const targetGroup = allGroups.find((g) => g.title === title) || null;
     const openTabs = targetGroup ? await env.tabs.query({ groupId: targetGroup.id }) : [];
+    let groupIdForPin = targetGroup && targetGroup.id;
 
     const essentialRules = rules.filter((r) => r.openUrl);
     const missingRules = [];
     const idsToClose = [];
 
     for (const rule of essentialRules) {
-      const matchingTabs = openTabs.filter((t) => t.url && matchesPattern(t.url, rule.match));
+      const matchingTabs = openTabs.filter((t) => tabSatisfiesRule(t.url, rule));
       if (matchingTabs.length === 0) {
         missingRules.push(rule);
       } else if (matchingTabs.length > 1) {
@@ -457,10 +509,9 @@ function createGroupsEngine(env, syncEngine) {
     }
 
     if (closeUndeclared) {
-      const declaredMatches = rules.map((r) => r.match).filter(Boolean);
       for (const tab of openTabs) {
         if (idsToClose.includes(tab.id)) continue;
-        const isDeclared = tab.url && declaredMatches.some((m) => matchesPattern(tab.url, m));
+        const isDeclared = rules.some((r) => tabSatisfiesRule(tab.url, r));
         if (!isDeclared) idsToClose.push(tab.id);
       }
     }
@@ -471,47 +522,61 @@ function createGroupsEngine(env, syncEngine) {
       } catch (e) {}
     }
 
-    if (missingRules.length === 0) return;
+    if (missingRules.length > 0) {
+      let windowId = targetGroup && targetGroup.windowId;
+      if (windowId === undefined) {
+        try {
+          const w = await env.windows.getLastFocused({ windowTypes: ["normal"] });
+          windowId = w && w.id;
+        } catch (e) {}
+      }
+      if (windowId === undefined) {
+        try {
+          const created = await env.windows.create({});
+          windowId = created.id;
+        } catch (e) {
+          windowId = undefined;
+        }
+      }
 
-    let windowId = targetGroup && targetGroup.windowId;
-    if (windowId === undefined) {
-      try {
-        const w = await env.windows.getLastFocused({ windowTypes: ["normal"] });
-        windowId = w && w.id;
-      } catch (e) {}
-    }
-    if (windowId === undefined) {
-      try {
-        const created = await env.windows.create({});
-        windowId = created.id;
-      } catch (e) {
-        return;
+      if (windowId !== undefined) {
+        const newTabIds = [];
+        for (const rule of missingRules) {
+          try {
+            const created = await env.tabs.create({ url: rule.openUrl, windowId, active: false });
+            newTabIds.push(created.id);
+          } catch (e) {}
+        }
+
+        if (newTabIds.length > 0) {
+          if (targetGroup) {
+            try {
+              await env.tabs.group({ tabIds: newTabIds, groupId: targetGroup.id });
+            } catch (e) {}
+          } else {
+            // The group doesn't exist anywhere right now: recreate it
+            // from the tabs we just opened. Its color isn't stored, so
+            // the browser assigns a default one.
+            try {
+              const newGroupId = await env.tabs.group({
+                tabIds: newTabIds,
+                createProperties: { windowId },
+              });
+              await env.tabGroups.update(newGroupId, { title });
+              groupIdForPin = newGroupId;
+            } catch (e) {}
+          }
+        }
       }
     }
 
-    const newTabIds = [];
-    for (const rule of missingRules) {
+    // Pin to the start of its window's tab strip, if the preference is
+    // on — checked on EVERY reconcile (not just when something was
+    // reopened), so the group stays put even if the user's own browser
+    // drags it elsewhere between reconciles.
+    if (pinIndex !== null && groupIdForPin !== undefined && groupIdForPin !== null && env.tabGroups.move) {
       try {
-        const created = await env.tabs.create({ url: rule.openUrl, windowId, active: false });
-        newTabIds.push(created.id);
-      } catch (e) {}
-    }
-    if (newTabIds.length === 0) return;
-
-    if (targetGroup) {
-      try {
-        await env.tabs.group({ tabIds: newTabIds, groupId: targetGroup.id });
-      } catch (e) {}
-    } else {
-      // The group doesn't exist anywhere right now: recreate it from
-      // the tabs we just opened. Its color isn't stored, so the browser
-      // assigns a default one.
-      try {
-        const newGroupId = await env.tabs.group({
-          tabIds: newTabIds,
-          createProperties: { windowId },
-        });
-        await env.tabGroups.update(newGroupId, { title });
+        await env.tabGroups.move(groupIdForPin, { index: pinIndex });
       } catch (e) {}
     }
   }
@@ -533,7 +598,9 @@ function createGroupsEngine(env, syncEngine) {
     isLeashEnabled,
     closeUndeclaredTabsEnabled,
     groupsStartupDelaySeconds,
+    pinGroupsToStartEnabled,
     resolvePatternFor,
+    getLeashInfoFor,
     handleLinkClick,
     reconcileGroups,
     reconcileGroup,
@@ -548,9 +615,10 @@ if (typeof module !== "undefined" && module.exports) {
     DEFAULT_STARTUP_DELAY_SECONDS,
     globToRegExp,
     matchesPattern,
-    defaultMatchForUrl,
+    defaultPatternForUrl,
     findRuleForTabUrl,
     resolvePatternForTab,
+    tabSatisfiesRule,
     buildGroupRuleUrl,
     parseGroupRuleUrl,
     createGroupsEngine,

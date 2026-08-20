@@ -19,7 +19,7 @@ test("a link matching the tab's pattern navigates the SAME tab in place", async 
   const ga = groupsEngineFor(a);
 
   await ga.setGroupSettingsForActiveProfile("Work", [
-    { match: "*://example.com/*", pattern: "*://example.com/*" },
+    { pattern: "*://example.com/*" },
   ]);
   const tab = await a.openGroupedTab("https://example.com/a", "A", "Work");
 
@@ -36,7 +36,7 @@ test("a link NOT matching the tab's pattern always opens a fresh UNGROUPED tab",
   const ga = groupsEngineFor(a);
 
   await ga.setGroupSettingsForActiveProfile("Work", [
-    { match: "*://example.com/*", pattern: "*://example.com/*" },
+    { pattern: "*://example.com/*" },
   ]);
   const tab = await a.openGroupedTab("https://example.com/a", "A", "Work");
 
@@ -57,7 +57,7 @@ test("ctrl/cmd-click on a matching link opens alongside, in the SAME group", asy
   const ga = groupsEngineFor(a);
 
   await ga.setGroupSettingsForActiveProfile("Work", [
-    { match: "*://example.com/*", pattern: "*://example.com/*" },
+    { pattern: "*://example.com/*" },
   ]);
   const tab = await a.openGroupedTab("https://example.com/a", "A", "Work");
 
@@ -103,7 +103,7 @@ test("a group with no rule for the tab's current page falls back too", async () 
   const ga = groupsEngineFor(a);
   // "Work" group exists but has no rule covering example.com at all.
   await ga.setGroupSettingsForActiveProfile("Work", [
-    { match: "*://other.com/*", pattern: "*://other.com/*" },
+    { pattern: "*://other.com/*" },
   ]);
   const tab = await a.openGroupedTab("https://example.com/a", "A", "Work");
 
@@ -119,7 +119,7 @@ test("leashing disabled (groupsLeashEnabled=false) always falls back, even with 
   const ga = groupsEngineFor(a);
 
   await ga.setGroupSettingsForActiveProfile("Work", [
-    { match: "*://example.com/*", pattern: "*://example.com/*" },
+    { pattern: "*://example.com/*" },
   ]);
   const tab = await a.openGroupedTab("https://example.com/a", "A", "Work");
 
@@ -135,7 +135,7 @@ test("an openUrl-only rule (no pattern) leaves the tab unleashed", async () => {
   const ga = groupsEngineFor(a);
 
   await ga.setGroupSettingsForActiveProfile("Work", [
-    { match: "*://example.com/*", openUrl: "https://example.com/" },
+    { openUrl: "https://example.com/" },
   ]);
   const tab = await a.openGroupedTab("https://example.com/a", "A", "Work");
 
@@ -143,6 +143,49 @@ test("an openUrl-only rule (no pattern) leaves the tab unleashed", async () => {
   const tabs = await a.tabsApi.query();
   assert.equal(tabs.length, 1, "openUrl-only rule has no pattern to leash against");
   assert.equal(tabs[0].url, "https://outside.example/");
+});
+
+test("getLeashInfoFor reports grouped+pattern for a matching tab (for the content script's sync cache)", async () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const ga = groupsEngineFor(a);
+
+  await ga.setGroupSettingsForActiveProfile("Work", [{ pattern: "*://example.com/*" }]);
+  const tab = await a.openGroupedTab("https://example.com/a", "A", "Work");
+
+  assert.deepEqual(await ga.getLeashInfoFor(tab), {
+    grouped: true,
+    pattern: "*://example.com/*",
+  });
+});
+
+test("getLeashInfoFor reports grouped but no pattern when no rule covers the page", async () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const ga = groupsEngineFor(a);
+
+  const tab = await a.openGroupedTab("https://example.com/a", "A", "Work");
+  assert.deepEqual(await ga.getLeashInfoFor(tab), { grouped: true, pattern: null });
+});
+
+test("getLeashInfoFor reports not grouped for an ungrouped tab, without touching bookmarks", async () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const ga = groupsEngineFor(a);
+
+  const tab = await a.openTab("https://example.com/a");
+  assert.deepEqual(await ga.getLeashInfoFor(tab), { grouped: false, pattern: null });
+});
+
+test("getLeashInfoFor respects the leashing on/off switch", async () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A", storage: { groupsLeashEnabled: false } });
+  const ga = groupsEngineFor(a);
+
+  await ga.setGroupSettingsForActiveProfile("Work", [{ pattern: "*://example.com/*" }]);
+  const tab = await a.openGroupedTab("https://example.com/a", "A", "Work");
+
+  assert.deepEqual(await ga.getLeashInfoFor(tab), { grouped: false, pattern: null });
 });
 
 test("on Firefox (no env.tabGroups at all) every click is a plain fallback, no crash", async () => {

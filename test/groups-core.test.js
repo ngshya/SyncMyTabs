@@ -6,9 +6,10 @@ const assert = require("node:assert/strict");
 const {
   globToRegExp,
   matchesPattern,
-  defaultMatchForUrl,
+  defaultPatternForUrl,
   findRuleForTabUrl,
   resolvePatternForTab,
+  tabSatisfiesRule,
   buildGroupRuleUrl,
   parseGroupRuleUrl,
   GROUP_RULE_URL_BASE,
@@ -32,56 +33,74 @@ test("matchesPattern never throws on a malformed regex: pattern", () => {
   assert.equal(matchesPattern("https://example.com/a", "regex:("), false);
 });
 
-test("defaultMatchForUrl keeps the full path, drops query and fragment", () => {
+test("defaultPatternForUrl keeps the full path, drops query and fragment", () => {
   assert.equal(
-    defaultMatchForUrl("https://example.com/docs/intro?x=1#section"),
+    defaultPatternForUrl("https://example.com/docs/intro?x=1#section"),
     "*://example.com/docs/intro*"
   );
-  assert.equal(defaultMatchForUrl("not a url"), "*");
+  assert.equal(defaultPatternForUrl("not a url"), "*");
 });
 
-test("findRuleForTabUrl picks the most specific (longest match) rule", () => {
+test("findRuleForTabUrl picks the most specific (longest pattern) rule", () => {
   const settings = {
     rules: [
-      { match: "*://example.com/*", pattern: "a" },
-      { match: "*://example.com/docs/*", pattern: "b" },
+      { pattern: "*://example.com/*" },
+      { pattern: "*://example.com/docs/*" },
     ],
   };
   const rule = findRuleForTabUrl(settings, "https://example.com/docs/intro");
-  assert.equal(rule.pattern, "b");
+  assert.equal(rule.pattern, "*://example.com/docs/*");
 });
 
 test("findRuleForTabUrl returns null when nothing matches, or settings are empty", () => {
   assert.equal(findRuleForTabUrl({ rules: [] }, "https://example.com/"), null);
   assert.equal(findRuleForTabUrl(null, "https://example.com/"), null);
   assert.equal(
-    findRuleForTabUrl({ rules: [{ match: "*://other.com/*", pattern: "a" }] }, "https://example.com/"),
+    findRuleForTabUrl({ rules: [{ pattern: "*://other.com/*" }] }, "https://example.com/"),
     null
   );
 });
 
-test("resolvePatternForTab returns null for an openUrl-only rule (no pattern = unleashed)", () => {
-  const settings = { rules: [{ match: "*://example.com/*", openUrl: "https://example.com/" }] };
-  assert.equal(resolvePatternForTab(settings, "https://example.com/"), null);
+test("findRuleForTabUrl never picks an openUrl-only rule (no pattern to match against)", () => {
+  const settings = { rules: [{ openUrl: "https://example.com/" }] };
+  assert.equal(findRuleForTabUrl(settings, "https://example.com/"), null);
+});
+
+test("resolvePatternForTab returns null when no rule covers the page", () => {
+  assert.equal(resolvePatternForTab({ rules: [] }, "https://example.com/"), null);
 });
 
 test("resolvePatternForTab returns the matching rule's pattern", () => {
-  const settings = { rules: [{ match: "*://example.com/*", pattern: "*://example.com/*" }] };
+  const settings = { rules: [{ pattern: "*://example.com/*" }] };
   assert.equal(resolvePatternForTab(settings, "https://example.com/"), "*://example.com/*");
 });
 
+test("tabSatisfiesRule uses pattern when present, falls back to an exact openUrl match", () => {
+  assert.equal(tabSatisfiesRule("https://example.com/a", { pattern: "*://example.com/*" }), true);
+  assert.equal(tabSatisfiesRule("https://other.com/a", { pattern: "*://example.com/*" }), false);
+  assert.equal(
+    tabSatisfiesRule("https://example.com/exact", { openUrl: "https://example.com/exact" }),
+    true
+  );
+  assert.equal(
+    tabSatisfiesRule("https://example.com/other", { openUrl: "https://example.com/exact" }),
+    false
+  );
+  assert.equal(tabSatisfiesRule("", { pattern: "*" }), false);
+  assert.equal(tabSatisfiesRule("https://example.com/", null), false);
+});
+
 test("buildGroupRuleUrl + parseGroupRuleUrl round-trip", () => {
-  const rule = { match: "*://example.com/*", pattern: "*://example.com/*", openUrl: "https://example.com/" };
+  const rule = { pattern: "*://example.com/*", openUrl: "https://example.com/" };
   const url = buildGroupRuleUrl(rule);
   assert.ok(url.startsWith(GROUP_RULE_URL_BASE));
   assert.deepEqual(parseGroupRuleUrl(url), rule);
 });
 
 test("buildGroupRuleUrl omits empty fields; parseGroupRuleUrl fills them back in as empty strings", () => {
-  const url = buildGroupRuleUrl({ match: "*://example.com/*" });
+  const url = buildGroupRuleUrl({ pattern: "*://example.com/*" });
   assert.deepEqual(parseGroupRuleUrl(url), {
-    match: "*://example.com/*",
-    pattern: "",
+    pattern: "*://example.com/*",
     openUrl: "",
   });
 });

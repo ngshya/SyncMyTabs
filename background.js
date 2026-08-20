@@ -231,13 +231,16 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // Answers link-leash-content.js's startup question so it only
-  // attaches its click listeners on a tab that's actually grouped —
-  // see link-leash-content.js.
-  if (message?.type === "AM_I_GROUPED") {
-    const tab = sender.tab;
-    const grouped = !!(tab && typeof tab.groupId === "number" && tab.groupId !== -1);
-    sendResponse({ grouped });
+  // Answers link-leash-content.js's handshake — whether this tab is
+  // grouped/leashed at all, and its currently-resolved pattern — so the
+  // content script can decide SYNCHRONOUSLY, per click, whether to
+  // intercept at all (a plain click on a link that already matches the
+  // pattern must be left alone, not routed through a hard tabs.update,
+  // or client-side-routed apps like Telegram Web get force-reloaded
+  // instead of navigating in place — see CLAUDE.md). Re-sent by the
+  // content script on every SPA-style URL change too, not just on load.
+  if (message?.type === "GROUP_LEASH_INFO" && sender.tab) {
+    groupsEngine.getLeashInfoFor(sender.tab).then((info) => sendResponse(info));
     return true;
   }
 
@@ -269,12 +272,13 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "GROUPS_GET_PREFS") {
     (async () => {
-      const [leashEnabled, closeUndeclared, startupDelaySeconds] = await Promise.all([
+      const [leashEnabled, closeUndeclared, startupDelaySeconds, pinToStart] = await Promise.all([
         groupsEngine.isLeashEnabled(),
         groupsEngine.closeUndeclaredTabsEnabled(),
         groupsEngine.groupsStartupDelaySeconds(),
+        groupsEngine.pinGroupsToStartEnabled(),
       ]);
-      sendResponse({ leashEnabled, closeUndeclared, startupDelaySeconds });
+      sendResponse({ leashEnabled, closeUndeclared, startupDelaySeconds, pinToStart });
     })();
     return true;
   }
@@ -289,6 +293,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.startupDelaySeconds !== undefined) {
         updates.groupsStartupDelaySeconds = message.startupDelaySeconds;
       }
+      if (message.pinToStart !== undefined) updates.groupsPinToStart = message.pinToStart;
       await browser.storage.local.set(updates);
       sendResponse({ ok: true });
     })();
