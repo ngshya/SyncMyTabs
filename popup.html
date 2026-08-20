@@ -52,11 +52,6 @@
       text-transform: uppercase;
       letter-spacing: 0.03em;
     }
-    .button-row {
-      display: flex;
-      gap: 8px;
-    }
-    .button-row button { margin-top: 6px; }
     .secondary { background: #444; }
     .secondary:hover { background: #333; }
     .inline-row {
@@ -149,15 +144,6 @@
   </div>
 
   <button id="syncNow">Sync now</button>
-
-  <div class="section-title">Restore from device</div>
-  <select id="restoreProfileSelect"></select>
-  <select id="deviceSelect"></select>
-  <div class="button-row">
-    <button id="restoreReplace">Replace</button>
-    <button id="restoreAdd" class="secondary">Add</button>
-  </div>
-  <div id="restoreStatus" style="font-size: 12px; margin-top: 6px; color: #16a34a;"></div>
 
   <div class="version" id="version"></div>
 

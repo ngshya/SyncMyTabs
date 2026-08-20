@@ -229,14 +229,6 @@ open/close-time blob; that's gone — no migration, see Known limitations).
   threshold, regardless of state or which device wrote it — sanctioned because
   an entry that stale is, by construction, either genuinely abandoned or would
   have been heartbeat-refreshed by its own device if it weren't.
-- **Manual restore exemption.** `MANUAL_RESTORE` for a profile that ISN'T the
-  active one opens tabs with `exemptFromTracking: true` (`performAdd` /
-  `performReplace`), which adds their tab ids to the in-memory
-  `manualPeekTabIds` set. `snapshotOwnTabs` excludes these everywhere, so a
-  one-off peek at another profile's tabs never gets registered as this
-  device's own entry under the (wrong, active) profile. Restoring the
-  *active* profile doesn't need the exemption — that's the correct bucket
-  anyway, so the ordinary reconcile picks it up naturally.
 - **Parent folder id** is resolved at runtime from the bookmark tree
   (`getRootParentId`), cached, with a fallback to Chrome/Brave's `"2"`. Do not
   hardcode `"2"` in new code — go through the resolver so Firefox support stays
@@ -253,8 +245,7 @@ open/close-time blob; that's gone — no migration, see Known limitations).
   paused, nothing touches bookmarks in either direction. The toolbar icon
   swaps to the `icons/icon*-off.png` set plus an "OFF" badge via
   `updateActionIcon`, driven off `chrome.storage.onChanged` so the popup
-  toggle is the single source of truth. Manual restore stays available (it's
-  an explicit user action) — it's not gated on `syncEnabled`.
+  toggle is the single source of truth.
 - **No pinned tabs / tab groups.** Dropped in the v3 redesign to keep the
   per-tab-bookmark schema simple. Don't reintroduce them without discussion.
 - **Self-healing.** Third-party sync tools sometimes recreate rather than

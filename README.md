@@ -77,11 +77,6 @@ never a conflicting write to the same bookmark.
   placeholders that don't hit the network until you actually view each one
   (each points at a local page that navigates to the real URL on first view),
   so a large incoming session costs almost nothing until you look at it.
-- **Manual restore.** The popup's **Restore from device** picks any
-  profile/device pair and opens its currently-open tabs on demand, via
-  **Replace** or **Add** — handy to seed a new device, or to just peek at
-  another profile's tabs without switching to it (peeked tabs are never
-  registered as this device's own, so they don't get mirrored elsewhere).
 - **Self-healing.** Some third-party sync tools *recreate* bookmarks instead of
   updating them, producing duplicate profile folders (or duplicate root
   folders). SyncMyTabs detects these and merges them, so the tree stays clean
@@ -123,13 +118,11 @@ Then, on either browser:
 - **Synchronization on/off** — a switch that **pauses sync in both directions**:
   while off, this device neither pushes its own tab changes nor reacts to other
   devices'. The toolbar icon changes to a greyed-out "paused" icon (with an
-  **OFF** badge) so the state is obvious. Manual **Restore from device** still
-  works. Sync resumes exactly where it left off when you switch it back on.
+  **OFF** badge) so the state is obvious. Sync resumes exactly where it left
+  off when you switch it back on.
 - See this device's name, check interval, and the last mirror activity.
 - Switch the **active profile** and immediately sync under it.
 - **Sync now** — force an immediate check in both directions.
-- **Restore from device** — pick any profile, then any device that currently
-  has tabs open under it, and open them via **Replace** or **Add**.
 
 **Settings** (options page):
 

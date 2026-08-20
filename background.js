@@ -20,9 +20,7 @@
 //   deletes stale entries outright (e.g. a device that was uninstalled
 //   and will never come back to agree "closed").
 // - No more notifications / manual Add-Replace flow: this is always a
-//   live two-way mirror for the active profile. A manual "restore from
-//   device" action still exists in the popup for peeking at another
-//   profile's currently-open tabs on demand.
+//   live two-way mirror for the active profile.
 //
 // This file is deliberately thin: all the actual sync/reconcile logic
 // (and the "when X happens, do Y" decisions — e.g. which tab events
@@ -45,15 +43,24 @@ if (typeof importScripts === "function") {
 }
 
 const engine = createSyncEngine(browser);
-const DEFAULT_PROFILE = engine.DEFAULT_PROFILE;
 
-const DEFAULT_INTERVAL_MINUTES = 1;
+// NOTE: sync-core.js is loaded into this SAME script via importScripts
+// (Chrome) / sequential <script> tags (Firefox) — both share ONE
+// top-level `let`/`const` lexical scope, so declaring a top-level
+// const/let here with the SAME NAME as one of sync-core.js's own
+// top-level bindings (e.g. its internal DEFAULT_PROFILE,
+// DEFAULT_INTERVAL_MINUTES) throws a SyntaxError ("already been
+// declared") that silently prevents this ENTIRE script from running —
+// no listeners get registered at all. Always read such values off
+// `engine.*` instead of re-declaring a same-named local, and give any
+// background.js-only constant a name that can't collide.
+const FALLBACK_INTERVAL_MINUTES = 1;
 
 async function ensureAlarm() {
   const { syncIntervalMinutes } = await browser.storage.local.get(
     "syncIntervalMinutes"
   );
-  const period = syncIntervalMinutes || DEFAULT_INTERVAL_MINUTES;
+  const period = syncIntervalMinutes || FALLBACK_INTERVAL_MINUTES;
   browser.alarms.create("saveTabsAlarm", { periodInMinutes: period });
 }
 
@@ -88,8 +95,8 @@ browser.runtime.onInstalled.addListener(async () => {
   ]);
   if (!profiles || profiles.length === 0) {
     await browser.storage.local.set({
-      profiles: [DEFAULT_PROFILE],
-      activeProfile: DEFAULT_PROFILE,
+      profiles: [engine.DEFAULT_PROFILE],
+      activeProfile: engine.DEFAULT_PROFILE,
     });
   }
   if (!deviceName) {
@@ -153,37 +160,6 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message?.type === "GET_DEVICES_FOR_PROFILE") {
-    engine.listDevicesForProfile(message.profile).then((devices) =>
-      sendResponse({ devices })
-    );
-    return true;
-  }
-
-  if (message?.type === "MANUAL_RESTORE") {
-    (async () => {
-      const { device, profile, mode } = message;
-      const resolvedProfile = profile || DEFAULT_PROFILE;
-      const entries = await engine.getOpenEntriesForDeviceProfile(
-        device,
-        resolvedProfile
-      );
-      if (entries.length === 0) {
-        sendResponse({ ok: false, reason: "no-tabs" });
-        return;
-      }
-      const activeProfile = await engine.getActiveProfile();
-      const opts = { exemptFromTracking: resolvedProfile !== activeProfile };
-      if (mode === "replace") {
-        await engine.performReplace(entries, opts);
-      } else {
-        await engine.performAdd(entries, opts);
-      }
-      sendResponse({ ok: true });
-    })();
-    return true;
-  }
-
   if (message?.type === "SWITCH_PROFILE_AND_SAVE") {
     (async () => {
       await engine.handleSwitchProfileAndSave();
@@ -195,7 +171,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "ADD_PROFILE") {
     (async () => {
       const { profiles } = await browser.storage.local.get("profiles");
-      const list = profiles && profiles.length ? profiles : [DEFAULT_PROFILE];
+      const list = profiles && profiles.length ? profiles : [engine.DEFAULT_PROFILE];
       const name = message.name.trim();
       const exists = list.some((p) => p.toLowerCase() === name.toLowerCase());
       if (!exists) {
