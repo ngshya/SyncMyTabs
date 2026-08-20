@@ -115,29 +115,45 @@ open/close-time blob; that's gone — no migration, see Known limitations).
   slow to hear about a remote close could out-race it just by refreshing its
   own "still open" timestamp on a schedule. Keep them separate if you touch
   this.
-- **SAFETY RULE: closes are detected in exactly one place.**
-  `closeMyGoneTabs` (which flips this device's own entries open→closed) is
-  called **only** from `browser.tabs.onRemoved` (guarded against
-  `isWindowClosing`). It is deliberately never called from the alarm,
-  `onStartup`, or a bookmark-change reaction, because those rely on comparing
-  tracked-open entries against a `browser.tabs.query()` snapshot that isn't
-  guaranteed complete at those moments — most notably right after startup,
-  before session restore has repopulated windows. Treating that gap as "the
-  user closed everything" would propagate a close for the entire session
-  just because the browser started up slowly. Opening/mirroring
-  (`reconcileMyOpenEntries`, `reconcileMirror`), by contrast, is always safe
-  to run broadly — worst case a tab is registered a little late, which
-  self-heals on the next trigger, never destructive. Preserve this asymmetry
-  if you touch the reconcile pipeline.
+- **SAFETY RULE: closes are only ever detected from a live, specific-tab
+  event.** `closeMyGoneTabs` (which flips this device's own entries
+  open→closed) is called **only** from `browser.tabs.onRemoved` (guarded
+  against `isWindowClosing`) and from `browser.tabs.onUpdated` once a
+  navigation completes — both are genuine, real-time signals about ONE
+  particular tab, reported while the browser is definitely running
+  normally. Calling it on `onUpdated(complete)` too is what makes
+  navigating an open tab to a different URL equivalent to closing the old
+  URL and opening the new one, instead of a silent in-place swap. It is
+  deliberately never called from the alarm, `onStartup`, or a
+  bookmark-change reaction, because those aren't tied to any one tab's
+  event — they just compare tracked-open entries against a whole
+  `browser.tabs.query()` snapshot that isn't guaranteed complete at those
+  moments — most notably right after startup, before session restore has
+  repopulated windows. Treating that gap as "the user closed everything"
+  would propagate a close for the entire session just because the browser
+  started up slowly. Opening/mirroring (`reconcileMyOpenEntries`,
+  `reconcileMirror`), by contrast, is always safe to run broadly — worst
+  case a tab is registered a little late, which self-heals on the next
+  trigger, never destructive. Preserve this asymmetry if you touch the
+  reconcile pipeline.
+- **`snapshotOwnTabs` skips tabs still loading** (`status !== "complete"`).
+  A tab's url/pendingUrl can pass through transient values while
+  navigating (a redirect chain, for instance); registering one of those
+  as "open" would create a permanent phantom entry nothing ever closes,
+  since the tab itself never goes away — it just finishes loading. This
+  is the same guard the `tabs.onUpdated` listener already applies to
+  itself; `snapshotOwnTabs` extends it to the alarm and bookmark-event
+  triggers too, which aren't gated on any one tab's load state.
 - **The reconcile pipeline** (`runReconcile`, invoked through
   `scheduleReconcile` which serializes/coalesces concurrent triggers — never
   call `runReconcile` directly): `closeMyGoneTabs` (only if `checkClosed`) →
   `reconcileMyOpenEntries` → `reconcileMirror` → `reconcileMyOpenEntries`
   again (so this device's own entries reflect whatever the mirror pass just
-  opened/closed locally). Triggered from `tabs.onRemoved` (`checkClosed:
-  true`), `tabs.onUpdated` on navigation complete (open-detection only), the
-  alarm, `onStartup`, and reactions to bookmark create/change events under
-  the active profile folder.
+  opened/closed locally). Triggered with `checkClosed: true` from
+  `tabs.onRemoved` and `tabs.onUpdated` on navigation complete (see the
+  safety rule above), and without it from the alarm, `onStartup`, and
+  reactions to bookmark create/change events under the active profile
+  folder.
 - **Closing propagates; deletion needs full agreement.** A close never
   deletes the bookmark immediately — it flips `s=closed` so the closure is an
   observable event other devices react to (closing their own copy and
@@ -199,10 +215,6 @@ open/close-time blob; that's gone — no migration, see Known limitations).
   note above). This is architectural — there is no shared clock — so treat a
   badly-skewed-clock edge case as a documented trade-off, not a bug. Keep
   clocks reasonably in sync (NTP is fine).
-- Navigating a tab to a new URL (without closing the tab) is not treated as
-  closing the old URL — only the literal `tabs.onRemoved` event does, per the
-  safety rule above. This is an intentional, accepted gap, not a bug to fix
-  by broadening where `closeMyGoneTabs` is called from.
 - No migration from pre-3.0 versions. An upgrading user's old
   `SyncMyTabs/<device>/…` tree is left in place, unused. Don't add migration
   code for it without the user asking — this was a deliberate decision.

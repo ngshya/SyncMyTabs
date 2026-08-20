@@ -251,12 +251,24 @@ const manualPeekTabIds = new Set();
 // ids show each URL (placeholders resolve to their real target via
 // realUrlOfTab, and still count as "open" — a placeholder is still a
 // tab this device has, even before the user has looked at it).
+//
+// Tabs still mid-navigation (status !== "complete") are excluded
+// entirely. A tab's url/pendingUrl can pass through one or more
+// transient values while loading (a redirect chain, for instance) —
+// registering one of those as "open" would create a permanent phantom
+// entry for a URL nothing actually displays once the navigation
+// settles (nothing would ever close it, since the tab itself never
+// goes away, it just finishes loading). Waiting for "complete" is the
+// same guard tabs.onUpdated's own listener already applies; this
+// extends it to the other reconcile triggers (alarm, bookmark events)
+// that aren't gated on any one tab's load state.
 async function snapshotOwnTabs() {
   const urls = new Set();
   const titleByUrl = new Map();
   const tabIdsByUrl = new Map();
   for (const t of await browser.tabs.query({})) {
     if (manualPeekTabIds.has(t.id)) continue;
+    if (t.status && t.status !== "complete") continue;
     const real = realUrlOfTab(t);
     if (!isHttpUrl(real)) continue;
     urls.add(real);
@@ -323,12 +335,17 @@ async function heartbeatIntervalMs() {
 // SAFETY RULE (do not weaken this without a lot of thought): a device
 // only ever flips one of ITS OWN entries from open -> closed inside
 // closeMyGoneTabs, and closeMyGoneTabs is only ever called in reaction
-// to the real, individual browser.tabs.onRemoved event (guarded against
-// isWindowClosing). It is deliberately NEVER called from the alarm,
-// startup, or a bookmark-change reaction, because those all compare
-// "what's tracked as open" against a live browser.tabs.query() snapshot
-// that ISN'T guaranteed to be complete at those moments — most notably
-// right after startup, before session restore has finished repopulating
+// to a real, specific, live tab event for THIS device — tabs.onRemoved
+// (guarded against isWindowClosing) or tabs.onUpdated once a navigation
+// completes (so navigating a tab to a new URL, without closing the tab,
+// is treated as closing the old URL and opening the new one — both are
+// genuine local state changes reported by the browser while it's
+// definitely running normally). It is deliberately NEVER called from
+// the alarm, startup, or a bookmark-change reaction, because those
+// aren't tied to any one tab's event — they just compare "what's
+// tracked as open" against a live browser.tabs.query() snapshot that
+// ISN'T guaranteed to be complete at those moments — most notably right
+// after startup, before session restore has finished repopulating
 // windows. Treating that gap as "the user closed everything" would
 // tombstone (and propagate-close) a device's entire session just
 // because it started up slowly. Opening/mirroring, by contrast, is
@@ -423,7 +440,7 @@ async function reconcileMyOpenEntries(profileFolderId, deviceName) {
 
 // Flips THIS device's own entries to "closed" for URLs it had tracked
 // as open but no longer has live. ONLY ever called from tabs.onRemoved
-// — see the safety rule above.
+// or tabs.onUpdated(complete) — see the safety rule above.
 async function closeMyGoneTabs(profileFolderId, deviceName) {
   const children = await browser.bookmarks.getChildren(profileFolderId);
   const { urls: current } = await snapshotOwnTabs();
@@ -756,18 +773,24 @@ browser.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// The only place a close is ever detected — see the safety rule above.
+// One of the two places a close is ever detected — see the safety rule
+// above.
 browser.tabs.onRemoved.addListener((tabId, removeInfo) => {
   manualPeekTabIds.delete(tabId);
   if (removeInfo && removeInfo.isWindowClosing) return; // shutdown/window close
   scheduleReconcile({ checkClosed: true });
 });
 
-// New/updated tabs: open-detection only (never closes anything), so
-// it's safe to run on every completed navigation.
+// The other place a close is ever detected — see the safety rule above.
+// A completed navigation both registers the tab's new URL as open and
+// checks for gone URLs, so navigating an open tab to a different
+// address is treated as closing the old one and opening the new one —
+// not just a silent in-place update. Safe to run on every completed
+// navigation: this fires per specific tab while the browser is
+// definitely running normally, never during a startup/restore race.
 browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status !== "complete") return;
-  scheduleReconcile();
+  scheduleReconcile({ checkClosed: true });
 });
 
 function isTabEntryBookmark(url) {
