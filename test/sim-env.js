@@ -147,7 +147,7 @@ class SimTabsApi {
     return Array.from(this.tabs.values()).map((t) => ({ ...t }));
   }
 
-  async create({ url, title, active, windowId, status, groupId }) {
+  async create({ url, title, active, windowId, status, groupId, pinned }) {
     const id = nextId();
     const tab = {
       id,
@@ -158,6 +158,7 @@ class SimTabsApi {
       active: !!active,
       windowId: windowId || "1",
       groupId: groupId === undefined ? -1 : groupId,
+      pinned: !!pinned,
     };
     this.tabs.set(id, tab);
     return { ...tab };

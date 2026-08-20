@@ -642,6 +642,50 @@ function createSyncEngine(env) {
     }
   }
 
+  // Closes this device's own EXTRA local tabs that share the exact same
+  // real URL, keeping the leftmost (lowest tab index) — same convention
+  // as groups-core.js's own duplicate-tab handling. Opt-in
+  // (`closeDuplicateTabs`, default OFF): closing a tab is destructive,
+  // and a user may have two tabs on the same URL on purpose (comparing
+  // two states of a page, for instance) — never assume that's a mistake
+  // unless explicitly told to.
+  //
+  // Scoped to `urls` (pinned/grouped tabs excluded), matching every
+  // other sync-tracked check. Safe to run from any trigger: unlike
+  // closeMyGoneTabs, this never infers anything from a tab's ABSENCE —
+  // it only acts on tabs it can directly, completely observe as
+  // currently open and genuinely duplicated (status "complete", so a
+  // tab still mid-restore is never miscounted either way).
+  async function closeMyDuplicateTabs() {
+    const { closeDuplicateTabs } = await env.storage.local.get(
+      "closeDuplicateTabs"
+    );
+    if (!closeDuplicateTabs) return;
+
+    const byUrl = new Map(); // real url -> tab[]
+    for (const t of await env.tabs.query({})) {
+      if (t.status && t.status !== "complete") continue;
+      const real = realUrlOfTab(t);
+      if (!isHttpUrl(real)) continue;
+      if (t.pinned || isInTabGroup(t)) continue; // outside sync tracking entirely
+      if (!byUrl.has(real)) byUrl.set(real, []);
+      byUrl.get(real).push(t);
+    }
+
+    const idsToClose = [];
+    for (const tabs of byUrl.values()) {
+      if (tabs.length <= 1) continue;
+      tabs.sort((a, b) => a.index - b.index);
+      idsToClose.push(...tabs.slice(1).map((t) => t.id));
+    }
+
+    if (idsToClose.length > 0) {
+      try {
+        await env.tabs.remove(idsToClose);
+      } catch (e) {}
+    }
+  }
+
   async function runReconcile({ checkClosed } = {}) {
     if (!(await isSyncEnabled())) return;
     const { deviceName } = await env.storage.local.get("deviceName");
@@ -786,6 +830,7 @@ function createSyncEngine(env) {
     await scheduleReconcile();
     const profile = await getActiveProfile();
     await cleanupProfileFolder(profile);
+    await closeMyDuplicateTabs();
   }
 
   // No checkClosed here: session restore may still be repopulating
@@ -802,6 +847,7 @@ function createSyncEngine(env) {
     await scheduleReconcile({ checkClosed: true });
     const profile = await getActiveProfile();
     await cleanupProfileFolder(profile);
+    await closeMyDuplicateTabs();
   }
 
   async function handleSwitchProfileAndSave() {
@@ -828,6 +874,7 @@ function createSyncEngine(env) {
     closeMyGoneTabs,
     reconcileMirror,
     cleanupProfileFolder,
+    closeMyDuplicateTabs,
     runReconcile,
     scheduleReconcile,
     openRestoredLazily,

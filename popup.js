@@ -35,6 +35,7 @@ const intervalInput = document.getElementById("intervalMinutes");
 const lazyInput = document.getElementById("openRestoredLazy");
 const ttlEnabledInput = document.getElementById("ttlEnabled");
 const ttlDaysInput = document.getElementById("ttlDays");
+const closeDuplicateTabsInput = document.getElementById("closeDuplicateTabs");
 
 async function loadSettings() {
   const {
@@ -43,6 +44,7 @@ async function loadSettings() {
     openRestoredLazy,
     ttlEnabled,
     ttlDays,
+    closeDuplicateTabs,
     lastActivityTimestamp,
   } = await browser.storage.local.get([
     "deviceName",
@@ -50,6 +52,7 @@ async function loadSettings() {
     "openRestoredLazy",
     "ttlEnabled",
     "ttlDays",
+    "closeDuplicateTabs",
     "lastActivityTimestamp",
   ]);
 
@@ -58,6 +61,7 @@ async function loadSettings() {
   lazyInput.checked = openRestoredLazy !== false; // default ON
   ttlEnabledInput.checked = ttlEnabled !== false; // default ON
   ttlDaysInput.value = ttlDays || 14;
+  closeDuplicateTabsInput.checked = closeDuplicateTabs === true; // default OFF
   document.getElementById("lastActivity").textContent = lastActivityTimestamp
     ? new Date(lastActivityTimestamp).toLocaleString()
     : "none";
@@ -102,6 +106,11 @@ ttlDaysInput.addEventListener("change", async () => {
     return;
   }
   await browser.storage.local.set({ ttlDays: days });
+  flashStatus("Saved ✓");
+});
+
+closeDuplicateTabsInput.addEventListener("change", async () => {
+  await browser.storage.local.set({ closeDuplicateTabs: closeDuplicateTabsInput.checked });
   flashStatus("Saved ✓");
 });
 

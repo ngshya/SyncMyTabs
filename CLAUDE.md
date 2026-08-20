@@ -323,6 +323,26 @@ limitations).
   "open" entry hide forever behind any other device's still-fresh heartbeat
   in the same folder, producing a permanent ghost-open marker that new
   devices keep mirroring in. Don't regress to a folder-level TTL check.
+- **`closeMyDuplicateTabs`** (`closeDuplicateTabs` in storage, default
+  **OFF** — closing a tab is destructive) closes this device's own EXTRA
+  local tabs sharing the exact same real URL, keeping the leftmost — same
+  "keep the leftmost, close the rest" convention as `groups-core.js`'s own
+  duplicate-tab handling. Exists because the two dedup checks that
+  normally prevent a *mirrored* URL from ever duplicating a tab
+  (`reconcileMirror`'s `!allUrls.has(url)` check and `performAdd`'s own
+  second check right before opening) can't do anything about a genuinely
+  separate duplicate the user (or a very narrow timing race around
+  those two checks) created directly — this is a periodic backstop for
+  that, not a replacement for them. Scoped to `urls` (pinned/grouped tabs
+  excluded, same as everywhere else) and only ever counts tabs with
+  `status === "complete"`, so it never misjudges a still-loading tab
+  either way. Wired into the alarm and `handleSyncNow` only, deliberately
+  NOT `handleStartup` — closing a live tab this device didn't ask this
+  device's user to close stays that one notch more conservative right
+  after a browser launch, even though nothing here actually infers
+  anything from a tab's absence (see the SAFETY RULE above; this is a
+  different, always-safe-to-observe kind of check, the caution is just
+  about being trigger-happy with `tabs.remove` immediately on launch).
 - **Parent folder id** is resolved at runtime from the bookmark tree
   (`getRootParentId`), cached, with a fallback to Chrome/Brave's `"2"`. Do not
   hardcode `"2"` in new code — go through the resolver so Firefox support stays
