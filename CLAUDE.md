@@ -30,9 +30,8 @@ Firefox.** Keep this in mind in every change:
   `webextension-polyfill` (or an equivalent shim) — don't reintroduce raw
   `chrome.*` promise calls that only work on Chrome.
 - The manifest carries both backgrounds (`service_worker` for Chrome, `scripts`
-  for Firefox) and `options_ui`; `browser_specific_settings.gecko` pins the
-  Firefox id / min version. When you touch the manifest, keep both browsers
-  loadable.
+  for Firefox); `browser_specific_settings.gecko` pins the Firefox id / min
+  version. When you touch the manifest, keep both browsers loadable.
 - There is no automated cross-browser test here — verify manually in **both**
   Chrome (`chrome://extensions` → Load unpacked) and Firefox
   (`about:debugging` → Load Temporary Add-on).
@@ -54,11 +53,10 @@ Firefox.** Keep this in mind in every change:
 
 | File | Role |
 |---|---|
-| `manifest.json` | Manifest V3, permissions, entry points, **version**; dual background (Chrome `service_worker` + Firefox `scripts`), `options_ui`, `browser_specific_settings.gecko` |
+| `manifest.json` | Manifest V3, permissions, entry points, **version**; dual background (Chrome `service_worker` + Firefox `scripts`), `browser_specific_settings.gecko` |
 | `sync-core.js` | **All the sync/reconcile logic**, factored out of `background.js` and parameterized over an `env` (bookmarks/tabs/windows/storage/runtime) instead of calling `browser.*` directly — see "Testing" below. Plain script, no import/export syntax (loaded via `importScripts`/`background.scripts` like the polyfill); `module.exports` at the bottom is a Node-only no-op elsewhere. |
 | `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s `engine.handle*()` functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
-| `popup.html` / `popup.js` | Toolbar popup UI |
-| `options.html` / `options.js` | Settings page UI |
+| `popup.html` / `popup.js` | The **only** UI — toolbar popup holding status and all settings (device name, profiles, interval, lazy restore, TTL). No separate options page; `browser.runtime.onInstalled` opens `popup.html` as a plain tab for first-run setup, since popups can't be opened programmatically. |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page (loads the real URL only when the tab is first viewed) |
 | `browser-polyfill.min.js` | Vendored Mozilla WebExtension polyfill so `browser.*` is promise-based on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
@@ -137,14 +135,14 @@ that violates either should make one fail).
    `sync-core.js`, not `background.js` — see "Testing" above.
 3. **Syntax-check** any JS you touched:
    ```bash
-   node --check background.js && node --check sync-core.js && node --check popup.js && node --check options.js
+   node --check background.js && node --check sync-core.js && node --check popup.js
    ```
 4. **Run the test suite** (`npm test`) — see "Testing" above. Add/update
    tests for any reconcile-logic change.
 5. **Manually verify** in the browser when behavior changes: load the folder via
    `chrome://extensions` → *Load unpacked*, then hit **Reload** on the extension
    after each change. The test suite covers the reconcile logic; it can't
-   exercise the real `browser.*` APIs, the popup/options UI, or the manifest.
+   exercise the real `browser.*` APIs, the popup UI, or the manifest.
 6. If behavior or the public surface changed, **bump `version` in
    `manifest.json`** (semver) and update `README.md`.
 7. Commit with a clear message, then **push to `claude/svil`**.

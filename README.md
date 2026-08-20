@@ -113,30 +113,32 @@ Then, on either browser:
 
 ## Usage
 
-**Popup** (toolbar icon):
+Everything — status and settings alike — lives in one place: the **popup**
+(click the toolbar icon). There's no separate settings page.
 
 - **Synchronization on/off** — a switch that **pauses sync in both directions**:
   while off, this device neither pushes its own tab changes nor reacts to other
   devices'. The toolbar icon changes to a greyed-out "paused" icon (with an
   **OFF** badge) so the state is obvious. Sync resumes exactly where it left
   off when you switch it back on.
-- See this device's name, check interval, and the last mirror activity.
-- Switch the **active profile** and immediately sync under it.
+- **Device name** — tags the tabs this device opens, so others know where they
+  came from. Saved as soon as you leave the field.
+- **Profiles** — manage which profiles exist, which one is active on this
+  device, and switch instantly. Removing one from the list only removes it
+  from *this device's* picker — data already saved under that name, on this or
+  any other device, is kept and stays restorable.
+- **Check interval** (default 1 minute) — opens/closes sync immediately
+  regardless; this only controls the background double-check cadence.
+- **Lazy restore** (default on) — open mirrored-in tabs as placeholders that
+  don't load from the network until you view each one.
+- **Cleanup / TTL** (default on, 21 days) — delete a tab's bookmark entries if
+  they haven't been updated in this many days (safety net for a device that
+  never comes back to agree "closed").
 - **Sync now** — force an immediate check in both directions.
+- The last row shows the last mirror activity, and the extension version.
 
-**Settings** (options page):
-
-| Setting | Default | Description |
-|---|---|---|
-| Device name | — | Tags the tabs this device opens, so others know where they came from |
-| Profiles | `default` | Manage which profiles exist and which is active |
-| Check interval | 1 minute | Opens/closes are detected immediately; this only controls the background double-check cadence |
-| Lazy restore | On | Open mirrored-in tabs as placeholders that don't load from the network until you view each one |
-| Cleanup (TTL) | On, 21 days | Delete a tab's bookmark entries if they haven't been updated in this many days (safety net for a device that never comes back to agree "closed") |
-
-Removing a profile from the list only removes it from *this device's* picker —
-any tab data already saved under that name, on this or any other device, is kept
-and stays restorable.
+Every field except the two checkboxes (which save immediately) saves when you
+leave it (blur, or press Enter).
 
 ---
 
@@ -193,8 +195,7 @@ SyncMyTabs' own initiative):
 | `manifest.json` | Manifest V3 definition, permissions, entry points (Chrome service worker + Firefox background scripts) |
 | `sync-core.js` | All the sync/reconcile logic, testable independently of a real browser (see Testing below) |
 | `background.js` | Thin wiring: real browser events → `sync-core.js` |
-| `popup.html` / `popup.js` | Toolbar popup UI |
-| `options.html` / `options.js` | Settings page UI |
+| `popup.html` / `popup.js` | Toolbar popup UI — status, all settings, and profile management in one place |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page |
 | `browser-polyfill.min.js` | Mozilla's WebExtension polyfill (vendored) so `browser.*` works on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |

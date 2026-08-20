@@ -101,7 +101,6 @@ jobs:
           node --check background.js
           node --check sync-core.js
           node --check popup.js
-          node --check options.js
           node --check lazy.js
 
       - name: Run test suite
@@ -125,7 +124,7 @@ jobs:
             fs.writeFileSync("manifest.firefox.json", JSON.stringify(firefox, null, 2));
           '
 
-          COMMON="background.js sync-core.js browser-polyfill.min.js popup.html popup.js options.html options.js lazy.html lazy.js icons"
+          COMMON="background.js sync-core.js browser-polyfill.min.js popup.html popup.js lazy.html lazy.js icons"
           mkdir -p build/chrome build/firefox
           cp -r $COMMON build/chrome/ && cp manifest.chrome.json build/chrome/manifest.json
           cp -r $COMMON build/firefox/ && cp manifest.firefox.json build/firefox/manifest.json

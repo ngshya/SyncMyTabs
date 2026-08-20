@@ -100,7 +100,11 @@ browser.runtime.onInstalled.addListener(async () => {
     });
   }
   if (!deviceName) {
-    browser.runtime.openOptionsPage();
+    // There's no separate options page anymore (settings live in the
+    // popup) and popups can't be opened programmatically — so open the
+    // SAME popup.html as a regular tab instead, purely for this
+    // first-run prompt. It's the identical page either way.
+    browser.tabs.create({ url: browser.runtime.getURL("popup.html") });
   }
 });
 
