@@ -126,6 +126,10 @@ jobs:
             fs.writeFileSync("manifest.firefox.json", JSON.stringify(firefox, null, 2));
           '
 
+          # Keep this list in sync with every top-level source file the
+          # manifest actually references (background scripts + content
+          # scripts) — a file missing here ships a manifest that points
+          # at something the zip doesn't contain, which fails to load.
           COMMON="background.js sync-core.js groups-core.js link-leash-content.js browser-polyfill.min.js popup.html popup.js lazy.html lazy.js icons"
           mkdir -p build/chrome build/firefox
           cp -r $COMMON build/chrome/ && cp manifest.chrome.json build/chrome/manifest.json
