@@ -1,7 +1,7 @@
 # Chrome Web Store — Permission Justifications
 
 Copy-paste ready answers for the "Privacy practices" tab of the Chrome Web Store
-Developer Dashboard. SyncMyTabs requests only the six permissions below, no host
+Developer Dashboard. SyncMyTabs requests only the four permissions below, no host
 permissions, no content scripts, and no remotely hosted code.
 
 ## Single purpose
@@ -22,35 +22,22 @@ permissions, no content scripts, and no remotely hosted code.
 > update, and de-duplicate these folders and bookmarks.
 
 ### `tabs`
-> The extension reads the URLs, titles, and pinned state of the user's open
-> tabs in order to save them under the active profile, and it opens tabs/windows
-> (restoring pinned state and tab-group membership) when the user restores a
-> session from another device (via the "Replace" or "Add" actions). Access to
-> tab URLs and titles requires the tabs permission.
-
-### `tabGroups`
-> When saving a session the extension reads the title and color of the tab
-> groups the open tabs belong to, so that on restore it can recreate those
-> groups with tabs.group and tabGroups.update. Reading and recreating tab
-> groups requires the tabGroups permission.
+> The extension reads the URLs and titles of the user's open tabs in order to
+> record them under the active profile, detects when the user opens or closes
+> one, and opens tabs/windows when mirroring a tab in from another device or
+> when the user manually restores a session (via the "Replace" or "Add"
+> actions). Access to tab URLs and titles requires the tabs permission.
 
 ### `storage`
 > Used to store this device's local configuration and state: the device name,
-> the list and active choice of profiles, the save interval, notification
-> preferences, the last-seen update timestamp, and pending-notification records.
-> All of this is stored locally via chrome.storage.local and never transmitted.
+> the list and active choice of profiles, the save interval, the cleanup
+> (TTL) preference, and the last-activity timestamp shown in the popup. All of
+> this is stored locally via chrome.storage.local and never transmitted.
 
 ### `alarms`
-> The extension saves the active profile's tabs on a configurable periodic
-> interval, driven by a chrome.alarms alarm. The same alarm also powers a durable
-> "sweep" that applies a restore notification's timeout action reliably even if
-> the Manifest V3 service worker was suspended in the meantime.
-
-### `notifications`
-> When another of the user's devices publishes a tab update, the extension shows
-> a notification with "Replace" and "Add" buttons so the user can choose whether
-> and how to open the incoming tabs. The notifications permission is required to
-> create and manage these prompts.
+> The extension periodically re-checks the active profile's tabs against the
+> synced bookmark state, and sweeps stale entries per the configurable cleanup
+> setting, driven by a chrome.alarms alarm.
 
 ## Host permissions
 

@@ -19,14 +19,12 @@ See `README.md` for the full user-facing description. This file is about
 **The extension must work on both Chromium browsers (Chrome/Brave) and
 Firefox.** Keep this in mind in every change:
 
-- Prefer APIs available on both. Any Chrome-only API (e.g. `tabGroups`, tab
-  groups) must be **feature-detected and degrade gracefully** — never assume it
-  exists.
+- Prefer APIs available on both — this codebase currently uses no Chrome-only
+  API (pinned tabs and tab groups, the previous Chrome-only feature, were
+  dropped in the v3 redesign). If a future change needs one, it must be
+  **feature-detected and degrade gracefully**, never assumed to exist.
 - Bookmark-root ids differ (Chrome `"2"` vs Firefox `"unfiled_____"` etc.):
   always resolve through `getRootParentId`, never hardcode.
-- Firefox notifications don't support action buttons or `requireInteraction`;
-  don't rely on them being shown — keep a fallback path (default action / the
-  popup's manual restore).
 - Firefox uses `browser.*` (promise-based) and event-page backgrounds, not a
   service worker. Cross-browser API access goes through the vendored
   `webextension-polyfill` (or an equivalent shim) — don't reintroduce raw
@@ -69,7 +67,7 @@ polyfill is vendored, not built). There is no test suite. The only CI is a
 **release workflow** (`.github/workflows/release.yml`): pushing a `v*` tag whose
 number matches `manifest.json` builds **two** store-ready zips from the dual dev
 manifest — a Chrome one (`service_worker` only) and a Firefox one (`scripts`
-only, no `tabGroups`) — runs `web-ext lint` on the Firefox build, and publishes
+only) — runs `web-ext lint` on the Firefox build, and publishes
 both as a GitHub Release. Store-listing docs live in `PRIVACY.md` and
 `PERMISSIONS.md`.
 
@@ -88,119 +86,123 @@ both as a GitHub Release. Store-listing docs live in `PRIVACY.md` and
    `manifest.json`** (semver) and update `README.md`.
 6. Commit with a clear message, then **push to `claude/svil`**.
 
-## Architecture notes & conventions
+## Architecture notes & conventions (v3 — shared per-tab bookmarks)
 
-Understanding these will keep changes safe:
+Understanding these will keep changes safe. This is a from-scratch redesign of
+the sync mechanism (v2.x used a per-device snapshot folder + a `_events`
+open/close-time blob; that's gone — no migration, see Known limitations).
 
 - **Bookmark tree shape** (created under "Other Bookmarks"):
   ```
-  SyncMyTabs/<device>/_status
-  SyncMyTabs/<device>/<profile>/{_last_sync, _tab_meta, _events, …tab bookmarks…}
+  SyncMyTabs/<profile>/<one bookmark per (device, url) pair>
   ```
-  `_status` (per device) and `_last_sync` / `_tab_meta` / `_events` (per profile)
-  are **metadata bookmarks**, never treated as tabs (`isMetaTitle` /
-  `isProfileMetaTitle`). Keep them updated **in place** — recreating them causes
-  duplicates and needless sync churn. `_tab_meta` holds pinned/tab-group info as
-  JSON in its URL and is removed entirely when a profile has no pinned or grouped
-  tabs. `_events` holds full-mirror session state (see below).
-- **Full session mirror** (`fullSessionMirror`, default on). Same-profile devices
-  keep a two-way-synced tab set. Each device writes per-URL open times `o` and
-  close tombstones `c` into `<device>/<profile>/_events`; `computeEffectiveOpen`
-  says a URL is open iff its newest `o` > newest `c` across devices, and also
-  returns the winning open time per URL (`openT`).
-  `reconcileFullMirror` (run on same-profile `_status` changes, on the alarm, and
-  on startup) closes local tabs no longer open and opens ones that are — it
-  **replaces** the notify+Add/Replace flow while on. A user tab-close is
-  detected in `tabs.onRemoved` by **diffing** this device's saved open set
-  against the live tabs (robust — no fragile tabId→URL map); the closed URL's
-  bookmark is then removed **directly and immediately** from this device's own
-  profile folder via `removeClosedTabBookmarks` (a small, targeted write —
-  remove the bookmark, merge the close tombstone into `_events`, bump
-  `_last_sync`/`_status`) instead of waiting on the next full `saveOpenTabs`
-  rewrite; `addLocalCloseTime`/`takeLocalCloseTimes` still stage the tombstone
-  in storage first as an MV3-durability safety net. **Critical safety:** never
-  tombstone on `isWindowClosing` (shutdown/window close), never on our own
-  reconcile closes (`selfClosingTabIds`); a URL still open in another tab stays
-  in the live set so duplicates don't tombstone. When off, the milder
-  `mirrorRemoteCloses` (placeholder-only) applies instead.
-- **Mirrored-in URLs inherit their true open time.** When a device first
-  records `o[url]` for a URL with no prior local `_events` entry, it must NOT
-  stamp `Date.now()` if the URL was mirrored in rather than opened locally for
-  the first time — doing so lets a device that's slow to hear about a remote
-  close (ordinary bookmark-sync lag) win the open/close race merely by saving
-  on its own schedule, resurrecting a tab that was legitimately closed
-  elsewhere. `reconcileFullMirror` remembers each opened URL's aggregated
-  `openT` via `rememberMirroredOpenTimes`; `saveOpenTabs` consults that map
-  (`mirroredOpenTimes` in storage) before falling back to `now`. Keep this
-  invariant if you touch the open-time bookkeeping.
-- **Profiles are independent.** `evaluateStatusAndNotify` ignores a remote
-  update whose profile isn't this device's **active** profile — automatic sync
-  only flows between devices on the same profile. Switching profile
-  (`SWITCH_PROFILE_AND_SAVE`) runs `checkForRemoteUpdateNow` to catch up on the
-  new profile. Manual `MANUAL_RESTORE` is intentionally NOT gated (explicit user
-  choice of device + profile).
-- **Per-device status + per-source detection.** Each device signals through its
-  own `<device>/_status` (device + active profile + timestamp), so devices and
-  profiles never clobber a shared signal. Receivers keep a `lastSeenBySource`
-  map keyed by `sourceKey(device, profile)` (\x1f-joined), so a newer update is
-  never skipped because another source has a faster clock. Older versions used a
-  single root `_status`; it's still read during catch-up and each device removes
-  its own with `removeLegacyRootStatus`. `lastSeenTimestamp` is kept updated as
-  the max, only for the popup/options "last signal" display.
+  Profiles are the top-level unit now — there is no more per-device folder.
+  Every tab-entry bookmark's `title` is the page title; its metadata is packed
+  into the bookmark's own `url` (`parseTabEntryUrl` / `buildTabEntryUrl`):
+  `u`=real url, `d`=device, `s`=`open`|`closed`, `t`=state-change time,
+  `h`=heartbeat time. **A device only ever writes its own entries** — never
+  another device's — so there is never a concurrent write to the same
+  bookmark. This is the property that makes the whole design safe; don't
+  introduce a code path where one device edits another's entry (bulk deletion
+  of an entry everyone already agrees is `closed`, or a TTL-expired entry, is
+  the one sanctioned exception — see cleanup below).
+- **`t` vs `h` — do not conflate them.** `t` only ever moves on a genuine
+  local open/close transition and is what decides open-vs-closed precedence
+  when devices disagree (`reconcileMirror`'s `latestOpenT > latestCloseT`).
+  `h` is bumped by routine liveness heartbeats so TTL cleanup doesn't sweep a
+  tab that's simply been open a long time. Conflating them (letting a
+  heartbeat touch `t`) reintroduces the exact race fixed in 2.6.2: a device
+  slow to hear about a remote close could out-race it just by refreshing its
+  own "still open" timestamp on a schedule. Keep them separate if you touch
+  this.
+- **SAFETY RULE: closes are detected in exactly one place.**
+  `closeMyGoneTabs` (which flips this device's own entries open→closed) is
+  called **only** from `browser.tabs.onRemoved` (guarded against
+  `isWindowClosing`). It is deliberately never called from the alarm,
+  `onStartup`, or a bookmark-change reaction, because those rely on comparing
+  tracked-open entries against a `browser.tabs.query()` snapshot that isn't
+  guaranteed complete at those moments — most notably right after startup,
+  before session restore has repopulated windows. Treating that gap as "the
+  user closed everything" would propagate a close for the entire session
+  just because the browser started up slowly. Opening/mirroring
+  (`reconcileMyOpenEntries`, `reconcileMirror`), by contrast, is always safe
+  to run broadly — worst case a tab is registered a little late, which
+  self-heals on the next trigger, never destructive. Preserve this asymmetry
+  if you touch the reconcile pipeline.
+- **The reconcile pipeline** (`runReconcile`, invoked through
+  `scheduleReconcile` which serializes/coalesces concurrent triggers — never
+  call `runReconcile` directly): `closeMyGoneTabs` (only if `checkClosed`) →
+  `reconcileMyOpenEntries` → `reconcileMirror` → `reconcileMyOpenEntries`
+  again (so this device's own entries reflect whatever the mirror pass just
+  opened/closed locally). Triggered from `tabs.onRemoved` (`checkClosed:
+  true`), `tabs.onUpdated` on navigation complete (open-detection only), the
+  alarm, `onStartup`, and reactions to bookmark create/change events under
+  the active profile folder.
+- **Closing propagates; deletion needs full agreement.** A close never
+  deletes the bookmark immediately — it flips `s=closed` so the closure is an
+  observable event other devices react to (closing their own copy and
+  flipping their own entry too). Only once *every* entry in a URL's group is
+  `closed` does `cleanupProfileFolder` delete the whole group — safe for
+  any device to do, since by then nobody is writing to those entries anymore.
+- **TTL cleanup** (`ttlEnabled`/`ttlDays` in storage, default on/21 days) is
+  the escape hatch for a group that will never reach full agreement (a device
+  that's gone for good). It deletes any entry whose `h` is older than the
+  threshold, regardless of state or which device wrote it — sanctioned because
+  an entry that stale is, by construction, either genuinely abandoned or would
+  have been heartbeat-refreshed by its own device if it weren't.
+- **Manual restore exemption.** `MANUAL_RESTORE` for a profile that ISN'T the
+  active one opens tabs with `exemptFromTracking: true` (`performAdd` /
+  `performReplace`), which adds their tab ids to the in-memory
+  `manualPeekTabIds` set. `snapshotOwnTabs` excludes these everywhere, so a
+  one-off peek at another profile's tabs never gets registered as this
+  device's own entry under the (wrong, active) profile. Restoring the
+  *active* profile doesn't need the exemption — that's the correct bucket
+  anyway, so the ordinary reconcile picks it up naturally.
 - **Parent folder id** is resolved at runtime from the bookmark tree
   (`getRootParentId`), cached, with a fallback to Chrome/Brave's `"2"`. Do not
   hardcode `"2"` in new code — go through the resolver so Firefox support stays
   reachable.
-- **No needless writes.** `saveOpenTabs` compares a signature of the current tab
-  set (URLs + pinned/group) against the saved one and does nothing if unchanged.
-  Preserve this: every bookmark write triggers the user's sync tool.
-- **Unopened placeholders are not "your" tabs.** `saveOpenTabs` skips tabs that
-  are still lazy placeholders (`placeholderInfo` non-null). Saving them would
-  re-broadcast another device's tabs as this device's session and, with auto-Add
-  on the other side, resurrect tabs it just closed. Only real/opened tabs are
-  saved; `realUrlOfTab` is still used for de-duplication when *adding* tabs.
-- **Event-driven detection.** Remote updates are noticed via
-  `bookmarks.onChanged` / `onCreated` on `_status` — there is **no polling**.
-- **Master on/off switch.** `syncEnabled` (storage, default true) pauses sync in
-  both directions: `saveOpenTabs` (outbound) and `evaluateStatusAndNotify`
-  (inbound, incl. mirror-closes) both early-return when off. The toolbar icon
-  swaps to the `icons/icon*-off.png` set plus an "OFF" badge via `updateActionIcon`,
-  driven off `chrome.storage.onChanged` so the popup toggle is the single source
-  of truth. Manual restore stays available (it's an explicit user action).
-- **Lazy placeholders carry their origin.** Restored tabs (when lazy restore is
-  on) point at `lazy.html?u=<url>&t=<title>&sd=<device>&sp=<profile>`. The
-  `sd`/`sp` tags let `mirrorRemoteCloses` match an *unopened* placeholder back to
-  the remote session it came from and close it when that session drops the URL.
-  Only unopened placeholders from that exact source are ever auto-closed — never
-  the user's own or already-opened tabs. `placeholderInfo` is the single decoder;
-  keep the tagging and matching in sync if you touch either.
-- **MV3 service worker is ephemeral.** It can be torn down at any time. Do **not**
-  rely on in-memory state or bare `setTimeout` for anything that must outlive a
-  suspension. The notification timeout is made durable by persisting pending
-  notifications in `chrome.storage.local` (`pendingNotifs`) and re-checking them
-  in `sweepExpiredNotifications`, which runs on every alarm and on startup. Follow
-  that pattern for any new deferred work.
-- **Notification resolution mutex.** A pending notification can be resolved by a
-  button click, a body click, the `setTimeout`, or the sweep.
-  `chrome.notifications.clear()` returning `true` is the single "I own this"
-  signal — user interactions close the notification themselves, so later
-  resolvers back off. Keep this invariant if you touch notification handling.
-- **Self-healing.** Third-party sync tools sometimes recreate rather than update
-  bookmarks, producing duplicate `_status` / `_last_sync` / root folders. The
-  code detects and merges these (`dedupeNamedBookmark`, `mergeFolderInto`). Keep
-  new metadata handling idempotent and duplicate-tolerant.
-- **Legacy names.** The extension was formerly `OpenTabSync` / `Live Tabs Sync`
-  and migrates such a root folder in place (`LEGACY_ROOT_NAMES`). Add to that
-  list rather than breaking migration if the name ever changes again.
+- **Unopened placeholders still count as "open".** `snapshotOwnTabs` resolves
+  a lazy placeholder to its real URL (`realUrlOfTab`) and treats it the same
+  as any other open tab — closing it (before or after the user ever looked at
+  it) is handled identically either way.
+- **Event-driven, no polling.** Remote updates are noticed via
+  `bookmarks.onCreated` / `onChanged` on any tab-entry bookmark
+  (`isTabEntryBookmark`), not a single fixed-title signal bookmark.
+- **Master on/off switch.** `syncEnabled` (storage, default true) is checked
+  once, at the top of `runReconcile` and `cleanupProfileFolder` — while
+  paused, nothing touches bookmarks in either direction. The toolbar icon
+  swaps to the `icons/icon*-off.png` set plus an "OFF" badge via
+  `updateActionIcon`, driven off `chrome.storage.onChanged` so the popup
+  toggle is the single source of truth. Manual restore stays available (it's
+  an explicit user action) — it's not gated on `syncEnabled`.
+- **No pinned tabs / tab groups.** Dropped in the v3 redesign to keep the
+  per-tab-bookmark schema simple. Don't reintroduce them without discussion.
+- **Self-healing.** Third-party sync tools sometimes recreate rather than
+  update bookmarks, producing duplicate profile folders or duplicate root
+  folders. `mergeFolderInto` merges same-named subfolders recursively and
+  just moves bookmark children over (no title-based bookmark dedup anymore —
+  a tab entry's title is the page title, not a fixed key); any incidental
+  `(device,url)` duplicate left behind is cleaned up defensively by
+  `reconcileMyOpenEntries` the next time that device reconciles.
+- **Legacy root names.** The extension was formerly `OpenTabSync` / `Live
+  Tabs Sync` and migrates such a root folder in place (`LEGACY_ROOT_NAMES`).
+  Add to that list rather than breaking migration if the name ever changes
+  again. This is unrelated to (and unaffected by) the v2→v3 schema change.
 
 ## Known limitations (don't "fix" without discussion)
 
 - Chrome/Brave and Firefox are both supported targets (see **Cross-browser
-  support** above). Firefox lacks the tab-groups API and notification buttons, so
-  those features degrade there — that's expected, not a bug to "fix" by removing
-  them on Chrome.
-- Ordering of updates uses each device's local clock (timestamp in `_status`).
-  Per-source tracking means a skewed clock no longer makes *other* devices'
-  updates get skipped; it can only misorder notifications from *different*
-  devices. This is architectural — there is no shared clock — so treat it as a
-  documented trade-off, not a bug.
+  support** above).
+- Open/close ordering between devices relies on each device's local clock
+  (`t`, set only at the moment of a genuine transition — see the `t` vs `h`
+  note above). This is architectural — there is no shared clock — so treat a
+  badly-skewed-clock edge case as a documented trade-off, not a bug. Keep
+  clocks reasonably in sync (NTP is fine).
+- Navigating a tab to a new URL (without closing the tab) is not treated as
+  closing the old URL — only the literal `tabs.onRemoved` event does, per the
+  safety rule above. This is an intentional, accepted gap, not a bug to fix
+  by broadening where `closeMyGoneTabs` is called from.
+- No migration from pre-3.0 versions. An upgrading user's old
+  `SyncMyTabs/<device>/…` tree is left in place, unused. Don't add migration
+  code for it without the user asking — this was a deliberate decision.

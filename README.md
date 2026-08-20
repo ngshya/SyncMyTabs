@@ -31,85 +31,58 @@ The extension maintains one root folder in your bookmarks with this shape:
 
 ```
 SyncMyTabs/                    ← root folder (in "Other Bookmarks")
-├── manjaro-vivobook/          ← one folder per device (you name it)
-│   ├── _status                ← this device's signal: last profile + time it saved
-│   ├── default/               ← one folder per profile
-│   │   ├── _last_sync         ← metadata: this profile's last save time
-│   │   ├── _tab_meta          ← metadata: pinned/tab-group info (only if used)
-│   │   └── (open-tab bookmarks…)
-│   └── work/
-│       ├── _last_sync
-│       └── (open-tab bookmarks…)
-└── macbook-m3/
-    ├── _status
-    └── default/
-        └── …
+├── default/                   ← one folder per profile (shared across devices)
+│   ├── "Example page"         ← one bookmark per (device, url) — see below
+│   ├── "Another page"
+│   └── …
+└── work/
+    └── …
 ```
 
-- **Devices.** Each device names its own folder on first run
-  (e.g. `manjaro-vivobook`).
-- **Profiles.** A device can have several profiles (e.g. `default`, `work`,
-  `school`). Exactly one is *active* at a time; the active profile's open tabs
-  are what gets saved. Profiles are per-device, but a profile name created on
-  *any* device automatically becomes selectable on every device. **Profiles are
-  independent:** automatic sync only happens between devices using the **same**
-  active profile — a device on `home` ignores another device's `work` updates.
-  (Switching your active profile re-checks other devices for that profile, and
-  you can still pull any profile by hand via **Restore from device**.)
-- **Saving.** On a configurable interval (default: every 1 minute) the active
-  profile's currently open tabs are written into its folder, replacing the
-  previous contents. Only `http(s)` tabs are saved, duplicate URLs are deduped,
-  and if nothing changed since the last save, **nothing is touched** — no
-  needless bookmark churn (which would otherwise trigger your sync tool
-  constantly). Tabs restored from another device that you **haven't opened
-  yet** (lazy placeholders) don't count as part of this device's session, so
-  they're never re-broadcast back (which would otherwise echo — and resurrect —
-  the other device's tabs). **Pinned tabs and tab groups** (title + color) are
-  preserved:
-  they're recorded in a tiny per-profile `_tab_meta` metadata bookmark and
-  reapplied on restore.
-- **Detecting remote updates.** Each device has its **own** `_status` bookmark
-  (inside its folder), updated in place with the last profile/timestamp it
-  saved — so devices and profiles never overwrite each other's signal. Other
-  devices notice via `bookmarks.onChanged` / `onCreated` — **fully event-driven,
-  no polling** — and keep a **per-source** "last seen" timestamp, so a genuinely
-  newer update is never skipped just because another device has a faster clock.
-  An update is only acted on when its profile **matches this device's active
-  profile** (see Profiles above).
-- **Restoring.** When an update from another device is detected, a notification
-  appears with **Replace** and **Add** buttons:
-  - **Replace** — open the remote tabs in a fresh window and close the old ones.
-  - **Add** — open only the remote tabs you don't already have, in the current
-    window.
-  - Clicking the notification body itself just dismisses it (the notifications
-    API allows only two buttons, so the body click stands in for a third
-    "Ignore").
-  - If the notification times out unanswered, a **configurable default action**
-    is applied. This timeout is durable: it is honored even if the browser
-    suspended the extension's background worker in the meantime.
-  - By default, restored tabs open as **lightweight placeholders that don't hit
-    the network until you actually view each tab** (each tab points at a local
-    page that navigates to the real URL on first view), so restoring a large
-    session costs almost nothing. This can be turned off in the settings.
-- **Full session mirror** (default on). For devices on the **same profile**, the
-  tab set is kept in sync **both ways**: open a tab on one device and it appears
-  on the others; **close it anywhere and it closes everywhere**. Each device
-  records per-URL open times and close "tombstones" (in a small `_events`
-  metadata bookmark), and a URL is considered open when its newest open is newer
-  than its newest close. A close is detected by diffing this device's saved tabs
-  against the live ones (no fragile per-tab bookkeeping), and the closed tab's
-  bookmark is removed **immediately** from this device's own folder — it doesn't
-  wait for the next periodic save. Safety rails: closing a **whole window or
-  quitting** the browser never propagates (only closing individual tabs does),
-  and a device's own reconcile-driven closes never loop back. Turn it off in the
-  settings to fall back to the milder placeholder-only mirror below.
-- **Mirroring closes (mild).** When full mirror is *off*: a close is mirrored
-  here **only** for a placeholder tab you never opened (tagged with the source
-  device/profile, so tabs you've opened or created yourself are never touched).
+Every open tab is a **bookmark shared across devices**, one per `(device,
+url)` pair. Its title is the page title; its metadata (which device, open or
+closed, and two timestamps) is packed into the bookmark's own URL. Each device
+only ever writes **its own** entries — never another device's — so there's
+never a conflicting write to the same bookmark.
+
+- **Profiles.** A profile can be used by several devices at once (e.g.
+  `default`, `work`, `school`). Exactly one is *active* per device at a time;
+  automatic sync only ever happens between devices on the **same** active
+  profile — a device on `home` ignores another device's `work` tabs entirely.
+  A profile name created on *any* device automatically becomes selectable on
+  every device.
+- **Opening a tab.** As soon as you open one (or SyncMyTabs mirrors one in from
+  another device), this device's own `(device, url)` bookmark is created/marked
+  **open**. Other devices on the same profile notice — bookmark events, no
+  polling — and if they don't have it open yet, they open it too (as a
+  lightweight placeholder by default, see below) and mark their own entry open.
+- **Closing a tab.** This device's own entry flips to **closed** — the
+  bookmark isn't deleted yet, so the closure is itself a visible event other
+  devices react to: **they close their own copy too**, closing propagates
+  everywhere. Once *every* device that ever had that URL open shows closed,
+  the whole group of bookmarks for that URL is deleted for good.
+  **Closing a whole window, or quitting the browser, never propagates** —
+  only closing an individual tab does, so a shutdown never wipes the session
+  everywhere.
+- **Cleanup (TTL).** If a device is uninstalled, or otherwise never comes back
+  to agree "closed", its entries would otherwise linger forever. A configurable
+  safety net (default on, 21 days) deletes any entry that hasn't been touched
+  in that long. A tab you keep genuinely open is refreshed automatically well
+  before that deadline, so this never affects a live tab — only a truly
+  abandoned one.
+- **Lazy restore** (default on). Tabs mirrored in from another device open as
+  placeholders that don't hit the network until you actually view each one
+  (each points at a local page that navigates to the real URL on first view),
+  so a large incoming session costs almost nothing until you look at it.
+- **Manual restore.** The popup's **Restore from device** picks any
+  profile/device pair and opens its currently-open tabs on demand, via
+  **Replace** or **Add** — handy to seed a new device, or to just peek at
+  another profile's tabs without switching to it (peeked tabs are never
+  registered as this device's own, so they don't get mirrored elsewhere).
 - **Self-healing.** Some third-party sync tools *recreate* bookmarks instead of
-  updating them, producing duplicate `_status` / `_last_sync` entries or even
-  duplicate root folders. SyncMyTabs detects these and merges them, keeping the
-  most recent, so the tree stays clean across any number of devices.
+  updating them, producing duplicate profile folders (or duplicate root
+  folders). SyncMyTabs detects these and merges them, so the tree stays clean
+  across any number of devices.
 
 ---
 
@@ -145,28 +118,25 @@ Then, on either browser:
 **Popup** (toolbar icon):
 
 - **Synchronization on/off** — a switch that **pauses sync in both directions**:
-  while off, this device neither saves its tabs nor reacts to other devices'
-  updates. The toolbar icon changes to a greyed-out "paused" icon (with an
+  while off, this device neither pushes its own tab changes nor reacts to other
+  devices'. The toolbar icon changes to a greyed-out "paused" icon (with an
   **OFF** badge) so the state is obvious. Manual **Restore from device** still
   works. Sync resumes exactly where it left off when you switch it back on.
-- See this device's name, save interval, and the last signal received.
-- Switch the **active profile** and immediately save under it.
-- **Sync now** — save the current tabs and check for remote updates on demand.
-- **Restore from device** — manually open the tabs saved by any device/profile,
-  via **Replace** or **Add**, without waiting for a notification.
+- See this device's name, check interval, and the last mirror activity.
+- Switch the **active profile** and immediately sync under it.
+- **Sync now** — force an immediate check in both directions.
+- **Restore from device** — pick any profile, then any device that currently
+  has tabs open under it, and open them via **Replace** or **Add**.
 
 **Settings** (options page):
 
 | Setting | Default | Description |
 |---|---|---|
-| Device name | — | Identifies this device's bookmark folder |
+| Device name | — | Tags the tabs this device opens, so others know where they came from |
 | Profiles | `default` | Manage which profiles exist and which is active |
-| Save interval | 1 minute | How often the active profile's tabs are saved |
-| Notification timeout | 15 seconds | How long the restore notification stays up |
-| Default timeout action | Add | What happens if the notification times out unanswered (`Add`, `Replace`, or `None`) |
-| Lazy restore | On | Open restored tabs as placeholders that don't load from the network until you view each one (saves memory/bandwidth when restoring many tabs) |
-| Full session mirror | On | Keep the profile's tabs in sync **both ways** across your devices — open/close on one device reflects on the others. When on, it replaces the Add/Replace notification with automatic sync |
-| Mirror closes | On | Only when **full session mirror is off**: close tabs you received but never opened when the source device closes them (placeholders only) |
+| Check interval | 1 minute | Opens/closes are detected immediately; this only controls the background double-check cadence |
+| Lazy restore | On | Open mirrored-in tabs as placeholders that don't load from the network until you view each one |
+| Cleanup (TTL) | On, 21 days | Delete a tab's bookmark entries if they haven't been updated in this many days (safety net for a device that never comes back to agree "closed") |
 
 Removing a profile from the list only removes it from *this device's* picker —
 any tab data already saved under that name, on this or any other device, is kept
@@ -187,42 +157,37 @@ SyncMyTabs' own initiative):
 | Permission | Why |
 |---|---|
 | `bookmarks` | Read/write the SyncMyTabs bookmark tree |
-| `tabs` | Read open tab URLs/titles/pinned state; open tabs on restore |
-| `tabGroups` | Read tab-group title/color on save; recreate groups on restore |
+| `tabs` | Read open tab URLs/titles; open/close tabs to mirror and restore |
 | `storage` | Store this device's settings and state |
-| `alarms` | Drive the periodic save + durable notification timeout |
-| `notifications` | Prompt you when another device has an update |
+| `alarms` | Drive the periodic double-check and cleanup sweep |
 
 ---
 
 ## Known limitations
 
-- **Firefox differences.** SyncMyTabs works on Firefox, but two Chrome-only
-  features degrade there:
-  - **Tab groups** — Firefox has no tab-groups API, so groups aren't saved or
-    recreated (pinned tabs, and everything else, still work).
-  - **Notification buttons** — Firefox notifications don't show the
-    **Replace** / **Add** buttons; make your choice from the popup's **Restore
-    from device** instead (the default timeout action still applies).
-  The bookmark-root id also differs (Chrome `"2"` vs Firefox `"unfiled_____"`) —
-  handled automatically by the runtime resolver.
+- **No more pinned tabs / tab groups.** These were dropped when the sync
+  mechanism was redesigned around shared per-tab bookmarks. Pinning/grouping is
+  purely local now and isn't synced.
+- **Firefox differences.** SyncMyTabs works on Firefox; the bookmark-root id
+  differs (Chrome `"2"` vs Firefox `"unfiled_____"`), handled automatically by
+  the runtime resolver.
 - **Sync visibility.** Detection of remote updates depends entirely on your
   sync tool actually propagating bookmark changes to this device's local tree.
   SyncMyTabs has no insight into whether that underlying sync is healthy.
-- **Clock-based ordering.** "Which update is newer" for a *given* device/profile
-  is decided using that device's local clock (a timestamp embedded in its
-  `_status`). Because each source is tracked independently, one device's wrong
-  clock no longer makes another device's updates get skipped; the only remaining
-  effect is that notifications from *different* devices may surface in an order
-  that doesn't match real-world time. Keep clocks reasonably in sync (NTP is
-  fine).
-- **Full session mirror caveats.** Open/close ordering of the *same* URL across
-  devices also relies on those clocks, so badly skewed clocks can misjudge
-  whether a URL is open or closed. Because it's eventually-consistent over your
-  bookmark sync, a close can take a moment to propagate. Closing a whole window
-  or quitting the browser deliberately does **not** propagate (a safety choice so
-  a shutdown never wipes the session everywhere). Turn the feature off in the
-  settings if you'd rather each device keep an independent tab set.
+- **Clock-based ordering.** When devices disagree about whether a URL is open
+  or closed, the newer of the two (by each device's local clock, recorded only
+  at the moment of a genuine open/close — never invented by a routine
+  liveness check) wins. Because it's eventually-consistent over your bookmark
+  sync, a close can take a moment to propagate, and badly skewed clocks can
+  misjudge which of two truly-concurrent actions was later. Keep clocks
+  reasonably in sync (NTP is fine). Closing a whole window or quitting the
+  browser deliberately never propagates (a safety choice so a shutdown never
+  wipes the session everywhere); a tab you navigate away from (without closing
+  its tab) is also not treated as closed.
+- **No migration from pre-3.0 versions.** The bookmark tree shape changed
+  (shared per-tab bookmarks instead of a snapshot folder per device). Upgrading
+  starts fresh; any old `SyncMyTabs/<device>/…` data is left in place, unused —
+  safe to delete by hand.
 
 ---
 
@@ -249,14 +214,14 @@ Packaging is automated. To cut a release:
 1. Bump `version` in `manifest.json` (semver) and commit.
 2. Tag it and push the tag:
    ```bash
-   git tag v2.0.1 && git push origin v2.0.1
+   git tag v3.0.0 && git push origin v3.0.0
    ```
 
 The [`release` workflow](.github/workflows/release.yml) then checks that the tag
 matches the manifest version, syntax-checks the JS, and builds **two store-ready
 zips** — `syncmytabs-<version>-chrome.zip` and `syncmytabs-<version>-firefox.zip`
 — each with a manifest tailored to its store (Chrome: service worker only;
-Firefox: background scripts, no `tabGroups`), then publishes both as a **GitHub
+Firefox: background scripts only), then publishes both as a **GitHub
 Release** on the [Releases page](../../releases). Upload the Chrome zip to the
 Chrome Web Store and the Firefox zip to [AMO](https://addons.mozilla.org).
 

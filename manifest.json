@@ -1,15 +1,13 @@
 {
   "manifest_version": 3,
   "name": "SyncMyTabs",
-  "version": "2.6.2",
+  "version": "3.0.0",
   "description": "Sync your open tabs across devices, organized by profile, using bookmarks as the transport.",
   "permissions": [
     "bookmarks",
     "tabs",
-    "tabGroups",
     "storage",
-    "alarms",
-    "notifications"
+    "alarms"
   ],
   "background": {
     "service_worker": "background.js",

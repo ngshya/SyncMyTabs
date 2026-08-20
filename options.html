@@ -64,6 +64,14 @@
     }
     .add-profile-row input { flex: 1; }
     .add-profile-row button { margin-top: 0; white-space: nowrap; }
+    .ttl-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+    }
+    .ttl-row input[type="number"] { width: 90px; }
+    .ttl-row label { display: flex; gap: 8px; align-items: center; font-size: 14px; }
     .divider {
       margin-top: 22px;
       border-top: 1px solid #eee;
@@ -87,8 +95,8 @@
 <body>
   <h1>SyncMyTabs</h1>
   <p>
-    Assign a name to this device. It will be used to identify the
-    bookmark folder and to tell your devices apart.
+    Assign a name to this device. It will be used to tag the tabs you open
+    so other devices know where they came from.
   </p>
   <input type="text" id="deviceName" placeholder="e.g. manjaro-vivobook" />
 
@@ -96,7 +104,8 @@
   <p>
     Organize your open tabs into separate profiles (e.g. "default",
     "work", "school"). Only one profile is active at a time on this
-    device; open tabs are saved/restored per profile, not globally.
+    device, and automatic sync only ever happens for the active profile —
+    profiles stay fully independent of each other.
   </p>
   <div id="profileList"></div>
   <div class="add-profile-row">
@@ -106,33 +115,12 @@
 
   <h2>Sync</h2>
   <p>
-    How often (in minutes) to save the current tabs. Updates from
-    other devices are detected automatically as soon as they arrive
-    (event-driven), not on this timer.
+    Opening or closing a tab is detected right away and written
+    immediately; this interval only controls how often this device
+    double-checks itself and other devices in the background (in
+    minutes).
   </p>
   <input type="number" id="intervalMinutes" min="1" step="1" value="1" />
-
-  <p style="margin-top: 18px;">
-    How many seconds to keep the restore notification visible before it
-    auto-dismisses with no action taken.
-  </p>
-  <input
-    type="number"
-    id="notificationTimeoutSeconds"
-    min="1"
-    step="1"
-    value="15"
-  />
-
-  <p style="margin-top: 18px;">
-    What to do automatically if the restore notification times out
-    without you choosing an option.
-  </p>
-  <select id="defaultTimeoutAction">
-    <option value="add">Add tabs to the current window</option>
-    <option value="replace">Replace current tabs</option>
-    <option value="none">Do nothing</option>
-  </select>
 
   <p style="margin-top: 18px;">
     When restoring tabs from another device, open them as lightweight
@@ -146,38 +134,29 @@
     Open restored tabs lazily (load each one only when you view it)
   </label>
 
-  <h2>Session mirror</h2>
+  <h2>Cleanup</h2>
   <p>
-    <strong>Full session mirror</strong> keeps the tabs of this profile the
-    same across all your devices: open a tab on one device and it appears on
-    the others; <strong>close it anywhere and it closes everywhere</strong>.
-    Closing a whole window (or quitting the browser) never propagates — only
-    closing individual tabs does.
+    A tab is only removed from the shared bookmarks once every device
+    that ever had it open has closed it. If a device is uninstalled or
+    never comes back, this safety net deletes its stale entries after
+    the chosen number of days, so a "ghost" tab doesn't linger forever.
+    A tab you keep genuinely open never goes stale — it's refreshed
+    automatically well before the deadline.
   </p>
-  <label
-    style="display: flex; gap: 8px; align-items: center; font-size: 14px;"
-  >
-    <input type="checkbox" id="fullSessionMirror" style="width: auto;" />
-    Full session mirror (two-way open/close across devices on this profile)
-  </label>
-
-  <p style="margin-top: 18px;">
-    When full session mirror is <em>off</em>, this milder option instead just
-    closes tabs you received but never opened, when the source device closes
-    them (placeholders only; requires lazy restore).
-  </p>
-  <label
-    style="display: flex; gap: 8px; align-items: center; font-size: 14px;"
-  >
-    <input type="checkbox" id="mirrorRemoteCloses" style="width: auto;" />
-    Close unopened restored tabs when the source device closes them
-  </label>
+  <div class="ttl-row">
+    <label>
+      <input type="checkbox" id="ttlEnabled" style="width: auto;" />
+      Clean up stale entries after
+    </label>
+    <input type="number" id="ttlDays" min="1" step="1" value="21" />
+    <span>days</span>
+  </div>
 
   <button id="save">Save</button>
   <div id="status"></div>
 
   <p class="divider">
-    Last signal received: <strong id="lastSeen">none</strong>
+    Last mirror activity: <strong id="lastActivity">none</strong>
   </p>
   <p style="font-size: 12px; color: #9aa0a6;">
     SyncMyTabs <strong id="version"></strong>

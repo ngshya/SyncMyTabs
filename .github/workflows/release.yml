@@ -68,8 +68,7 @@ jobs:
           # The repo manifest is "dual" (loads on both for dev). Here we
           # emit a tailored manifest per store so neither shows warnings:
           #  - Chrome: service worker only, no gecko settings.
-          #  - Firefox: background scripts only, minus the Chrome-only
-          #    tabGroups permission (feature-detected at runtime anyway).
+          #  - Firefox: background scripts only.
           node -e '
             const fs = require("fs");
             const m = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
@@ -79,7 +78,6 @@ jobs:
             fs.writeFileSync("manifest.chrome.json", JSON.stringify(chrome, null, 2));
             const firefox = JSON.parse(JSON.stringify(m));
             delete firefox.background.service_worker;
-            firefox.permissions = (firefox.permissions || []).filter((p) => p !== "tabGroups");
             fs.writeFileSync("manifest.firefox.json", JSON.stringify(firefox, null, 2));
           '
 

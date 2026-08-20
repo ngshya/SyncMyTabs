@@ -1,6 +1,6 @@
 # Privacy Policy — SyncMyTabs
 
-_Last updated: 2026-07-20_
+_Last updated: 2026-08-19_
 
 SyncMyTabs is a browser extension that syncs your open tabs across your own
 devices, organized by profile, using **bookmarks as the transport**. This policy
@@ -21,7 +21,7 @@ explains exactly what the extension accesses and what happens to that data.
 |---|---|---|
 | **Open tab URLs and titles** | To save the active profile's open tabs and to reopen them when restoring from another device | Written only into your local bookmarks (see below) |
 | **Bookmarks** | Bookmarks are the sync transport: the extension reads/writes a single `SyncMyTabs/…` folder tree | Stays in your browser's bookmark store |
-| **Device name and settings** (device name, profile list, sync interval, notification preferences, last-seen timestamp) | To configure how this device behaves | Local extension storage (`chrome.storage.local`) only |
+| **Device name and settings** (device name, profile list, sync interval, cleanup preference, last-activity timestamp) | To configure how this device behaves | Local extension storage (`chrome.storage.local`) only |
 
 ## How syncing actually works
 
@@ -54,8 +54,7 @@ bookmark-sync tool replicates it.
 ## Permissions
 
 The extension requests only the permissions required for the above
-functionality: `bookmarks`, `tabs`, `tabGroups`, `storage`, `alarms`, and
-`notifications`.
+functionality: `bookmarks`, `tabs`, `storage`, and `alarms`.
 It requests **no host permissions**, runs **no content scripts** on web pages,
 and loads **no remote code** — all code ships inside the extension package. See
 [`PERMISSIONS.md`](PERMISSIONS.md) for a per-permission justification.
