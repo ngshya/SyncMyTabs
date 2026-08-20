@@ -67,12 +67,17 @@ Firefox.** Keep this in mind in every change:
 There is **no build step** — the repository *is* the unpacked extension (the
 polyfill is vendored, not built; `package.json` exists only for `npm test`, no
 runtime dependencies). The only CI is a **release workflow**
-(`.github/workflows/release.yml`): pushing a `v*` tag whose number matches
-`manifest.json` syntax-checks the JS, **runs the test suite**, builds **two**
-store-ready zips from the dual dev manifest — a Chrome one (`service_worker`
-only) and a Firefox one (`scripts` only) — runs `web-ext lint` on the Firefox
-build, and publishes both as a GitHub Release. Store-listing docs live in
-`PRIVACY.md` and `PERMISSIONS.md`.
+(`.github/workflows/release.yml`), which **fires automatically on every push
+to `main`** — i.e. every PR merge — and checks whether `manifest.json`'s
+`version` is already released; if it's new, it syntax-checks the JS, **runs
+the test suite**, builds **two** store-ready zips from the dual dev manifest —
+a Chrome one (`service_worker` only) and a Firefox one (`scripts` only) — runs
+`web-ext lint` on the Firefox build, and publishes both as a GitHub Release.
+A merge that doesn't bump the version is a no-op for this workflow (skipped,
+not failed). It can also be triggered by pushing a matching `v*` tag, or
+manually from the Actions tab — both fail loudly instead of skipping if that
+version was already released. Store-listing docs live in `PRIVACY.md` and
+`PERMISSIONS.md`.
 
 ## Testing
 

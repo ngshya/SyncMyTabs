@@ -227,21 +227,26 @@ it's put together and how to add more.
 
 ## Releases & packaging
 
-Packaging is automated. To cut a release:
+Packaging is automated, and cutting a release just means bumping the version:
 
-1. Bump `version` in `manifest.json` (semver) and commit.
-2. Tag it and push the tag:
-   ```bash
-   git tag v3.0.0 && git push origin v3.0.0
-   ```
+1. Bump `version` in `manifest.json` (semver) and commit/merge it to `main`.
 
-The [`release` workflow](.github/workflows/release.yml) then checks that the tag
-matches the manifest version, syntax-checks the JS, and builds **two store-ready
-zips** — `syncmytabs-<version>-chrome.zip` and `syncmytabs-<version>-firefox.zip`
-— each with a manifest tailored to its store (Chrome: service worker only;
-Firefox: background scripts only), then publishes both as a **GitHub
-Release** on the [Releases page](../../releases). Upload the Chrome zip to the
-Chrome Web Store and the Firefox zip to [AMO](https://addons.mozilla.org).
+That's it — merging to `main` with a new version **automatically** triggers the
+[`release` workflow](.github/workflows/release.yml), which syntax-checks the JS,
+runs the test suite, and builds **two store-ready zips** —
+`syncmytabs-<version>-chrome.zip` and `syncmytabs-<version>-firefox.zip` — each
+with a manifest tailored to its store (Chrome: service worker only; Firefox:
+background scripts only), then publishes both as a **GitHub Release** on the
+[Releases page](../../releases). A merge that *doesn't* bump the version (e.g. a
+docs-only change) is a no-op for this workflow — it doesn't fail, it just has
+nothing new to release.
+
+You can still cut a release the old way if you'd rather not wait for a merge:
+push a matching tag (`git tag v3.0.0 && git push origin v3.0.0`), or trigger it
+manually from the Actions tab (`Release` → `Run workflow`).
+
+Upload the Chrome zip to the Chrome Web Store and the Firefox zip to
+[AMO](https://addons.mozilla.org).
 
 For publishing, see [`PRIVACY.md`](PRIVACY.md) (privacy policy) and
 [`PERMISSIONS.md`](PERMISSIONS.md) (per-permission justifications).
