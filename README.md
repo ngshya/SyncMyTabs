@@ -91,7 +91,12 @@ so there's never a conflicting write to the same bookmark.
 - **Lazy restore** (default on). Tabs mirrored in from another device open as
   placeholders that don't hit the network until you actually view each one
   (each points at a local page that navigates to the real URL on first view),
-  so a large incoming session costs almost nothing until you look at it.
+  so a large incoming session costs almost nothing until you look at it. By
+  default the real page only loads on an explicit **click** on the
+  placeholder, not just from switching to the tab — so a page that autoplays
+  media (a YouTube video, for instance) never starts just because you tabbed
+  past it. An opt-out setting restores the old "load as soon as the tab
+  becomes visible" behavior.
 - **Self-healing.** Some third-party sync tools *recreate* bookmarks instead of
   updating them, producing duplicate profile folders, duplicate root folders,
   or duplicate folders for the same URL. SyncMyTabs detects these and merges
@@ -193,6 +198,11 @@ Everything — status and settings alike — lives in one place: the **popup**
   regardless; this only controls the background double-check cadence.
 - **Lazy restore** (default on) — open mirrored-in tabs as placeholders that
   don't load from the network until you view each one.
+- **Require a click to load a lazy tab** (default on) — a lazily-restored
+  placeholder waits for an explicit click before loading the real page,
+  instead of loading as soon as you switch to the tab; prevents autoplay
+  (e.g. a YouTube video) from starting just because you switched to it. Turn
+  off to restore the old "load as soon as visible" behavior.
 - **Cleanup / TTL** (default on, **14 days**) — delete a device's bookmark
   entry if it hasn't been updated in this many days (safety net for a device
   that never comes back to agree "closed").

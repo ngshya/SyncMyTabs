@@ -59,7 +59,7 @@ Firefox.** Keep this in mind in every change:
 | `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s / `groups-core.js`'s `engine.handle*()` functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
 | `link-leash-content.js` | Content script for the leashing module — see its section below |
 | `popup.html` / `popup.js` | The **only** UI — toolbar popup holding status, all settings (device name, profiles, interval, lazy restore, TTL), and tab-group rule editors. No separate options page; `browser.runtime.onInstalled` opens `popup.html` as a plain tab for first-run setup, since popups can't be opened programmatically. |
-| `lazy.html` / `lazy.js` | Lazy-restore placeholder page (loads the real URL only when the tab is first viewed) |
+| `lazy.html` / `lazy.js` | Lazy-restore placeholder page — by default loads the real URL only on an explicit click (not just on becoming visible), so autoplay media (YouTube, etc.) never starts just from switching tabs; `lazyRequireClick: false` in storage restores the old load-on-visible behavior |
 | `browser-polyfill.min.js` | Vendored Mozilla WebExtension polyfill so `browser.*` is promise-based on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
 | `test/` | The test suite for `sync-core.js` and `groups-core.js` — see "Testing" below |
