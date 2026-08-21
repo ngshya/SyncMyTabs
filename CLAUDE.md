@@ -131,7 +131,9 @@ in a test, never a raw `nextId()`-derived id, or the "grouped" check will
 silently read as false. `groups-core.js` tests build their own engine
 directly — `createGroupsEngine(device.env, device.engine)` — rather than
 going through a `SimDevice` helper, since it's a separate module from
-`sync-core.js`'s own engine.
+`sync-core.js`'s own engine; `test/groups-test-helpers.js`'s
+`groupsEngineFor(device)` is the shared one-liner for that, used by every
+`groups-*.test.js` file instead of each redeclaring it.
 
 Run the suite:
 ```bash
@@ -372,7 +374,7 @@ limitations).
   `reconcileMirror`/`performAdd`, so a remote open never duplicates a tab the
   user already has pinned or grouped). `tabIdsByUrl` is built from the
   excluded set, which is what keeps a mirror-driven close from ever reaching
-  into a local pinned tab or group. See `test/tab-groups.test.js`. Don't
+  into a local pinned tab or group. See `test/grouped-tabs-excluded.test.js`. Don't
   reintroduce pin or tab-group syncing without discussion.
 - **Self-healing.** Third-party sync tools sometimes recreate rather than
   update bookmarks, producing duplicate profile folders, duplicate root
