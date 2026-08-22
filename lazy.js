@@ -6,6 +6,15 @@
 // visible — i.e. until the user actually opens/switches to it — at
 // which point we replace ourselves with the real URL. A click anywhere
 // triggers the same thing immediately.
+//
+// Default behavior: an explicit CLICK is required to load the real
+// page — becoming visible (switching to the tab) is NOT enough by
+// itself. This exists for pages that autoplay media as soon as they
+// load and are visible/focused (a YouTube video, for instance):
+// switching to the tab would otherwise silently start playback before
+// the user meant to actually open it. Set lazyRequireClick to `false`
+// in storage.local to go back to the original "load as soon as the
+// tab becomes visible" behavior instead.
 
 (function () {
   const params = new URLSearchParams(location.search);
@@ -39,20 +48,35 @@
     return;
   }
 
-  // Load as soon as the tab is shown; if it's already visible (e.g. it
-  // was opened as the active tab), load right away.
-  if (document.visibilityState === "visible") {
-    go();
-  } else {
-    document.addEventListener("visibilitychange", function onVis() {
-      if (document.visibilityState === "visible") {
-        document.removeEventListener("visibilitychange", onVis);
-        go();
-      }
-    });
+  // Explicit click always loads the real page immediately, regardless
+  // of the preference below.
+  document.addEventListener("click", go);
+
+  function loadOnVisible() {
+    if (document.visibilityState === "visible") {
+      go();
+    } else {
+      document.addEventListener("visibilitychange", function onVis() {
+        if (document.visibilityState === "visible") {
+          document.removeEventListener("visibilitychange", onVis);
+          go();
+        }
+      });
+    }
   }
 
-  // Explicit click is a fallback for any environment where the
-  // visibility event doesn't fire as expected.
-  document.addEventListener("click", go);
+  // Default ON (require a click): only an explicit `lazyRequireClick:
+  // false` in storage.local restores the old auto-load-on-visible
+  // behavior. browser-polyfill.min.js makes `browser` available on
+  // Chrome too; on Firefox it's native. Any failure reading storage
+  // (or `browser` being unavailable for some reason) falls back to the
+  // SAME default — require a click — rather than silently auto-loading.
+  try {
+    browser.storage.local
+      .get("lazyRequireClick")
+      .then(({ lazyRequireClick }) => {
+        if (lazyRequireClick === false) loadOnVisible();
+      })
+      .catch(() => {});
+  } catch (e) {}
 })();

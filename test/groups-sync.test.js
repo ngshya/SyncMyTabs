@@ -5,11 +5,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { SimWorld } = require("./sim-env.js");
-const { createGroupsEngine } = require("../groups-core.js");
-
-function groupsEngineFor(device) {
-  return createGroupsEngine(device.env, device.engine);
-}
+const { groupsEngineFor } = require("./groups-test-helpers.js");
 
 test("group rules set on one device are readable on another (same profile)", async () => {
   const world = new SimWorld();
