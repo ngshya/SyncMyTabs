@@ -144,9 +144,10 @@ least some Node versions; always pass the explicit glob.)
 
 When you change reconcile behavior in `sync-core.js` or `groups-core.js`,
 add/update a test in `test/` alongside it — this is the actual regression net
-for the safety rules documented below (the phantom-duplicate-entry guard and
-the "closes are only detected from a live tab event" rule both have
-regression tests; a change that violates either should make one fail).
+for the safety rules documented below (the phantom-duplicate-entry guard,
+the "closes are only detected from a live tab event" rule, and the
+mirror-open debounce all have regression tests; a change that violates
+any of them should make one fail).
 
 ## How to work on it
 
@@ -236,6 +237,41 @@ limitations).
   unrelated reasons — both look identical in the bookmark tree, so a
   reopen anywhere will force a reopen on every currently-closed peer,
   regardless of why each one is closed. See `test/reopen-propagation.test.js`.
+- **A brand-new mirror-open is debounced, not acted on immediately —
+  `MIRROR_OPEN_DEBOUNCE_MS`.** Bookmark sync is neither atomic nor
+  ordered. A device can read a snapshot where a URL still looks open on
+  another device just after (or even during) that URL actually being
+  closed AND its whole folder deleted everywhere else — if
+  `reconcileMirror` opened a tab on that very first sighting, it would
+  *resurrect* the URL: the folder it recreates has only THIS device's own
+  entry, with no peer `closed` entry left for the contagious-close
+  mechanism (above) to ever catch onto again — a permanently orphaned
+  tab. To guard against this, a URL that qualifies as a fresh mirror-open
+  candidate (`anyOpen && !allUrls.has(url) && !mine`) is first recorded
+  in the in-memory `pendingMirrorOpens` map (keyed by
+  `<profileFolderId>|<url>`) rather than opened; it's only actually
+  opened once a LATER `reconcileMirror` call (any trigger) still sees it
+  as a candidate, at least `MIRROR_OPEN_DEBOUNCE_MS` (20s) after the
+  first sighting — giving a same-tool sync batch that's still mid-
+  delivery a chance to finish landing (deliver the later close too)
+  before this device acts on the stale intermediate state. A candidate
+  that stops qualifying between passes (closed, folder deleted, already
+  open here by then, …) is dropped from `pendingMirrorOpens` and never
+  opened — this is the actual fix, not just added latency. Being a fixed
+  heuristic delay rather than a real happens-before guarantee, this
+  *shrinks* but doesn't eliminate the race — a device offline/asleep
+  longer than the window can still hit it; not "fixed" further without
+  discussion (see Known limitations). Overridable via
+  `env.mirrorOpenDebounceMs` — absent on the real `browser.*` object, so
+  the real extension always gets the production default;
+  `test/sim-env.js`'s `SimDevice` defaults it to **0**, since SimWorld's
+  shared, instantaneous bookmark tree deliberately doesn't model sync
+  propagation delay in the first place (see its own comment) — a 0
+  window collapses this straight back to "open on first sighting",
+  preserving every other test's existing assumptions untouched. Only
+  `test/mirror-open-debounce.test.js` constructs a device with a
+  non-zero override (paired with the same `withFakeClock` pattern
+  `test/ttl-cleanup.test.js` uses) to exercise the mechanism itself.
 - **`t` vs `h` — do not conflate them.** `t` only ever moves on a genuine
   local open/close transition. `h` is bumped by routine liveness heartbeats
   so TTL cleanup doesn't sweep a tab that's simply been open a long time.
@@ -535,6 +571,19 @@ exist (same cross-browser rule as the rest of the codebase).
   so a reopen anywhere forces a reopen on every currently-closed peer,
   regardless of why each one is closed. Don't "fix" this into a
   per-device-final model without discussion.
+- **Mirror-open debounce shrinks, but doesn't eliminate, the "orphan
+  resurrection" race** (see the Architecture section above,
+  `MIRROR_OPEN_DEBOUNCE_MS`). It's a fixed heuristic delay, not a real
+  happens-before guarantee against an out-of-order/partial bookmark sync
+  batch — a device that's offline, asleep, or simply behind by longer
+  than the debounce window when it finally catches up can still open a
+  tab for a URL that, in reality, was fully closed and deleted elsewhere
+  moments before. This is the same class of trade-off as the two bullets
+  above (no shared clock, no central authority) — increasing the window
+  narrows the risk further at the cost of extra latency on every
+  legitimate remote open; don't "fix" this into a stronger guarantee (a
+  real ack/confirmation protocol between devices) without discussion —
+  there is no channel for that beyond the bookmarks themselves.
 - No migration from pre-4.0 versions. An upgrading user's old
   `SyncMyTabs/<profile>/…` (v3, flat per-(device,url) bookmarks) or
   `SyncMyTabs/<device>/…` (pre-3.0) tree is left in place, unused. Don't add

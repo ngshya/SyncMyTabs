@@ -349,7 +349,21 @@ class SimStorage {
 // world's shared bookmark tree, driving a real sync-core engine.
 // ------------------------------------------------------------
 class SimDevice {
-  constructor(world, { deviceName, activeProfile = "default", storage = {} }) {
+  constructor(
+    world,
+    {
+      deviceName,
+      activeProfile = "default",
+      storage = {},
+      // Overrides sync-core.js's real mirror-open debounce (see its own
+      // comment). Defaults to 0 — SimWorld's shared, instantaneous
+      // bookmark tree deliberately doesn't model sync propagation delay,
+      // so every ordinary test keeps its existing "mirrors in on the
+      // very next flush()" behavior. Tests specifically exercising the
+      // debounce mechanism pass a non-zero value here instead.
+      mirrorOpenDebounceMs = 0,
+    }
+  ) {
     this.world = world;
     this.deviceName = deviceName;
     this.tabsApi = new SimTabsApi();
@@ -370,6 +384,7 @@ class SimDevice {
       windows: this.windowsApi,
       storage: { local: this.storage },
       runtime: { getURL: (p) => `sim-extension://${p}` },
+      mirrorOpenDebounceMs,
     };
     this.env = env;
     this.engine = createSyncEngine(env);

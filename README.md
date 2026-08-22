@@ -65,7 +65,13 @@ so there's never a conflicting write to the same bookmark.
   and check every URL folder: if a folder has some device open and *they*
   don't have a bookmark of their own in it yet, they open the tab too (as a
   lightweight placeholder by default, see below) and add their own **open**
-  bookmark.
+  bookmark. A brand-new URL isn't mirrored in on the very first sighting,
+  though: it's confirmed still open on a later check, a short (20s) delay
+  later, first — since bookmark sync can otherwise deliver a stale "still
+  open" snapshot moments after the real thing was already closed and
+  deleted everywhere else, which would open a tab for it that nothing could
+  ever close again. This shrinks that risk without eliminating it entirely
+  — see Known limitations.
 - **Closing a tab.** Your own device bookmark flips to **closed** — and this
   is **contagious**: every other device that still shows the URL open
   follows suit automatically, closing its own matching tab and flipping its
@@ -280,6 +286,14 @@ SyncMyTabs' own initiative):
   (left over from a since-undone close) apart from that same peer's *own*,
   separate, intentional close — a reopen anywhere forces a reopen on every
   currently-closed device, regardless of why each one is closed.
+- **A remote open can still, rarely, resurrect an already-closed URL.** The
+  20s confirm-before-mirror delay (see "How it works" above) shrinks the
+  window for this but is a fixed heuristic, not a real guarantee — a device
+  that's offline, asleep, or simply behind by longer than that when it
+  catches up can still act on a stale "still open elsewhere" snapshot for a
+  URL that was, in reality, already closed and fully deleted everywhere
+  else, reopening it with nothing left to close it again automatically
+  (you'd just close it yourself once noticed).
 - **Tab-group leashing is Chrome/Brave only, and untitled groups aren't
   supported.** Firefox has no tab-groups API to extensions, so the whole
   module is a silent no-op there. A group's title is its only stable,
