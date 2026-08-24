@@ -13,6 +13,18 @@ tabs sync.
 
 ---
 
+## About this project
+
+SyncMyTabs is an experiment in AI-written software: every line of code,
+every commit, and this README itself were written by an AI coding
+assistant from plain-language instructions, without the human author
+reading the code itself. Behavior is verified through the automated test
+suite and manual testing of the extension, not through a code review — the
+usual quality check for handwritten code is deliberately skipped here.
+Keep that in mind when deciding how much to trust this codebase.
+
+---
+
 ## Why bookmarks?
 
 Most tab-sync tools need you to trust a server with your entire browsing
