@@ -33,6 +33,7 @@ document.getElementById("syncToggle").addEventListener("change", async (e) => {
 const nameInput = document.getElementById("deviceName");
 const intervalInput = document.getElementById("intervalMinutes");
 const lazyInput = document.getElementById("openRestoredLazy");
+const lazyRequireClickInput = document.getElementById("lazyRequireClick");
 const ttlEnabledInput = document.getElementById("ttlEnabled");
 const ttlDaysInput = document.getElementById("ttlDays");
 const closeDuplicateTabsInput = document.getElementById("closeDuplicateTabs");
@@ -42,6 +43,7 @@ async function loadSettings() {
     deviceName,
     syncIntervalMinutes,
     openRestoredLazy,
+    lazyRequireClick,
     ttlEnabled,
     ttlDays,
     closeDuplicateTabs,
@@ -50,6 +52,7 @@ async function loadSettings() {
     "deviceName",
     "syncIntervalMinutes",
     "openRestoredLazy",
+    "lazyRequireClick",
     "ttlEnabled",
     "ttlDays",
     "closeDuplicateTabs",
@@ -59,6 +62,7 @@ async function loadSettings() {
   if (deviceName) nameInput.value = deviceName;
   intervalInput.value = syncIntervalMinutes || 1;
   lazyInput.checked = openRestoredLazy !== false; // default ON
+  lazyRequireClickInput.checked = lazyRequireClick !== false; // default ON
   ttlEnabledInput.checked = ttlEnabled !== false; // default ON
   ttlDaysInput.value = ttlDays || 14;
   closeDuplicateTabsInput.checked = closeDuplicateTabs === true; // default OFF
@@ -90,6 +94,11 @@ intervalInput.addEventListener("change", async () => {
 
 lazyInput.addEventListener("change", async () => {
   await browser.storage.local.set({ openRestoredLazy: lazyInput.checked });
+  flashStatus("Saved ✓");
+});
+
+lazyRequireClickInput.addEventListener("change", async () => {
+  await browser.storage.local.set({ lazyRequireClick: lazyRequireClickInput.checked });
   flashStatus("Saved ✓");
 });
 

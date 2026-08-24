@@ -37,6 +37,13 @@ test("closeDuplicateTabs=true closes the extra tab(s), keeping the leftmost", as
   const remaining = Array.from(a.tabsApi.tabs.values());
   assert.equal(remaining.length, 1, "only one copy should survive");
   assert.equal(remaining[0].id, first.id, "the leftmost (first-created) tab survives");
+
+  // Closing the EXTRAS must not be misread as "the URL itself closed" —
+  // the surviving tab keeps the URL in `current`, so the device's own
+  // status bookmark must still read open, not flip closed.
+  const mine = await a.myEntries("default");
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].state, "open", "the URL is still genuinely open (via the surviving tab)");
 });
 
 test("closeDuplicateTabs=true leaves DIFFERENT URLs alone", async () => {

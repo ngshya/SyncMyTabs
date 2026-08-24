@@ -6,19 +6,22 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { SimWorld } = require("./sim-env.js");
 const { createGroupsEngine } = require("../groups-core.js");
+const { groupsEngineFor } = require("./groups-test-helpers.js");
 
-function groupsEngineFor(device) {
-  return createGroupsEngine(device.env, device.engine);
-}
+// Most tests here only care about ONE essential rule; sharing it avoids
+// repeating the same literal (and having to touch a dozen places, as
+// happened once already, if the rule shape ever changes again).
+const MAIL_ESSENTIAL_RULE = {
+  pattern: "*://mail.example/*",
+  openUrl: "https://mail.example/inbox",
+};
 
 test("a missing essential tab is reopened into the existing open group", async () => {
   const world = new SimWorld();
   const a = world.addDevice({ deviceName: "A" });
   const ga = groupsEngineFor(a);
 
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { pattern: "*://mail.example/*", openUrl: "https://mail.example/inbox" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
   const groupId = a.ensureOpenGroup("Work");
 
   await ga.reconcileGroups();
@@ -34,9 +37,7 @@ test("a group not open anywhere is recreated from the reopened essential tabs", 
   const a = world.addDevice({ deviceName: "A" });
   const ga = groupsEngineFor(a);
 
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { pattern: "*://mail.example/*", openUrl: "https://mail.example/inbox" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
 
   await ga.reconcileGroups();
 
@@ -54,9 +55,7 @@ test("a tab that already satisfies an essential rule is left alone, nothing reop
   const a = world.addDevice({ deviceName: "A" });
   const ga = groupsEngineFor(a);
 
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { pattern: "*://mail.example/*", openUrl: "https://mail.example/inbox" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
   await a.openGroupedTab("https://mail.example/inbox?x=1", "Inbox", "Work");
 
   await ga.reconcileGroups();
@@ -71,9 +70,7 @@ test("duplicate tabs covering the same essential rule: keep the leftmost, close 
   const a = world.addDevice({ deviceName: "A" });
   const ga = groupsEngineFor(a);
 
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { pattern: "*://mail.example/*", openUrl: "https://mail.example/inbox" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
   const first = await a.openGroupedTab("https://mail.example/a", "First", "Work");
   await a.openGroupedTab("https://mail.example/b", "Second", "Work");
 
@@ -90,9 +87,7 @@ test("closeUndeclaredTabs=false (default) leaves an unrelated tab in the group a
   const a = world.addDevice({ deviceName: "A" });
   const ga = groupsEngineFor(a);
 
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { pattern: "*://mail.example/*", openUrl: "https://mail.example/inbox" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
   await a.openGroupedTab("https://mail.example/inbox", "Inbox", "Work");
   await a.openGroupedTab("https://random.example/", "Random", "Work");
 
@@ -110,9 +105,7 @@ test("closeUndeclaredTabs=true closes a tab matching NO rule at all in that grou
   });
   const ga = groupsEngineFor(a);
 
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { pattern: "*://mail.example/*", openUrl: "https://mail.example/inbox" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
   await a.openGroupedTab("https://mail.example/inbox", "Inbox", "Work");
   await a.openGroupedTab("https://random.example/", "Random", "Work");
 
@@ -144,9 +137,7 @@ test("reconcileGroups is a silent no-op on Firefox (no env.tabGroups)", async ()
   const gaFirefox = createGroupsEngine(firefoxEnv, a.engine);
 
   const ga = groupsEngineFor(a);
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { pattern: "*://mail.example/*", openUrl: "https://mail.example/inbox" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
 
   await gaFirefox.reconcileGroups(); // must not throw
   const tabs = await a.tabsApi.query();
@@ -158,9 +149,7 @@ test("reconcileGroups is a no-op while the master sync switch is off", async () 
   const a = world.addDevice({ deviceName: "A", storage: { syncEnabled: false } });
   const ga = groupsEngineFor(a);
 
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { pattern: "*://mail.example/*", openUrl: "https://mail.example/inbox" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
   await ga.reconcileGroups();
 
   const tabs = await a.tabsApi.query();
@@ -173,9 +162,7 @@ test("reconcileGroups only touches the ACTIVE profile's groups", async () => {
   const ga = groupsEngineFor(a);
 
   const profileFolderId = (await a.engine.getOrCreateProfileFolder("work")).id;
-  await ga.setGroupSettings(profileFolderId, "Work", [
-    { pattern: "*://mail.example/*", openUrl: "https://mail.example/inbox" },
-  ]);
+  await ga.setGroupSettings(profileFolderId, "Work", [MAIL_ESSENTIAL_RULE]);
 
   await ga.reconcileGroups(); // active profile is "default", not "work"
 
@@ -188,9 +175,7 @@ test("pinGroupsToStart=false (default) never repositions a group", async () => {
   const a = world.addDevice({ deviceName: "A" });
   const ga = groupsEngineFor(a);
 
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { pattern: "*://mail.example/*", openUrl: "https://mail.example/inbox" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
   const groupId = a.ensureOpenGroup("Work");
 
   await ga.reconcileGroups();
@@ -207,9 +192,7 @@ test("pinGroupsToStart=true moves an already-open group to index 0", async () =>
   });
   const ga = groupsEngineFor(a);
 
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { pattern: "*://mail.example/*", openUrl: "https://mail.example/inbox" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
   const groupId = a.ensureOpenGroup("Work");
 
   await ga.reconcileGroups();
@@ -226,9 +209,7 @@ test("pinGroupsToStart=true also pins a group it just recreated from scratch", a
   });
   const ga = groupsEngineFor(a);
 
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { pattern: "*://mail.example/*", openUrl: "https://mail.example/inbox" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
 
   await ga.reconcileGroups();
 
@@ -248,9 +229,7 @@ test("pinGroupsToStart=true stacks multiple pinned groups in title order, not fi
   await ga.setGroupSettingsForActiveProfile("Chats", [
     { pattern: "*://chat.example/*", openUrl: "https://chat.example/inbox" },
   ]);
-  await ga.setGroupSettingsForActiveProfile("Work", [
-    { pattern: "*://mail.example/*", openUrl: "https://mail.example/inbox" },
-  ]);
+  await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
   a.ensureOpenGroup("Chats");
   a.ensureOpenGroup("Work");
 

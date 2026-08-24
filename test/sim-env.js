@@ -147,8 +147,33 @@ class SimTabsApi {
     return Array.from(this.tabs.values()).map((t) => ({ ...t }));
   }
 
-  async create({ url, title, active, windowId, status, groupId, pinned }) {
+  async create({
+    url,
+    title,
+    active,
+    windowId,
+    status,
+    groupId,
+    pinned,
+    openerTabId,
+  }) {
     const id = nextId();
+    let effectiveGroupId = groupId;
+    if (effectiveGroupId === undefined && openerTabId !== undefined) {
+      // Mirrors a real Chrome/Brave quirk that groups-core.js's
+      // link-leashing has to actively guard against: a tab created
+      // adjacent to a grouped tab (openerTabId + an adjacent index —
+      // exactly how every caller here opens one) can silently auto-join
+      // that SAME group purely from the adjacency, with no explicit
+      // groupId requested at all. Without simulating this, a test could
+      // never catch a caller that forgets to explicitly ungroup
+      // afterward when that's not what's wanted (see
+      // test/groups-leash.test.js).
+      const opener = this.tabs.get(openerTabId);
+      if (opener && typeof opener.groupId === "number" && opener.groupId !== -1) {
+        effectiveGroupId = opener.groupId;
+      }
+    }
     const tab = {
       id,
       url,
@@ -157,7 +182,7 @@ class SimTabsApi {
       status: status || "complete",
       active: !!active,
       windowId: windowId || "1",
-      groupId: groupId === undefined ? -1 : groupId,
+      groupId: effectiveGroupId === undefined ? -1 : effectiveGroupId,
       pinned: !!pinned,
     };
     this.tabs.set(id, tab);
@@ -349,7 +374,21 @@ class SimStorage {
 // world's shared bookmark tree, driving a real sync-core engine.
 // ------------------------------------------------------------
 class SimDevice {
-  constructor(world, { deviceName, activeProfile = "default", storage = {} }) {
+  constructor(
+    world,
+    {
+      deviceName,
+      activeProfile = "default",
+      storage = {},
+      // Overrides sync-core.js's real mirror-open debounce (see its own
+      // comment). Defaults to 0 — SimWorld's shared, instantaneous
+      // bookmark tree deliberately doesn't model sync propagation delay,
+      // so every ordinary test keeps its existing "mirrors in on the
+      // very next flush()" behavior. Tests specifically exercising the
+      // debounce mechanism pass a non-zero value here instead.
+      mirrorOpenDebounceMs = 0,
+    }
+  ) {
     this.world = world;
     this.deviceName = deviceName;
     this.tabsApi = new SimTabsApi();
@@ -370,6 +409,7 @@ class SimDevice {
       windows: this.windowsApi,
       storage: { local: this.storage },
       runtime: { getURL: (p) => `sim-extension://${p}` },
+      mirrorOpenDebounceMs,
     };
     this.env = env;
     this.engine = createSyncEngine(env);

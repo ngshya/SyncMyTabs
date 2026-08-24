@@ -8,10 +8,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { SimWorld } = require("./sim-env.js");
 const { createGroupsEngine } = require("../groups-core.js");
-
-function groupsEngineFor(device) {
-  return createGroupsEngine(device.env, device.engine);
-}
+const { groupsEngineFor } = require("./groups-test-helpers.js");
 
 test("a link matching the tab's pattern navigates the SAME tab in place", async () => {
   const world = new SimWorld();
@@ -111,6 +108,36 @@ test("a group with no rule for the tab's current page falls back too", async () 
   const tabs = await a.tabsApi.query();
   assert.equal(tabs.length, 1);
   assert.equal(tabs[0].url, "https://outside.example/");
+});
+
+test("ctrl/cmd/middle-click on a link, when no rule covers the tab's current page, opens ungrouped too (fallbackOpen must not inherit the group)", async () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const ga = groupsEngineFor(a);
+  // "Work" group exists but has no rule covering example.com at all, so
+  // resolvePatternFor(tab) returns null and handleLinkClick falls back
+  // to fallbackOpen — the newTab path there used to create the tab at
+  // `index: tab.index + 1`, which the browser can silently auto-join to
+  // the SAME group purely from that adjacency, with no leashing decision
+  // involved. A link with nothing to leash against must never end up
+  // grouped that way; see CLAUDE.md/groups-core.js's fallbackOpen.
+  await ga.setGroupSettingsForActiveProfile("Work", [
+    { pattern: "*://other.com/*" },
+  ]);
+  const tab = await a.openGroupedTab("https://example.com/a", "A", "Work");
+
+  await ga.handleLinkClick("https://outside.example/", tab, {
+    newTab: true,
+    background: true,
+  });
+
+  const tabs = await a.tabsApi.query();
+  assert.equal(tabs.length, 2, "a new tab must have been created, not a same-tab navigation");
+  const original = tabs.find((t) => t.id === tab.id);
+  assert.equal(original.url, "https://example.com/a", "the original tab must be untouched");
+  const created = tabs.find((t) => t.id !== tab.id);
+  assert.equal(created.url, "https://outside.example/");
+  assert.equal(created.groupId, -1, "the new tab must NOT have inherited the opener's group");
 });
 
 test("leashing disabled (groupsLeashEnabled=false) always falls back, even with a matching rule", async () => {

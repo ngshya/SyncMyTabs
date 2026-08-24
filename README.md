@@ -13,6 +13,18 @@ tabs sync.
 
 ---
 
+## About this project
+
+SyncMyTabs is an experiment in AI-written software: every line of code,
+every commit, and this README itself were written by an AI coding
+assistant from plain-language instructions, without the human author
+reading the code itself. Behavior is verified through the automated test
+suite and manual testing of the extension, not through a code review — the
+usual quality check for handwritten code is deliberately skipped here.
+Keep that in mind when deciding how much to trust this codebase.
+
+---
+
 ## Why bookmarks?
 
 Most tab-sync tools need you to trust a server with your entire browsing
@@ -65,7 +77,13 @@ so there's never a conflicting write to the same bookmark.
   and check every URL folder: if a folder has some device open and *they*
   don't have a bookmark of their own in it yet, they open the tab too (as a
   lightweight placeholder by default, see below) and add their own **open**
-  bookmark.
+  bookmark. A brand-new URL isn't mirrored in on the very first sighting,
+  though: it's confirmed still open on a later check, a short (20s) delay
+  later, first — since bookmark sync can otherwise deliver a stale "still
+  open" snapshot moments after the real thing was already closed and
+  deleted everywhere else, which would open a tab for it that nothing could
+  ever close again. This shrinks that risk without eliminating it entirely
+  — see Known limitations.
 - **Closing a tab.** Your own device bookmark flips to **closed** — and this
   is **contagious**: every other device that still shows the URL open
   follows suit automatically, closing its own matching tab and flipping its
@@ -91,7 +109,12 @@ so there's never a conflicting write to the same bookmark.
 - **Lazy restore** (default on). Tabs mirrored in from another device open as
   placeholders that don't hit the network until you actually view each one
   (each points at a local page that navigates to the real URL on first view),
-  so a large incoming session costs almost nothing until you look at it.
+  so a large incoming session costs almost nothing until you look at it. By
+  default the real page only loads on an explicit **click** on the
+  placeholder, not just from switching to the tab — so a page that autoplays
+  media (a YouTube video, for instance) never starts just because you tabbed
+  past it. An opt-out setting restores the old "load as soon as the tab
+  becomes visible" behavior.
 - **Self-healing.** Some third-party sync tools *recreate* bookmarks instead of
   updating them, producing duplicate profile folders, duplicate root folders,
   or duplicate folders for the same URL. SyncMyTabs detects these and merges
@@ -193,6 +216,11 @@ Everything — status and settings alike — lives in one place: the **popup**
   regardless; this only controls the background double-check cadence.
 - **Lazy restore** (default on) — open mirrored-in tabs as placeholders that
   don't load from the network until you view each one.
+- **Require a click to load a lazy tab** (default on) — a lazily-restored
+  placeholder waits for an explicit click before loading the real page,
+  instead of loading as soon as you switch to the tab; prevents autoplay
+  (e.g. a YouTube video) from starting just because you switched to it. Turn
+  off to restore the old "load as soon as visible" behavior.
 - **Cleanup / TTL** (default on, **14 days**) — delete a device's bookmark
   entry if it hasn't been updated in this many days (safety net for a device
   that never comes back to agree "closed").
@@ -270,6 +298,14 @@ SyncMyTabs' own initiative):
   (left over from a since-undone close) apart from that same peer's *own*,
   separate, intentional close — a reopen anywhere forces a reopen on every
   currently-closed device, regardless of why each one is closed.
+- **A remote open can still, rarely, resurrect an already-closed URL.** The
+  20s confirm-before-mirror delay (see "How it works" above) shrinks the
+  window for this but is a fixed heuristic, not a real guarantee — a device
+  that's offline, asleep, or simply behind by longer than that when it
+  catches up can still act on a stale "still open elsewhere" snapshot for a
+  URL that was, in reality, already closed and fully deleted everywhere
+  else, reopening it with nothing left to close it again automatically
+  (you'd just close it yourself once noticed).
 - **Tab-group leashing is Chrome/Brave only, and untitled groups aren't
   supported.** Firefox has no tab-groups API to extensions, so the whole
   module is a silent no-op there. A group's title is its only stable,

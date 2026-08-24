@@ -23,6 +23,10 @@
 //   env.windows:   { getLastFocused, getAll, create, remove }
 //   env.storage:   { local: { get(keys) -> Promise<obj>, set(obj) -> Promise } }
 //   env.runtime:   { getURL(path) -> string }
+//   env.mirrorOpenDebounceMs: optional number override for the
+//     mirror-open debounce window (see MIRROR_OPEN_DEBOUNCE_MS below);
+//     absent on the real browser.* object, so the real extension always
+//     uses the production default. test/sim-env.js sets this to 0.
 // ============================================================
 
 const ROOT_NAME = "SyncMyTabs";
@@ -35,6 +39,25 @@ const LEGACY_ROOT_NAMES = ["OpenTabSync", "Live Tabs Sync"];
 const DEFAULT_PROFILE = "default";
 const DEFAULT_TTL_DAYS = 14;
 const DEFAULT_INTERVAL_MINUTES = 1;
+
+// How long a URL must be seen consistently, across separate reconcile
+// passes, as "open elsewhere but not here yet" before reconcileMirror
+// actually opens a tab for it. Bookmark sync is neither atomic nor
+// ordered: a device can read a snapshot where a URL still looks open on
+// another device just as (or shortly after) that URL was actually closed
+// AND its whole folder deleted everywhere else. Opening a tab on that
+// very first sighting would "resurrect" the URL: the folder this device
+// recreates has only ITS OWN entry, with no peer "closed" entry left for
+// the contagious-close mechanism to catch onto — an orphaned tab nothing
+// ever closes again. Waiting this long, and re-confirming on the NEXT
+// reconcile pass rather than acting immediately, gives a same-tool sync
+// batch that's still mid-delivery a chance to finish landing (deliver the
+// later close too) before we act on the stale intermediate state. This
+// shrinks, but — being just a fixed heuristic delay, not a real
+// happens-before guarantee — does not eliminate, that race; a legitimate
+// brand-new remote open is delayed by (up to) this long before it mirrors
+// in here, which is the trade-off's cost.
+const MIRROR_OPEN_DEBOUNCE_MS = 20 * 1000;
 
 // Bookmark tree shape (see CLAUDE.md):
 //   SyncMyTabs/<profile>/<one folder per URL>/{_url, <device1>, <device2>, …}
@@ -117,6 +140,28 @@ function isRelevantBookmarkChange(title, url) {
 // ------------------------------------------------------------
 function createSyncEngine(env) {
   const LAZY_PAGE = env.runtime.getURL("lazy.html");
+
+  // Debounce window, overridable via env.mirrorOpenDebounceMs (real
+  // browser.* has no such property, so the real extension always gets
+  // the production MIRROR_OPEN_DEBOUNCE_MS). test/sim-env.js's SimDevice
+  // defaults this to 0, since SimWorld's shared, instantaneous bookmark
+  // tree deliberately doesn't model sync propagation delay (see its own
+  // comment) — a 0 window collapses the check below back to "open on
+  // first sighting", preserving that simplification for every existing
+  // test. Dedicated tests for the debounce mechanism itself construct a
+  // device with a non-zero override instead of relying on the default.
+  const mirrorOpenDebounceMs =
+    typeof env.mirrorOpenDebounceMs === "number"
+      ? env.mirrorOpenDebounceMs
+      : MIRROR_OPEN_DEBOUNCE_MS;
+
+  // "<profileFolderId>|<url>" -> first Date.now() reconcileMirror saw this
+  // URL as a not-yet-confirmed mirror-open candidate (see
+  // MIRROR_OPEN_DEBOUNCE_MS above). In-memory only, per engine instance —
+  // losing it on a service-worker restart just restarts the debounce
+  // window too, never a correctness problem, only ever a few extra
+  // seconds of caution on that one candidate.
+  const pendingMirrorOpens = new Map();
 
   function lazyUrlFor(entry) {
     return (
@@ -513,6 +558,15 @@ function createSyncEngine(env) {
   // (alarm/startup/bookmark-event), unlike closeMyGoneTabs (see its own
   // comment and the SAFETY RULE in CLAUDE.md, which is about a
   // DIFFERENT failure mode and still fully applies to closeMyGoneTabs).
+  //
+  // A brand-new mirror-open candidate (a URL open elsewhere this device
+  // has no entry for yet) is NOT opened on first sighting — see
+  // MIRROR_OPEN_DEBOUNCE_MS above. It's recorded in pendingMirrorOpens
+  // and only actually opened once a LATER reconcileMirror call (any
+  // trigger) still sees it as a candidate after the debounce window has
+  // elapsed. Any candidate that stops qualifying between passes (closed,
+  // fully deleted, already open here by the time we'd act, …) is dropped
+  // from pendingMirrorOpens at the end of this function and never opened.
   async function reconcileMirror(profileFolderId, deviceName) {
     const entries = await readProfileEntries(profileFolderId);
     const { allUrls, tabIdsByUrl } = await snapshotOwnTabs();
@@ -521,6 +575,7 @@ function createSyncEngine(env) {
     const toOpen = [];
     const toCloseTabIds = [];
     const foldersToDelete = [];
+    const candidateKeys = new Set();
 
     for (const [url, folderEntry] of entries) {
       const allEntries = [];
@@ -561,8 +616,25 @@ function createSyncEngine(env) {
       // "already here" and must not get a second, untracked tab opened
       // next to it.
       if (anyOpen && !allUrls.has(url)) {
-        toOpen.push({ url, title: folderEntry.folderTitle || url });
+        const key = `${profileFolderId}|${url}`;
+        candidateKeys.add(key);
+        let firstSeen = pendingMirrorOpens.get(key);
+        if (firstSeen === undefined) {
+          firstSeen = now;
+          pendingMirrorOpens.set(key, firstSeen);
+        }
+        if (now - firstSeen >= mirrorOpenDebounceMs) {
+          toOpen.push({ url, title: folderEntry.folderTitle || url });
+        }
       }
+    }
+
+    // Drop any previously-pending candidate that no longer qualifies this
+    // pass (closed/deleted/already-open-here/etc. by now) — it must be
+    // re-confirmed from scratch (a fresh debounce window) if it ever
+    // becomes a candidate again, never opened on stale standing.
+    for (const key of pendingMirrorOpens.keys()) {
+      if (!candidateKeys.has(key)) pendingMirrorOpens.delete(key);
     }
 
     for (const folderId of foldersToDelete) {
@@ -899,6 +971,7 @@ if (typeof module !== "undefined" && module.exports) {
     DEFAULT_PROFILE,
     DEFAULT_TTL_DAYS,
     DEFAULT_INTERVAL_MINUTES,
+    MIRROR_OPEN_DEBOUNCE_MS,
     URL_MARKER_TITLE,
     STATUS_URL_BASE,
     OTHER_BOOKMARKS_PARENT_ID,

@@ -4,6 +4,11 @@
 // a remote open never duplicates a tab the user already has open in a group,
 // and a remote close never reaches into a group to tear a tab out of it. See
 // CLAUDE.md / isInTabGroup in sync-core.js.
+//
+// NOT to be confused with the groups-*.test.js files: those cover the
+// SEPARATE tab-group LEASHING module (groups-core.js — link leashing,
+// startup reconcile, pin-to-start). This file is about sync-core.js's
+// own exclusion of grouped tabs from the open/closed URL sync entirely.
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
