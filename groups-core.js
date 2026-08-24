@@ -393,12 +393,27 @@ function createGroupsEngine(env, syncEngine) {
   async function fallbackOpen(href, tab, modifiers) {
     if (modifiers.newTab) {
       try {
-        await env.tabs.create({
+        const created = await env.tabs.create({
           url: href,
           active: !modifiers.background,
           index: tab.index + 1,
           openerTabId: tab.id,
         });
+        // `index: tab.index + 1` places the new tab adjacent to `tab` —
+        // if `tab` is grouped, the browser can auto-join the new tab
+        // into that SAME group purely from that adjacency, with no
+        // leashing decision involved at all. This path is reached
+        // whenever there's no pattern to leash against (leashing off,
+        // tab ungrouped, or no rule resolves for `tab`'s current page —
+        // see handleLinkClick's `!pattern` case), so a link opened from
+        // here must never end up grouped by that side effect; undo it
+        // if it happened. Same guard as handleLinkClick's own
+        // known-non-matching branch below.
+        if (created.groupId !== TAB_GROUP_ID_NONE && env.tabs.ungroup) {
+          try {
+            await env.tabs.ungroup(created.id);
+          } catch (e) {}
+        }
       } catch (e) {}
     } else {
       try {
