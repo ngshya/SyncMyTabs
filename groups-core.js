@@ -4,9 +4,9 @@
 // Independent module: tab-group "leashing" (a link clicked inside a
 // titled browser tab group either navigates in place / opens alongside
 // in the SAME group if it matches that tab's configured pattern, or
-// always opens in a fresh UNGROUPED tab otherwise) plus startup
-// reconciliation (reopen a group's missing "essential" tabs, close
-// duplicates, optionally close undeclared ones). Ported from the
+// always opens in a fresh UNGROUPED tab otherwise) plus a reconcile pass
+// (reopen a group's missing "essential" tabs, close duplicates,
+// optionally detach undeclared ones from the group). Ported from the
 // standalone TabGroupsLeash extension, but — per the request that
 // motivated this module — using SyncMyTabs' own bookmark mechanism as
 // the cross-device transport for group RULES instead of
@@ -51,7 +51,7 @@
 // to stay in-group — see resolvePatternForTab — AND, doubling as the
 // "which page is this rule for" check, what decides which rule covers
 // the tab's CURRENT page in the first place) and `openUrl` (the exact
-// URL the startup reconcile reopens if nothing matching is currently
+// URL the reconcile pass reopens if nothing matching is currently
 // open). The original TabGroupsLeash (and this module's own first
 // version) had a THIRD field, "match", separate from "pattern" —
 // letting a rule apply to a narrower or broader set of pages than the
@@ -148,7 +148,7 @@ function resolvePatternForTab(groupSettings, tabUrl) {
 
 // Whether a tab's URL satisfies a rule for presence-checking purposes
 // (used by reconcileGroup's missing/duplicate detection, and the
-// closeUndeclaredTabs check): matches its pattern if it has one, else
+// ungroupUndeclaredTabs check): matches its pattern if it has one, else
 // falls back to an exact match against openUrl (an openUrl-only rule
 // has nothing else to check presence against).
 function tabSatisfiesRule(tabUrl, rule) {
@@ -340,11 +340,15 @@ function createGroupsEngine(env, syncEngine) {
     return groupsLeashEnabled !== false; // default ON
   }
 
-  async function closeUndeclaredTabsEnabled() {
-    const { groupsCloseUndeclaredTabs } = await env.storage.local.get(
-      "groupsCloseUndeclaredTabs"
+  // Detaching (not closing) a tab from its group is non-destructive —
+  // the tab stays open, just outside the group — but still opt-in and
+  // default OFF, since it's still an automatic action on a tab the user
+  // didn't explicitly ask to touch.
+  async function ungroupUndeclaredTabsEnabled() {
+    const { groupsUngroupUndeclaredTabs } = await env.storage.local.get(
+      "groupsUngroupUndeclaredTabs"
     );
-    return groupsCloseUndeclaredTabs === true; // default OFF (destructive)
+    return groupsUngroupUndeclaredTabs === true; // default OFF
   }
 
   async function groupsStartupDelaySeconds() {
@@ -464,13 +468,22 @@ function createGroupsEngine(env, syncEngine) {
     }
   }
 
-  // ---- startup reconciliation: reopen missing "essential" (openUrl)
-  // tabs, close duplicates, optionally close undeclared tabs ----
+  // ---- reconcile pass: reopen missing "essential" (openUrl) tabs,
+  // close duplicates, optionally detach undeclared tabs from the group
+  // ----
   //
   // Scoped to the ACTIVE PROFILE's group definitions only, same as the
   // rest of the extension's sync — a device on a different profile
   // never touches another profile's groups. Only titled groups that
-  // have at least one saved rule are touched at all.
+  // have at least one saved rule are touched at all. Runs once per
+  // browser launch (delayed, see groupsStartupDelaySeconds) AND
+  // periodically thereafter, on the SAME alarm/interval as the main tab
+  // sync (background.js registers both off `syncIntervalMinutes`) — see
+  // CLAUDE.md. Safe to run mid-session: reopening a missing essential
+  // tab or closing an exact duplicate only ever acts on unambiguous,
+  // fully-loaded tab state, and detaching an undeclared tab from its
+  // group (below) is non-destructive — the tab itself is never touched,
+  // only its group membership.
 
   async function reconcileGroups() {
     if (!env.tabGroups) return; // Firefox: no tab-group API, nothing to do
@@ -481,7 +494,7 @@ function createGroupsEngine(env, syncEngine) {
     const titles = await getAllGroupTitles(profileFolderId);
     if (titles.length === 0) return;
 
-    const closeUndeclared = await closeUndeclaredTabsEnabled();
+    const ungroupUndeclared = await ungroupUndeclaredTabsEnabled();
     const pinToStart = await pinGroupsToStartEnabled();
     let allGroups = [];
     try {
@@ -498,11 +511,11 @@ function createGroupsEngine(env, syncEngine) {
       const rules = settings.rules || [];
       if (rules.length === 0) continue; // nothing declared for this group
       const pinIndex = pinToStart ? nextPinIndex++ : null;
-      await reconcileGroup(title, rules, allGroups, closeUndeclared, pinIndex);
+      await reconcileGroup(title, rules, allGroups, ungroupUndeclared, pinIndex);
     }
   }
 
-  async function reconcileGroup(title, rules, allGroups, closeUndeclared, pinIndex) {
+  async function reconcileGroup(title, rules, allGroups, ungroupUndeclared, pinIndex) {
     const targetGroup = allGroups.find((g) => g.title === title) || null;
     const openTabs = targetGroup ? await env.tabs.query({ groupId: targetGroup.id }) : [];
     let groupIdForPin = targetGroup && targetGroup.id;
@@ -510,6 +523,7 @@ function createGroupsEngine(env, syncEngine) {
     const essentialRules = rules.filter((r) => r.openUrl);
     const missingRules = [];
     const idsToClose = [];
+    const idsToUngroup = [];
 
     for (const rule of essentialRules) {
       const matchingTabs = openTabs.filter((t) => tabSatisfiesRule(t.url, rule));
@@ -523,17 +537,26 @@ function createGroupsEngine(env, syncEngine) {
       }
     }
 
-    if (closeUndeclared) {
+    if (ungroupUndeclared) {
+      // Detach, don't close: a tab matching no rule at all just leaves
+      // the group (stays open, ungrouped) rather than being destroyed —
+      // this is the whole point of it being non-destructive, unlike the
+      // exact-duplicate cleanup above.
       for (const tab of openTabs) {
         if (idsToClose.includes(tab.id)) continue;
         const isDeclared = rules.some((r) => tabSatisfiesRule(tab.url, r));
-        if (!isDeclared) idsToClose.push(tab.id);
+        if (!isDeclared) idsToUngroup.push(tab.id);
       }
     }
 
     if (idsToClose.length > 0) {
       try {
         await env.tabs.remove(idsToClose);
+      } catch (e) {}
+    }
+    if (idsToUngroup.length > 0 && env.tabs.ungroup) {
+      try {
+        await env.tabs.ungroup(idsToUngroup);
       } catch (e) {}
     }
 
@@ -611,7 +634,7 @@ function createGroupsEngine(env, syncEngine) {
     setGroupSettingsForActiveProfile,
     deleteGroupSettingsForActiveProfile,
     isLeashEnabled,
-    closeUndeclaredTabsEnabled,
+    ungroupUndeclaredTabsEnabled,
     groupsStartupDelaySeconds,
     pinGroupsToStartEnabled,
     resolvePatternFor,

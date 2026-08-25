@@ -42,11 +42,12 @@
 // clicked inside a titled browser tab group either navigates in place
 // / opens alongside in the SAME group if it matches that tab's
 // configured pattern, or always opens in a fresh UNGROUPED tab
-// otherwise — plus a startup reconcile that reopens a group's missing
-// "essential" tabs and closes duplicates. Chrome/Brave only (Firefox
-// has no tabGroups API — see groups-core.js). Group RULES sync via the
-// SAME bookmark mechanism as everything else, scoped by the SAME
-// active-profile concept.
+// otherwise — plus a reconcile pass (at startup, and periodically at the
+// same interval as tab sync) that reopens a group's missing "essential"
+// tabs, closes duplicates, and optionally ungroups undeclared ones.
+// Chrome/Brave only (Firefox has no tabGroups API — see groups-core.js).
+// Group RULES sync via the SAME bookmark mechanism as everything else,
+// scoped by the SAME active-profile concept.
 // ============================================================
 
 // Cross-browser API access: use the promise-based `browser.*` namespace
@@ -82,6 +83,23 @@ async function ensureAlarm() {
   );
   const period = syncIntervalMinutes || FALLBACK_INTERVAL_MINUTES;
   browser.alarms.create("saveTabsAlarm", { periodInMinutes: period });
+}
+
+// Re-arms the groups-reconcile alarm's recurring period to match the
+// SAME check-interval setting as the main sync alarm above, without
+// touching any startup-delay logic (that only applies right after a
+// genuine browser launch — see onStartup below). Called whenever
+// syncIntervalMinutes changes mid-session; the next fire is `period`
+// minutes from now, same convention as ensureAlarm().
+async function ensureGroupsAlarmPeriod() {
+  const { syncIntervalMinutes } = await browser.storage.local.get(
+    "syncIntervalMinutes"
+  );
+  const period = syncIntervalMinutes || FALLBACK_INTERVAL_MINUTES;
+  browser.alarms.create(GROUPS_RECONCILE_ALARM, {
+    delayInMinutes: period,
+    periodInMinutes: period,
+  });
 }
 
 // Reflect the on/off state in the toolbar: a distinct "paused" icon plus
@@ -132,15 +150,22 @@ browser.runtime.onStartup.addListener(async () => {
   ensureAlarm();
   refreshActionIcon();
   await engine.handleStartup();
-  // Startup-only group reconcile, delayed (default 15s, configurable)
-  // so the browser's own session restore has time to finish
-  // repopulating windows/tabs/groups first — reconciling against a
-  // still-incomplete snapshot could wrongly treat a not-yet-restored
-  // tab as "missing" or "duplicate". Never run mid-session off this
-  // same path — only a fresh browser launch gets this delayed check.
-  const seconds = await groupsEngine.groupsStartupDelaySeconds();
+  // First fire delayed (default 15s, configurable) so the browser's own
+  // session restore has time to finish repopulating windows/tabs/groups
+  // first — reconciling against a still-incomplete snapshot could
+  // wrongly treat a not-yet-restored tab as "missing" or "duplicate".
+  // Recurs after that at the SAME period as the main sync alarm
+  // (syncIntervalMinutes) — see CLAUDE.md's "Tab-group leashing"
+  // section for why running mid-session is safe.
+  const [seconds, syncIntervalMinutes] = await Promise.all([
+    groupsEngine.groupsStartupDelaySeconds(),
+    browser.storage.local
+      .get("syncIntervalMinutes")
+      .then((r) => r.syncIntervalMinutes),
+  ]);
   browser.alarms.create(GROUPS_RECONCILE_ALARM, {
     delayInMinutes: Math.max(Number(seconds) || 0, 1) / 60,
+    periodInMinutes: syncIntervalMinutes || FALLBACK_INTERVAL_MINUTES,
   });
 });
 
@@ -156,7 +181,10 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 
 browser.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
-  if (changes.syncIntervalMinutes) ensureAlarm();
+  if (changes.syncIntervalMinutes) {
+    ensureAlarm();
+    ensureGroupsAlarmPeriod();
+  }
   if (changes.syncEnabled) {
     updateActionIcon(changes.syncEnabled.newValue !== false);
   }
@@ -272,13 +300,13 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "GROUPS_GET_PREFS") {
     (async () => {
-      const [leashEnabled, closeUndeclared, startupDelaySeconds, pinToStart] = await Promise.all([
+      const [leashEnabled, ungroupUndeclared, startupDelaySeconds, pinToStart] = await Promise.all([
         groupsEngine.isLeashEnabled(),
-        groupsEngine.closeUndeclaredTabsEnabled(),
+        groupsEngine.ungroupUndeclaredTabsEnabled(),
         groupsEngine.groupsStartupDelaySeconds(),
         groupsEngine.pinGroupsToStartEnabled(),
       ]);
-      sendResponse({ leashEnabled, closeUndeclared, startupDelaySeconds, pinToStart });
+      sendResponse({ leashEnabled, ungroupUndeclared, startupDelaySeconds, pinToStart });
     })();
     return true;
   }
@@ -287,8 +315,8 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       const updates = {};
       if (message.leashEnabled !== undefined) updates.groupsLeashEnabled = message.leashEnabled;
-      if (message.closeUndeclared !== undefined) {
-        updates.groupsCloseUndeclaredTabs = message.closeUndeclared;
+      if (message.ungroupUndeclared !== undefined) {
+        updates.groupsUngroupUndeclaredTabs = message.ungroupUndeclared;
       }
       if (message.startupDelaySeconds !== undefined) {
         updates.groupsStartupDelaySeconds = message.startupDelaySeconds;

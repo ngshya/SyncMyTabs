@@ -1,6 +1,7 @@
-// Startup reconciliation: reopen a group's missing "essential" (openUrl)
+// Group reconciliation: reopen a group's missing "essential" (openUrl)
 // tabs, close duplicates that cover the same essential rule, and
-// (opt-in) close tabs that match none of the group's rules at all.
+// (opt-in) ungroup — never close — tabs that match none of the group's
+// rules at all.
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
@@ -82,7 +83,7 @@ test("duplicate tabs covering the same essential rule: keep the leftmost, close 
   assert.equal(matching[0].id, first.id);
 });
 
-test("closeUndeclaredTabs=false (default) leaves an unrelated tab in the group alone", async () => {
+test("groupsUngroupUndeclaredTabs=false (default) leaves an unrelated tab in the group alone", async () => {
   const world = new SimWorld();
   const a = world.addDevice({ deviceName: "A" });
   const ga = groupsEngineFor(a);
@@ -97,23 +98,27 @@ test("closeUndeclaredTabs=false (default) leaves an unrelated tab in the group a
   assert.ok(tabs.some((t) => t.url === "https://random.example/"), "undeclared tab must survive by default");
 });
 
-test("closeUndeclaredTabs=true closes a tab matching NO rule at all in that group", async () => {
+test("groupsUngroupUndeclaredTabs=true ungroups (never closes) a tab matching NO rule at all in that group", async () => {
   const world = new SimWorld();
   const a = world.addDevice({
     deviceName: "A",
-    storage: { groupsCloseUndeclaredTabs: true },
+    storage: { groupsUngroupUndeclaredTabs: true },
   });
   const ga = groupsEngineFor(a);
 
   await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
+  const workGroupId = a.ensureOpenGroup("Work");
   await a.openGroupedTab("https://mail.example/inbox", "Inbox", "Work");
   await a.openGroupedTab("https://random.example/", "Random", "Work");
 
   await ga.reconcileGroups();
 
   const tabs = await a.tabsApi.query();
-  assert.ok(!tabs.some((t) => t.url === "https://random.example/"), "undeclared tab should be closed");
-  assert.ok(tabs.some((t) => t.url === "https://mail.example/inbox"), "the declared tab must survive");
+  const undeclared = tabs.find((t) => t.url === "https://random.example/");
+  assert.ok(undeclared, "the undeclared tab must still be open, never closed");
+  assert.equal(undeclared.groupId, -1, "the undeclared tab must have been detached from the group");
+  const declared = tabs.find((t) => t.url === "https://mail.example/inbox");
+  assert.equal(declared.groupId, workGroupId, "the declared tab must stay in the group, untouched");
 });
 
 test("a group with zero saved rules is completely untouched by reconcile", async () => {

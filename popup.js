@@ -238,12 +238,12 @@ document.getElementById("syncNow").addEventListener("click", async () => {
 // ------------------------------------------------------------
 // Tab groups (leashing module — see groups-core.js / CLAUDE.md).
 // Group RULES themselves sync via bookmarks (per active profile, like
-// everything else); leashEnabled/closeUndeclared/startupDelay are
+// everything else); leashEnabled/ungroupUndeclared/startupDelay are
 // per-device local preferences (browser.storage.local), same
 // convention as syncEnabled/ttlDays/openRestoredLazy above.
 // ------------------------------------------------------------
 const groupsLeashEnabledInput = document.getElementById("groupsLeashEnabled");
-const groupsCloseUndeclaredInput = document.getElementById("groupsCloseUndeclared");
+const groupsUngroupUndeclaredInput = document.getElementById("groupsUngroupUndeclared");
 const groupsPinToStartInput = document.getElementById("groupsPinToStart");
 const groupsStartupDelayInput = document.getElementById("groupsStartupDelay");
 const groupListEl = document.getElementById("groupList");
@@ -252,10 +252,10 @@ const groupEditorEl = document.getElementById("groupEditor");
 let openGroupTitle = null; // which group's editor panel is currently shown, if any
 
 async function loadGroupPrefs() {
-  const { leashEnabled, closeUndeclared, startupDelaySeconds, pinToStart } =
+  const { leashEnabled, ungroupUndeclared, startupDelaySeconds, pinToStart } =
     await browser.runtime.sendMessage({ type: "GROUPS_GET_PREFS" });
   groupsLeashEnabledInput.checked = leashEnabled !== false;
-  groupsCloseUndeclaredInput.checked = closeUndeclared === true;
+  groupsUngroupUndeclaredInput.checked = ungroupUndeclared === true;
   groupsPinToStartInput.checked = pinToStart === true;
   groupsStartupDelayInput.value = startupDelaySeconds || 15;
 }
@@ -268,10 +268,10 @@ groupsLeashEnabledInput.addEventListener("change", async () => {
   flashStatus("Saved ✓");
 });
 
-groupsCloseUndeclaredInput.addEventListener("change", async () => {
+groupsUngroupUndeclaredInput.addEventListener("change", async () => {
   await browser.runtime.sendMessage({
     type: "GROUPS_SET_PREFS",
-    closeUndeclared: groupsCloseUndeclaredInput.checked,
+    ungroupUndeclared: groupsUngroupUndeclaredInput.checked,
   });
   flashStatus("Saved ✓");
 });

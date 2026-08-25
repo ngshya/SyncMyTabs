@@ -147,22 +147,24 @@ group from wandering outside them.
   rule yet, or a rule with no leash pattern (a reopen-only rule), is left
   completely alone — normal browser behavior. A tab that isn't in any
   configured group is never touched by this at all.
-- **Startup reconciliation.** Once per browser launch (after a short,
-  configurable delay so the browser's own session restore finishes first),
+- **Reconciliation.** Once per browser launch (after a short, configurable
+  delay so the browser's own session restore finishes first) and then
+  periodically after that, on the same check interval as tab sync,
   SyncMyTabs reopens any group's "reopen URL" that isn't currently open
   there, closes accidental duplicates of the same declared page (keeping the
-  oldest), and — if you turn on "close tabs matching no rule" (off by
-  default, since closing tabs automatically is destructive) — closes any tab
-  in that group that matches none of its rules at all. Turning on "pin
-  configured groups to the start of the tab bar" also keeps every
-  reconciled group pinned at the start of its window on every check.
+  oldest), and — if you turn on "ungroup tabs matching no rule" (off by
+  default) — detaches any tab in that group that matches none of its rules
+  at all from the group. That's an ungroup, not a close: the tab stays open,
+  it just leaves the group. Turning on "pin configured groups to the start
+  of the tab bar" also keeps every reconciled group pinned at the start of
+  its window on every check.
 - **Untitled groups aren't supported.** A group's title is its only stable,
   cross-device identifier (a browser's internal group id is local and
   meaningless on another device) — an untitled group is simply invisible to
   this module.
 - Manage it all from the popup's **"Tab groups"** section: per-group rule
   editors (with quick-add buttons for tabs already open in that group), a
-  leashing on/off switch, the close-undeclared-tabs toggle, the pin-to-start
+  leashing on/off switch, the ungroup-undeclared-tabs toggle, the pin-to-start
   toggle, the startup delay, and a manual "Reconcile groups now" button.
 
 ---
