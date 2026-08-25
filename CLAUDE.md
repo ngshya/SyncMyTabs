@@ -432,11 +432,12 @@ A separate, independent module ported from the standalone TabGroupsLeash
 extension: link "leashing" for a browser tab group (a clicked link either
 navigates in place / opens alongside in the SAME group if it matches that
 tab's configured pattern, or always opens in a fresh UNGROUPED tab
-otherwise) plus a startup reconcile (reopen a group's missing "essential"
-tabs, close duplicates, optionally close undeclared ones). Chrome/Brave
-only — Firefox has no `tabGroups` API, so every function here
-feature-detects `env.tabGroups` and no-ops without it, never assumed to
-exist (same cross-browser rule as the rest of the codebase).
+otherwise) plus a reconcile pass (reopen a group's missing "essential"
+tabs, close duplicates, optionally detach undeclared ones from the group
+— see the ungroup-not-close bullet below). Chrome/Brave only — Firefox
+has no `tabGroups` API, so every function here feature-detects
+`env.tabGroups` and no-ops without it, never assumed to exist (same
+cross-browser rule as the rest of the codebase).
 
 - **Bookmark tree shape**, SIBLING to the per-URL folders under each
   profile (and invisible to `sync-core.js`'s `readProfileEntries`, which
@@ -479,11 +480,26 @@ exist (same cross-browser rule as the rest of the codebase).
   original TabGroupsLeash already had with `chrome.storage.sync.set` — an
   accepted limitation for infrequently-edited config data, not a bug.
 - **Only the RULES sync via bookmarks — local per-device preferences don't.**
-  Whether leashing is on at all (`groupsLeashEnabled`), whether the startup
-  reconcile also closes undeclared tabs (`groupsCloseUndeclaredTabs`), and
-  the startup delay (`groupsStartupDelaySeconds`) all live in
+  Whether leashing is on at all (`groupsLeashEnabled`), whether the
+  reconcile also ungroups undeclared tabs (`groupsUngroupUndeclaredTabs`),
+  and the startup delay (`groupsStartupDelaySeconds`) all live in
   `env.storage.local`, same convention as `syncEnabled`/`ttlDays`/
   `openRestoredLazy` — per-device operational toggles, not shared config.
+- **Undeclared tabs are UNGROUPED, never closed.** `groupsUngroupUndeclaredTabs`
+  (opt-in, default OFF) detaches a tab matching none of its group's rules
+  from the group — `env.tabs.ungroup`, same primitive `fallbackOpen`/
+  `handleLinkClick`'s own non-matching-link path already uses — the tab
+  itself stays open, only its group membership changes. This used to
+  `env.tabs.remove` it outright; changed because the reconcile pass below
+  now also runs periodically (not just once at startup), and destructively
+  closing a tab the user is actively using, every few minutes, on nothing
+  more than "no rule declares it", was too aggressive once this stopped
+  being a one-shot, post-launch-only check. Reopening a missing essential
+  tab and closing an exact DUPLICATE of one (`idsToClose`, kept separate
+  from `idsToUngroup` in `reconcileGroup`) are unaffected — those stay
+  genuine `env.tabs.remove` closes, since they only ever act on an
+  unambiguous duplicate of a tab the user (or a previous reconcile) already
+  opened deliberately, never on "no rule matches this at all".
 - **Scoped by the SAME active-profile concept as the rest of the
   extension.** `activeProfileFolderId()` resolves through
   `syncEngine.getActiveProfile()`/`getOrCreateProfileFolder()` — a device on
@@ -542,15 +558,25 @@ exist (same cross-browser rule as the rest of the codebase).
   consecutive indices (0, 1, 2, …) assigned in `reconcileGroups()` and
   passed down to each `reconcileGroup()` call, rather than every pinned
   group independently fighting over index 0.
-- **Startup reconcile only, never mid-session**, and only for the active
-  profile's groups that have at least one saved rule. Delayed
-  (`groupsStartupDelaySeconds`, default 15s) so the browser's own session
-  restore has time to finish repopulating windows/tabs/groups first —
-  reconciling against a still-incomplete snapshot could wrongly judge a
-  not-yet-restored tab "missing" or "duplicate". Alarm registration for
-  this delay lives in `background.js` (browser-chrome-only bits), same as
-  the main sync alarm — `groups-core.js` itself only exposes the callable
-  `reconcileGroups()`/`handleGroupsAlarm()`.
+- **Runs once per browser launch AND periodically thereafter**, on the
+  SAME interval as the main tab-sync check (`syncIntervalMinutes`), and
+  only for the active profile's groups that have at least one saved rule.
+  The first fire is delayed (`groupsStartupDelaySeconds`, default 15s) so
+  the browser's own session restore has time to finish repopulating
+  windows/tabs/groups first — reconciling against a still-incomplete
+  snapshot could wrongly judge a not-yet-restored tab "missing" or
+  "duplicate"; the alarm then recurs at `syncIntervalMinutes` going
+  forward, same as `saveTabsAlarm`. Alarm registration (both the initial
+  delay and the recurring period, plus keeping the period in sync when
+  `syncIntervalMinutes` changes mid-session — see `ensureGroupsAlarmPeriod`)
+  lives in `background.js` (browser-chrome-only bits) — `groups-core.js`
+  itself only exposes the callable `reconcileGroups()`/`handleGroupsAlarm()`
+  and has no opinion on cadence. Running mid-session (not just at launch)
+  is safe: reopening a missing essential tab, and closing an exact
+  duplicate, both only ever act on unambiguous, fully-loaded tab state; and
+  undeclared-tab handling is a non-destructive UNGROUP, not a close (see
+  the bullet above) — the one thing that made a periodic mid-session pass
+  too risky before that change.
 - **`reconcileGroups()` also respects the master `syncEnabled` switch** —
   pausing sync pauses the whole extension, groups module included.
 
