@@ -182,10 +182,12 @@ Another independent module: tracks the last time each of your open tabs
 actually had focus, and — off by default — archives one that's gone
 unlooked-at for too long instead of letting it sit open forever.
 
-- **Idle threshold** (default **3 days**, configurable). A tab counts as
-  "looked at" whenever it's the active tab in a window that has focus —
-  switching to it, or Alt-Tabbing back to a window that already had it
-  active, both count. Merely being open in a background tab doesn't.
+- **Idle threshold** (default **3 days**), set as separate days/hours/
+  minutes fields — so a threshold under a day (e.g. "2 hours") is just as
+  easy to set as "3 days" is. A tab counts as "looked at" whenever it's
+  the active tab in a window that has focus — switching to it, or
+  Alt-Tabbing back to a window that already had it active, both count.
+  Merely being open in a background tab doesn't.
 - **Archive, don't lose.** Once a tab crosses the threshold, it's saved as
   a plain bookmark — title and URL, just like a normal bookmark you made
   yourself — under `SyncMyTabs/<profile>/_archive/<year>/<month>/<day>/`
@@ -291,8 +293,8 @@ that opens automatically on first run) holds:
   delay, per-group rule editors, and **Reconcile groups now** — see
   [Tab groups (leashing)](#tab-groups-leashing--chromebrave-only) above.
 - **Auto-archive idle tabs** card — its own on/off switch (off by default),
-  the idle-days threshold, **Archive idle tabs now**, and **Clear archived
-  tabs** (asks for confirmation first) — see
+  the idle threshold as separate days/hours/minutes fields, **Archive idle
+  tabs now**, and **Clear archived tabs** (asks for confirmation first) — see
   [Auto-archive idle tabs](#auto-archive-idle-tabs) above.
 
 Every field except the checkboxes/switches (which save immediately) saves

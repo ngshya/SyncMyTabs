@@ -95,6 +95,10 @@
     .ttl-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
     .ttl-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--row-fg); flex: 1; }
     .ttl-row input[type="number"] { width: 64px; }
+    .idle-threshold-row { display: flex; gap: 14px; margin-top: 6px; }
+    .idle-field { display: flex; flex-direction: column; gap: 4px; }
+    .idle-field input[type="number"] { width: 70px; }
+    .idle-field span { font-size: 11px; color: var(--muted); }
     .profile-row, .group-row {
       display: flex; align-items: center; gap: 6px;
       padding: 6px 0; border-bottom: 1px solid var(--hairline); font-size: 13px;
@@ -271,11 +275,21 @@
     </div>
     <div class="card-desc">Tracks the last time each of your tabs actually had focus. A tab you haven't looked at in a while is saved as a bookmark under SyncMyTabs/&lt;profile&gt;/_archive/&lt;year&gt;/&lt;month&gt;/&lt;day&gt;/ and then closed — pinned tabs and tabs in a browser tab group are never touched. Off by default.</div>
     <div class="card-body">
-      <label class="field">
-        Archive a tab after it's been idle for
-        <input type="number" id="archiveIdleDays" min="1" step="1" />
-      </label>
-      <span style="font-size: 12px; color: var(--muted);">days</span>
+      <div class="field" style="margin-top: 0;">Archive a tab after it's been idle for</div>
+      <div class="idle-threshold-row">
+        <div class="idle-field">
+          <input type="number" id="archiveIdleDays" min="0" step="1" />
+          <span>days</span>
+        </div>
+        <div class="idle-field">
+          <input type="number" id="archiveIdleHours" min="0" max="23" step="1" />
+          <span>hours</span>
+        </div>
+        <div class="idle-field">
+          <input type="number" id="archiveIdleMinutes" min="0" max="59" step="1" />
+          <span>min</span>
+        </div>
+      </div>
       <div class="inline-row">
         <button id="archiveNow" class="secondary">Archive idle tabs now</button>
         <button id="archiveClear" class="danger" title="Deletes every bookmark under _archive for this profile. The tabs themselves are already closed — this only clears the saved record of them.">Clear archived tabs</button>

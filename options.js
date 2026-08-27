@@ -525,18 +525,25 @@ document.getElementById("groupsReconcileNow").addEventListener("click", async ()
 
 // ------------------------------------------------------------
 // Auto-archive idle tabs (see archive-core.js / CLAUDE.md).
-// archiveEnabled/archiveIdleDays are per-device local preferences, same
-// convention as everything else above.
+// archiveEnabled/archiveIdleDays/archiveIdleHours/archiveIdleMinutes are
+// per-device local preferences, same convention as everything else
+// above. The idle threshold is three independent day/hour/minute
+// fields (not one combined total) so the UI is three plain number
+// inputs with no lossy round-tripping between a stored total and its
+// displayed breakdown.
 // ------------------------------------------------------------
 const archiveEnabledInput = document.getElementById("archiveEnabled");
 const archiveIdleDaysInput = document.getElementById("archiveIdleDays");
+const archiveIdleHoursInput = document.getElementById("archiveIdleHours");
+const archiveIdleMinutesInput = document.getElementById("archiveIdleMinutes");
 
 async function loadArchivePrefs() {
-  const { archiveEnabled, archiveIdleDays } = await browser.runtime.sendMessage({
-    type: "ARCHIVE_GET_PREFS",
-  });
+  const { archiveEnabled, archiveIdleDays, archiveIdleHours, archiveIdleMinutes } =
+    await browser.runtime.sendMessage({ type: "ARCHIVE_GET_PREFS" });
   archiveEnabledInput.checked = archiveEnabled === true; // default OFF
-  archiveIdleDaysInput.value = archiveIdleDays || 3;
+  archiveIdleDaysInput.value = archiveIdleDays ?? 3;
+  archiveIdleHoursInput.value = archiveIdleHours ?? 0;
+  archiveIdleMinutesInput.value = archiveIdleMinutes ?? 0;
 }
 
 archiveEnabledInput.addEventListener("change", async () => {
@@ -547,16 +554,44 @@ archiveEnabledInput.addEventListener("change", async () => {
   flashStatus("Saved ✓");
 });
 
-archiveIdleDaysInput.addEventListener("change", async () => {
-  const days = Number(archiveIdleDaysInput.value);
-  if (!days || days < 1) {
-    flashStatus("Idle threshold must be at least 1 day", true);
-    archiveIdleDaysInput.value = 3;
-    return;
+// Each field's own "change" fires independently as the user tabs through
+// them (e.g. typing "0" into days, then "2" into hours, then "30" into
+// minutes) — reading and saving all three CURRENT field values on every
+// single one of those events, rather than only the field that just
+// changed, is what makes them accumulate into one combined threshold
+// instead of each save clobbering the others. Deliberately does NOT
+// reject/reset when the running total happens to read 0 (e.g. between
+// entering "0" into days and getting to hours): resetting every field
+// mid-edit, just because the user hasn't filled in the rest of the
+// group yet, would fight them. archive-core.js's own MIN_ARCHIVE_IDLE_MS
+// floor is the actual safety net for a genuinely all-zero threshold —
+// this just surfaces that as an informational note, never a forced
+// reset.
+async function saveArchiveIdleThreshold() {
+  const clamp = (v) => Math.max(0, Math.round(Number(v)) || 0);
+  const days = clamp(archiveIdleDaysInput.value);
+  const hours = clamp(archiveIdleHoursInput.value);
+  const minutes = clamp(archiveIdleMinutesInput.value);
+
+  archiveIdleDaysInput.value = days;
+  archiveIdleHoursInput.value = hours;
+  archiveIdleMinutesInput.value = minutes;
+  await browser.runtime.sendMessage({
+    type: "ARCHIVE_SET_PREFS",
+    archiveIdleDays: days,
+    archiveIdleHours: hours,
+    archiveIdleMinutes: minutes,
+  });
+  if (days + hours + minutes === 0) {
+    flashStatus("All zero — treated as a 1-minute minimum", true);
+  } else {
+    flashStatus("Saved ✓");
   }
-  await browser.runtime.sendMessage({ type: "ARCHIVE_SET_PREFS", archiveIdleDays: days });
-  flashStatus("Saved ✓");
-});
+}
+
+for (const input of [archiveIdleDaysInput, archiveIdleHoursInput, archiveIdleMinutesInput]) {
+  input.addEventListener("change", saveArchiveIdleThreshold);
+}
 
 document.getElementById("archiveNow").addEventListener("click", async () => {
   const btn = document.getElementById("archiveNow");

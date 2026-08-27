@@ -8,8 +8,11 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { SimWorld } = require("./sim-env.js");
 const { archiveEngineFor, activateTab } = require("./archive-test-helpers.js");
+const { MIN_ARCHIVE_IDLE_MS } = require("../archive-core.js");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
 
 // Same helper as ttl-cleanup.test.js / mirror-open-debounce.test.js:
 // runs `fn(advance)` with Date.now() frozen and advanceable, then always
@@ -350,4 +353,79 @@ test("clearArchiveForActiveProfile with nothing archived yet is a safe no-op", a
 
   await ae.clearArchiveForActiveProfile(); // must not throw
   assert.deepEqual(await archivedEntries(a, ae), []);
+});
+
+test("the idle threshold can be set purely in hours/minutes, with 0 days", async () => {
+  await withFakeClock(1_700_000_000_000, async (advance) => {
+    const world = new SimWorld();
+    // 0 days — a threshold under a day is otherwise impossible to
+    // express with days alone.
+    const a = world.addDevice({
+      deviceName: "A",
+      storage: { archiveEnabled: true, archiveIdleDays: 0, archiveIdleHours: 2, archiveIdleMinutes: 30 },
+    });
+    const ae = archiveEngineFor(a);
+
+    await a.openTab("https://example.com/short-fuse");
+    await activateTab(a, "https://example.com/short-fuse");
+
+    advance(2 * HOUR_MS + 29 * MINUTE_MS); // just short of 2h30m
+    await runReconcile(a, ae);
+    assert.deepEqual(a.openUrls(), ["https://example.com/short-fuse"], "not idle long enough yet");
+
+    advance(2 * MINUTE_MS); // now past 2h30m
+    await runReconcile(a, ae);
+    assert.deepEqual(a.openUrls(), [], "archived once past the hours/minutes threshold");
+  });
+});
+
+test("days, hours, and minutes combine into a single threshold", async () => {
+  await withFakeClock(1_700_000_000_000, async (advance) => {
+    const world = new SimWorld();
+    // 1 day + 2 hours + 0 minutes = 26 hours total.
+    const a = world.addDevice({
+      deviceName: "A",
+      storage: { archiveEnabled: true, archiveIdleDays: 1, archiveIdleHours: 2, archiveIdleMinutes: 0 },
+    });
+    const ae = archiveEngineFor(a);
+
+    await a.openTab("https://example.com/combined");
+    await activateTab(a, "https://example.com/combined");
+
+    advance(26 * HOUR_MS - MINUTE_MS);
+    await runReconcile(a, ae);
+    assert.deepEqual(a.openUrls(), ["https://example.com/combined"], "just short of 26h");
+
+    advance(2 * MINUTE_MS);
+    await runReconcile(a, ae);
+    assert.deepEqual(a.openUrls(), [], "past the combined 26h threshold");
+  });
+});
+
+test("an all-zero stored threshold falls back to the 1-minute safety floor, never 0", async () => {
+  await withFakeClock(1_700_000_000_000, async (advance) => {
+    const world = new SimWorld();
+    // Bypasses the UI's own "must be more than zero" validation —
+    // simulates storage edited some other way.
+    const a = world.addDevice({
+      deviceName: "A",
+      storage: { archiveEnabled: true, archiveIdleDays: 0, archiveIdleHours: 0, archiveIdleMinutes: 0 },
+    });
+    const ae = archiveEngineFor(a);
+
+    assert.equal(await ae.archiveIdleThresholdMs(), MIN_ARCHIVE_IDLE_MS);
+
+    await a.openTab("https://example.com/zeroed");
+    await activateTab(a, "https://example.com/zeroed");
+    await runReconcile(a, ae);
+    assert.deepEqual(
+      a.openUrls(),
+      ["https://example.com/zeroed"],
+      "a just-activated tab must not be archived instantly"
+    );
+
+    advance(MIN_ARCHIVE_IDLE_MS + 1);
+    await runReconcile(a, ae);
+    assert.deepEqual(a.openUrls(), [], "archived once past the 1-minute floor");
+  });
 });
