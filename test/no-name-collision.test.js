@@ -34,12 +34,12 @@ function topLevelDeclarations(filePath) {
   return names;
 }
 
-// background.js, sync-core.js, AND groups-core.js are all loaded into
-// that same one shared scope (see manifest.json's background.scripts /
-// content_scripts order) — check every pair.
-const FILES = ["background.js", "sync-core.js", "groups-core.js"];
+// background.js, sync-core.js, groups-core.js, AND archive-core.js are
+// all loaded into that same one shared scope (see manifest.json's
+// background.scripts / content_scripts order) — check every pair.
+const FILES = ["background.js", "sync-core.js", "groups-core.js", "archive-core.js"];
 
-test("background.js, sync-core.js, and groups-core.js declare no colliding top-level names", () => {
+test("background.js, sync-core.js, groups-core.js, and archive-core.js declare no colliding top-level names", () => {
   const declsByFile = new Map(
     FILES.map((f) => [f, topLevelDeclarations(path.join(__dirname, "..", f))])
   );

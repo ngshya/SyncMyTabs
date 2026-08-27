@@ -162,10 +162,48 @@ group from wandering outside them.
   cross-device identifier (a browser's internal group id is local and
   meaningless on another device) — an untitled group is simply invisible to
   this module.
-- Manage it all from the popup's **"Tab groups"** section: per-group rule
-  editors (with quick-add buttons for tabs already open in that group), a
-  leashing on/off switch, the ungroup-undeclared-tabs toggle, the pin-to-start
-  toggle, the startup delay, and a manual "Reconcile groups now" button.
+- ⚠️ **Turn off your browser's own tab-group sync** (its account-level sync
+  of tab-group membership, separate from bookmark sync) for any profile
+  this module manages. Two independent mechanisms reconciling group
+  membership at once — this module's rule-based checks and the browser's
+  own — can fight each other. This is a browser setting, not something
+  SyncMyTabs can detect or turn off on your behalf.
+- Manage it all from the full settings page's **"Tab groups"** card:
+  per-group rule editors (with quick-add buttons for tabs already open in
+  that group), a leashing on/off switch, the ungroup-undeclared-tabs
+  toggle, the pin-to-start toggle, the startup delay, and a manual
+  "Reconcile groups now" button.
+
+---
+
+## Auto-archive idle tabs
+
+Another independent module: tracks the last time each of your open tabs
+actually had focus, and — off by default — archives one that's gone
+unlooked-at for too long instead of letting it sit open forever.
+
+- **Idle threshold** (default **3 days**, configurable). A tab counts as
+  "looked at" whenever it's the active tab in a window that has focus —
+  switching to it, or Alt-Tabbing back to a window that already had it
+  active, both count. Merely being open in a background tab doesn't.
+- **Archive, don't lose.** Once a tab crosses the threshold, it's saved as
+  a plain bookmark — title and URL, just like a normal bookmark you made
+  yourself — under `SyncMyTabs/<profile>/_archive/`, and only then closed.
+  A tab is never closed unless its bookmark was saved first. Since it's an
+  ordinary bookmark, it syncs to your other devices the same way everything
+  else here does, and you get it back exactly the way you'd get any
+  bookmark back: open it from your bookmark manager. There's no separate
+  "restore" feature in the extension — the bookmark folder *is* the
+  restore mechanism.
+- **Pinned tabs and tabs in a browser tab group are never touched**, no
+  matter how idle — same exclusion the rest of SyncMyTabs applies
+  everywhere else.
+- **Off by default.** Closing tabs automatically is destructive, even with
+  a bookmark left behind — turn it on from the full settings page's
+  **"Auto-archive idle tabs"** card, where you can also change the idle
+  threshold and trigger a manual check.
+- Runs on the same check interval as tab sync, at browser startup and then
+  periodically — no separate interval setting to configure.
 
 ---
 
@@ -200,48 +238,57 @@ Then, on either browser:
 
 ## Usage
 
-Everything — status and settings alike — lives in one place: the **popup**
-(click the toolbar icon). There's no separate settings page.
+The **popup** (click the toolbar icon) is a compact status/quick-toggle
+panel: your active profile, an on/off switch for each of the three feature
+modules (open-tab sync, tab groups, auto-archive), a **Sync now** button,
+the last mirror activity, and a button to open the **full settings page**
+for everything else. The toolbar icon itself changes to a greyed-out
+"paused" icon (with an **OFF** badge) whenever sync is off, so the state is
+obvious without opening anything.
 
-- **Synchronization on/off** — a switch that **pauses sync in both directions**:
-  while off, this device neither pushes its own tab changes nor reacts to other
-  devices'. The toolbar icon changes to a greyed-out "paused" icon (with an
-  **OFF** badge) so the state is obvious. Sync resumes exactly where it left
-  off when you switch it back on.
+The full settings page (**Open full settings** in the popup, or the tab
+that opens automatically on first run) holds:
+
 - **Device name** — tags the tabs this device opens, so others know where they
   came from. Saved as soon as you leave the field.
 - **Profiles** — manage which profiles exist, which one is active on this
   device, and switch instantly. Removing one from the list only removes it
   from *this device's* picker — data already saved under that name, on this or
   any other device, is kept and stays restorable.
+- **Theme** — System (default, follows your OS), Light, or Dark.
 - **Check interval** (default 1 minute) — opens/closes sync immediately
-  regardless; this only controls the background double-check cadence.
-- **Lazy restore** (default on) — open mirrored-in tabs as placeholders that
-  don't load from the network until you view each one.
-- **Require a click to load a lazy tab** (default on) — a lazily-restored
-  placeholder waits for an explicit click before loading the real page,
-  instead of loading as soon as you switch to the tab; prevents autoplay
-  (e.g. a YouTube video) from starting just because you switched to it. Turn
-  off to restore the old "load as soon as visible" behavior.
-- **Cleanup / TTL** (default on, **14 days**) — delete a device's bookmark
-  entry if it hasn't been updated in this many days (safety net for a device
-  that never comes back to agree "closed").
-- **Close duplicate tabs with the same URL** (default **off** — closing tabs
-  automatically is destructive) — periodically closes any extra local tabs
-  that share the exact same URL, keeping the oldest. Matching is by exact
-  URL string, so e.g. a trailing-slash or query-string difference isn't
-  considered a duplicate.
-- **Tab groups (this profile)** (Chrome/Brave only) — the leashing module's
-  own on/off switch, the "close tabs matching no rule" toggle (off by
-  default), the startup check delay, and per-group rule editors — see
+  regardless; this only controls the background double-check cadence, shared
+  by the tab-groups and auto-archive checks too.
+- **Open tabs sync** card — also the **master switch**: turning it off
+  pauses sync, tab groups, AND auto-archive, in both directions, until you
+  switch it back on.
+  - **Lazy restore** (default on) — open mirrored-in tabs as placeholders that
+    don't load from the network until you view each one.
+  - **Require a click to load a lazy tab** (default on) — a lazily-restored
+    placeholder waits for an explicit click before loading the real page,
+    instead of loading as soon as you switch to the tab; prevents autoplay
+    (e.g. a YouTube video) from starting just because you switched to it. Turn
+    off to restore the old "load as soon as visible" behavior.
+  - **Cleanup / TTL** (default on, **14 days**) — delete a device's bookmark
+    entry if it hasn't been updated in this many days (safety net for a device
+    that never comes back to agree "closed").
+  - **Close duplicate tabs with the same URL** (default **off** — closing tabs
+    automatically is destructive) — periodically closes any extra local tabs
+    that share the exact same URL, keeping the oldest. Matching is by exact
+    URL string, so e.g. a trailing-slash or query-string difference isn't
+    considered a duplicate.
+  - **Sync now** — force an immediate check in both directions.
+- **Tab groups** card (Chrome/Brave only) — the leashing module's own
+  on/off switch, the tab-group-sync warning, the "ungroup tabs matching no
+  rule" toggle (off by default), the pin-to-start toggle, the startup check
+  delay, per-group rule editors, and **Reconcile groups now** — see
   [Tab groups (leashing)](#tab-groups-leashing--chromebrave-only) above.
-- **Sync now** — force an immediate check in both directions.
-- **Reconcile groups now** — force an immediate tab-groups check (normally
-  only run once per browser launch).
-- The last row shows the last mirror activity, and the extension version.
+- **Auto-archive idle tabs** card — its own on/off switch (off by default),
+  the idle-days threshold, and **Archive idle tabs now** — see
+  [Auto-archive idle tabs](#auto-archive-idle-tabs) above.
 
-Every field except the checkboxes (which save immediately) saves when you
-leave it (blur, or press Enter).
+Every field except the checkboxes/switches (which save immediately) saves
+when you leave it (blur, or press Enter).
 
 ---
 
@@ -261,7 +308,7 @@ SyncMyTabs' own initiative):
 | `tabs` | Read open tab URLs/titles; open/close/group tabs to mirror, restore, and reconcile tab groups |
 | `tabGroups` | Tab-group leashing module only (Chrome/Brave — no such API on Firefox): read a group's title, create/update a group when reopening a missing declared tab |
 | `storage` | Store this device's settings and state |
-| `alarms` | Drive the periodic double-check, cleanup sweep, and the once-per-launch tab-groups reconcile |
+| `alarms` | Drive the periodic double-check, cleanup sweep, tab-groups reconcile, and auto-archive idle check |
 | `<all_urls>` host permission + content script | Tab-group leashing module only: intercepts a link click on a page that's inside a *configured* tab group (see [Tab groups (leashing)](#tab-groups-leashing--chromebrave-only)) — an ungrouped tab is unaffected |
 
 ---
@@ -324,6 +371,13 @@ SyncMyTabs' own initiative):
   Upgrading starts fresh; any old `SyncMyTabs/<profile>/…` or
   `SyncMyTabs/<device>/…` data from a prior version is left in place, unused —
   safe to delete by hand.
+- **Archived tabs are a one-way export, not a restore feature.** Auto-archive
+  only ever writes bookmarks to `_archive`; there's no in-extension
+  "browse/restore archived tabs" UI. Restoring one is the same as opening
+  any other bookmark, through your browser's own bookmark manager.
+- **The browser's own tab-group sync should be off** for any profile the
+  tab-groups module manages — see its own section above. SyncMyTabs can't
+  detect or disable it for you; this is a browser-level setting.
 
 ---
 
@@ -333,10 +387,13 @@ SyncMyTabs' own initiative):
 |---|---|
 | `manifest.json` | Manifest V3 definition, permissions, entry points (Chrome service worker + Firefox background scripts) |
 | `sync-core.js` | All the open-tab sync/reconcile logic, testable independently of a real browser (see Testing below) |
-| `groups-core.js` | The independent tab-group leashing module's logic — its own bookmark-backed rule storage, link-leash decision, and startup reconcile — same `env`-parameterized, testable style as `sync-core.js` |
-| `background.js` | Thin wiring: real browser events → `sync-core.js` / `groups-core.js` |
+| `groups-core.js` | The independent tab-group leashing module's logic — its own bookmark-backed rule storage, link-leash decision, and reconcile pass — same `env`-parameterized, testable style as `sync-core.js` |
+| `archive-core.js` | The independent auto-archive module's logic — tracks tab focus, saves+closes idle ones — same `env`-parameterized, testable style |
+| `background.js` | Thin wiring: real browser events → `sync-core.js` / `groups-core.js` / `archive-core.js` |
 | `link-leash-content.js` | Content script for the leashing module — intercepts link clicks on a tab it's confirmed is inside a configured group |
-| `popup.html` / `popup.js` | Toolbar popup UI — status, all settings, profile management, and tab-group rule editors, in one place |
+| `popup.html` / `popup.js` | Compact toolbar popup — status, per-module on/off switches, Sync now, and a link to full settings |
+| `options.html` / `options.js` | Full settings page — device name, profiles, check interval, every module's detail settings, theme |
+| `theme.css` / `theme.js` | Shared dark/light/system theme, used by both the popup and the settings page |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page |
 | `browser-polyfill.min.js` | Mozilla's WebExtension polyfill (vendored) so `browser.*` works on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |

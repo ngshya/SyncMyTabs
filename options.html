@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SyncMyTabs — Settings</title>
+  <link rel="stylesheet" href="theme.css" />
+  <style>
+    body {
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 28px 24px 60px;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0 0 4px;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 24px;
+    }
+    input[type="text"], input[type="number"], select {
+      width: 100%;
+      padding: 8px 9px;
+      font-size: 13px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      box-sizing: border-box;
+      background: var(--input-bg);
+      color: inherit;
+    }
+    label.field { display: block; font-size: 12px; color: var(--muted); margin-top: 14px; }
+    label.field input, label.field select { margin-top: 4px; }
+    button {
+      padding: 9px 16px;
+      background: var(--accent);
+      color: var(--accent-fg);
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    button:hover { background: var(--accent-hover); }
+    button:disabled { background: var(--accent-disabled); color: var(--accent-disabled-fg); cursor: default; }
+    .secondary { background: var(--secondary-bg); }
+    .secondary:hover { background: var(--secondary-hover); }
+    .danger { background: var(--danger-bg); }
+    .danger:hover { background: var(--danger-hover); }
+    .card {
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      padding: 18px 20px;
+      margin-top: 20px;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+    .card-title { font-size: 15px; font-weight: 600; }
+    .card-desc { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+    .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; inset: 0; background: var(--switch-track);
+      border-radius: 22px; transition: 0.15s; cursor: pointer;
+    }
+    .slider::before {
+      content: ""; position: absolute; width: 16px; height: 16px;
+      left: 3px; top: 3px; background: var(--switch-thumb); border-radius: 50%;
+      transition: 0.15s;
+    }
+    .switch input:checked + .slider { background: var(--accent); }
+    .switch input:checked + .slider::before { transform: translateX(18px); }
+    .card-body { margin-top: 12px; }
+    .section-title {
+      font-size: 11px;
+      color: var(--section-title);
+      margin-top: 16px;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .inline-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+    .inline-row input, .inline-row select { margin-top: 0; }
+    .inline-row button { width: auto; padding: 7px 12px; font-size: 12px; white-space: nowrap; }
+    .checkbox-row {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; color: var(--row-fg); margin-top: 10px;
+    }
+    .checkbox-row input { width: auto; }
+    .ttl-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+    .ttl-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--row-fg); flex: 1; }
+    .ttl-row input[type="number"] { width: 64px; }
+    .profile-row, .group-row {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 0; border-bottom: 1px solid var(--hairline); font-size: 13px;
+    }
+    .profile-row .name, .group-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .group-row .rule-count { font-size: 11px; color: var(--muted); white-space: nowrap; }
+    .badge {
+      font-size: 10px; border-radius: 4px; padding: 1px 6px; white-space: nowrap;
+    }
+    .badge-blue { color: var(--badge-blue-fg); border: 1px solid var(--badge-blue-border); }
+    .badge-green { color: var(--badge-green-fg); border: 1px solid var(--badge-green-border); }
+    .profile-row button, .group-row button { width: auto; padding: 5px 10px; font-size: 11px; }
+    .paused-note, .warn-note {
+      font-size: 12px; border-radius: 6px; padding: 8px 10px; margin-top: 10px;
+    }
+    .paused-note {
+      color: var(--paused-fg); background: var(--paused-bg); border: 1px solid var(--paused-border);
+    }
+    .warn-note {
+      color: var(--warn-fg); background: var(--warn-bg); border: 1px solid var(--warn-border);
+    }
+    #status {
+      font-size: 12px; color: var(--status-ok); text-align: center;
+      min-height: 16px; margin-top: 14px; position: sticky; bottom: 0;
+    }
+    .version { font-size: 11px; color: var(--version-fg); text-align: center; margin-top: 20px; }
+    #groupEditor {
+      margin-top: 10px; padding: 10px; border: 1px solid var(--hairline);
+      border-radius: 8px; background: var(--card-bg);
+    }
+    #groupEditor .editor-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+    .rule-editor-row { border-bottom: 1px solid var(--hairline); padding: 8px 0; }
+    .rule-editor-row:last-child { border-bottom: none; }
+    .rule-editor-row label { display: block; font-size: 11px; color: var(--muted); margin-top: 6px; }
+    .rule-editor-row input {
+      width: 100%; padding: 6px 7px; font-size: 12px; border: 1px solid var(--border);
+      border-radius: 5px; box-sizing: border-box; background: var(--input-bg); color: inherit; margin-top: 3px;
+    }
+    .rule-editor-row .delete-rule { width: auto; margin-top: 6px; padding: 4px 10px; font-size: 11px; }
+    .quick-add-item { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 0; }
+    .quick-add-item span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .quick-add-item button { width: auto; padding: 4px 8px; font-size: 11px; }
+    .top-actions { display: flex; justify-content: flex-end; margin-top: -8px; }
+    .top-actions select { width: auto; padding: 6px 8px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>SyncMyTabs</h1>
+  <div class="subtitle">Full settings — toggle individual features from the toolbar popup.</div>
+
+  <div class="top-actions">
+    <label class="field" style="margin-top: 0;">
+      Theme
+      <select id="themePreference">
+        <option value="system">System</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </label>
+  </div>
+
+  <label class="field">
+    Device name
+    <input type="text" id="deviceName" placeholder="e.g. laptop-vivobook" />
+  </label>
+
+  <div class="section-title">Profiles</div>
+  <div id="profileList"></div>
+  <div class="inline-row">
+    <input type="text" id="newProfileName" placeholder="New profile name" />
+    <button id="addProfile" class="secondary">Add</button>
+  </div>
+
+  <label class="field" title="Opens/closes still sync immediately — this only sets the background double-check, shared by the tab-group and auto-archive checks too">
+    Check interval (minutes)
+    <input type="number" id="intervalMinutes" min="1" step="1" />
+  </label>
+
+  <!-- ============================================================
+       Open tabs sync
+       ============================================================ -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Open tabs sync</span>
+      <label class="switch">
+        <input type="checkbox" id="syncToggle" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="card-desc">Mirrors your open tabs across devices on the same profile, using bookmarks as the transport. This is also the master switch — turning it off pauses tab groups and auto-archive too.</div>
+    <div id="pausedNote" class="paused-note" hidden>
+      Paused — this device won't send or receive tab updates, and the tab-group and auto-archive checks are paused too.
+    </div>
+    <div class="card-body">
+      <label class="checkbox-row">
+        <input type="checkbox" id="openRestoredLazy" />
+        Open mirrored tabs lazily (load only when viewed)
+      </label>
+      <label class="checkbox-row" title="A lazily-restored placeholder waits for you to click it before loading the real page, instead of loading as soon as you switch to the tab — so a page that autoplays media (a YouTube video, for instance) never starts just from switching tabs.">
+        <input type="checkbox" id="lazyRequireClick" />
+        Require a click to load a lazy tab (prevents autoplay on switch)
+      </label>
+      <div class="ttl-row">
+        <label>
+          <input type="checkbox" id="ttlEnabled" />
+          Clean up stale entries after
+        </label>
+        <input type="number" id="ttlDays" min="1" step="1" />
+        <span style="font-size: 13px;">days</span>
+      </div>
+      <label class="checkbox-row" title="Closes extra tabs on this device with the exact same URL, keeping the oldest. Off by default — you may have two tabs on the same page on purpose.">
+        <input type="checkbox" id="closeDuplicateTabs" />
+        Close duplicate tabs with the same URL
+      </label>
+      <div class="inline-row">
+        <button id="syncNow">Sync now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       Tab groups (leashing)
+       ============================================================ -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Tab groups</span>
+      <label class="switch">
+        <input type="checkbox" id="groupsLeashEnabled" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="card-desc" title="Chrome/Brave only — links clicked inside a titled tab group either navigate in place, or always open in a fresh ungrouped tab; missing group tabs reopen automatically. Rules sync via bookmarks, per profile, same as tabs.">
+      Keeps a titled browser tab group's declared pages present, and keeps links clicked inside it from wandering outside the group. Chrome/Brave only.
+    </div>
+    <div class="warn-note">
+      ⚠️ Turn off your browser's own tab-group sync (e.g. Chrome's account sync for tab groups, under its sync settings) for profiles managed here — having both try to sync group membership at once can conflict with this module's own reconcile checks.
+    </div>
+    <div class="card-body">
+      <label class="checkbox-row" title="Detaches the tab from the group — it stays open, just no longer grouped. Checked at browser startup and periodically, on the same interval as tab sync above.">
+        <input type="checkbox" id="groupsUngroupUndeclared" />
+        Ungroup tabs matching no rule
+      </label>
+      <label class="checkbox-row" title="Moves each configured group to the start of its window's tab strip on every check">
+        <input type="checkbox" id="groupsPinToStart" />
+        Pin configured groups to the start of the tab bar
+      </label>
+      <label class="field">
+        Startup check delay (seconds)
+        <input type="number" id="groupsStartupDelay" min="0" step="1" />
+      </label>
+      <div class="section-title">Groups (this profile)</div>
+      <div id="groupList"></div>
+      <div class="inline-row">
+        <input type="text" id="newGroupName" placeholder="New group title (must match an open browser tab group)" />
+        <button id="addGroup" class="secondary">Add</button>
+      </div>
+      <div id="groupEditor" hidden></div>
+      <div class="inline-row">
+        <button id="groupsReconcileNow" class="secondary">Reconcile groups now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       Auto-archive idle tabs
+       ============================================================ -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Auto-archive idle tabs</span>
+      <label class="switch">
+        <input type="checkbox" id="archiveEnabled" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="card-desc">Tracks the last time each of your tabs actually had focus. A tab you haven't looked at in a while is saved as a bookmark under SyncMyTabs/&lt;profile&gt;/_archive/ and then closed — pinned tabs and tabs in a browser tab group are never touched. Off by default.</div>
+    <div class="card-body">
+      <label class="field">
+        Archive a tab after it's been idle for
+        <input type="number" id="archiveIdleDays" min="1" step="1" />
+      </label>
+      <span style="font-size: 12px; color: var(--muted);">days</span>
+      <div class="inline-row">
+        <button id="archiveNow" class="secondary">Archive idle tabs now</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="status"></div>
+  <div class="version" id="version"></div>
+
+  <script src="browser-polyfill.min.js"></script>
+  <script src="theme.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

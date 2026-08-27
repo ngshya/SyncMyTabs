@@ -48,6 +48,13 @@
 // Chrome/Brave only (Firefox has no tabGroups API — see groups-core.js).
 // Group RULES sync via the SAME bookmark mechanism as everything else,
 // scoped by the SAME active-profile concept.
+//
+// archive-core.js is a THIRD independent module: tracks the last time
+// each of this device's own tabs was actually looked at, and — opt-in,
+// off by default — saves a tab that's gone unlooked-at for longer than
+// a configurable threshold (default 3 days) as a plain bookmark under a
+// per-profile "_archive" folder, then closes it. Pinned/grouped tabs are
+// never candidates. See archive-core.js's own header comment.
 // ============================================================
 
 // Cross-browser API access: use the promise-based `browser.*` namespace
@@ -57,21 +64,28 @@
 // manifest `background.scripts` instead, and `importScripts` doesn't
 // exist on the event page — so guard the call.
 if (typeof importScripts === "function") {
-  importScripts("browser-polyfill.min.js", "sync-core.js", "groups-core.js");
+  importScripts(
+    "browser-polyfill.min.js",
+    "sync-core.js",
+    "groups-core.js",
+    "archive-core.js"
+  );
 }
 
 const engine = createSyncEngine(browser);
 const groupsEngine = createGroupsEngine(browser, engine);
+const archiveEngine = createArchiveEngine(browser, engine);
 
-// NOTE: sync-core.js and groups-core.js are loaded into this SAME
-// script via importScripts (Chrome) / sequential <script> tags
-// (Firefox) — all three share ONE top-level `let`/`const` lexical
-// scope, so declaring a top-level const/let here (or in groups-core.js)
-// with the SAME NAME as one of sync-core.js's own top-level bindings
-// (e.g. its internal DEFAULT_PROFILE, DEFAULT_INTERVAL_MINUTES) throws
-// a SyntaxError ("already been declared") that silently prevents this
-// ENTIRE script from running — no listeners get registered at all.
-// Always read such values off `engine.*`/`groupsEngine.*` instead of
+// NOTE: sync-core.js, groups-core.js, AND archive-core.js are loaded
+// into this SAME script via importScripts (Chrome) / sequential
+// <script> tags (Firefox) — all four share ONE top-level `let`/`const`
+// lexical scope, so declaring a top-level const/let here (or in
+// groups-core.js/archive-core.js) with the SAME NAME as one of another
+// file's own top-level bindings (e.g. sync-core.js's internal
+// DEFAULT_PROFILE, DEFAULT_INTERVAL_MINUTES) throws a SyntaxError
+// ("already been declared") that silently prevents this ENTIRE script
+// from running — no listeners get registered at all. Always read such
+// values off `engine.*`/`groupsEngine.*`/`archiveEngine.*` instead of
 // re-declaring a same-named local, and give any background.js-only
 // constant a name that can't collide (see test/no-name-collision.test.js).
 const FALLBACK_INTERVAL_MINUTES = 1;
@@ -138,11 +152,10 @@ browser.runtime.onInstalled.addListener(async () => {
     });
   }
   if (!deviceName) {
-    // There's no separate options page anymore (settings live in the
-    // popup) and popups can't be opened programmatically — so open the
-    // SAME popup.html as a regular tab instead, purely for this
-    // first-run prompt. It's the identical page either way.
-    browser.tabs.create({ url: browser.runtime.getURL("popup.html") });
+    // Popups can't be opened programmatically — so open the full
+    // options page as a regular tab instead, purely for this first-run
+    // prompt (device name + profile setup live there).
+    browser.tabs.create({ url: browser.runtime.getURL("options.html") });
   }
 });
 
@@ -150,6 +163,7 @@ browser.runtime.onStartup.addListener(async () => {
   ensureAlarm();
   refreshActionIcon();
   await engine.handleStartup();
+  await archiveEngine.handleStartupSeed();
   // First fire delayed (default 15s, configurable) so the browser's own
   // session restore has time to finish repopulating windows/tabs/groups
   // first — reconciling against a still-incomplete snapshot could
@@ -172,6 +186,10 @@ browser.runtime.onStartup.addListener(async () => {
 browser.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== "saveTabsAlarm") return;
   await engine.handleAlarm();
+  // Reuses the SAME periodic alarm rather than registering a third one —
+  // there's no separate "archive check interval" setting, it just piggy-
+  // backs on the main sync cadence (syncIntervalMinutes).
+  await archiveEngine.handleArchiveAlarm();
 });
 
 browser.alarms.onAlarm.addListener(async (alarm) => {
@@ -192,10 +210,27 @@ browser.storage.onChanged.addListener((changes, area) => {
 
 browser.tabs.onRemoved.addListener((tabId, removeInfo) => {
   engine.handleTabRemoved(tabId, removeInfo);
+  archiveEngine.handleTabRemoved(tabId);
 });
 
 browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
   engine.handleTabUpdated(tabId, changeInfo);
+});
+
+// archive-core.js's own activity tracking — see its header comment.
+// Cheap and unconditional (regardless of archiveEnabled): a tab that's
+// currently active in its window, or whose window just gained OS focus,
+// counts as "looked at" right now.
+browser.tabs.onActivated.addListener((activeInfo) => {
+  archiveEngine.handleTabActivated(activeInfo);
+});
+
+browser.windows.onFocusChanged.addListener((windowId) => {
+  archiveEngine.handleWindowFocusChanged(windowId);
+});
+
+browser.tabs.onCreated.addListener((tab) => {
+  archiveEngine.handleTabCreated(tab);
 });
 
 browser.bookmarks.onCreated.addListener((id, node) => {
@@ -331,6 +366,38 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "GROUPS_RECONCILE_NOW") {
     (async () => {
       await groupsEngine.reconcileGroups();
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  // ---- Auto-archive module (archive-core.js) ----
+
+  if (message?.type === "ARCHIVE_GET_PREFS") {
+    (async () => {
+      const [archiveEnabled, archiveIdleDays] = await Promise.all([
+        archiveEngine.isArchiveEnabled(),
+        archiveEngine.archiveIdleDays(),
+      ]);
+      sendResponse({ archiveEnabled, archiveIdleDays });
+    })();
+    return true;
+  }
+
+  if (message?.type === "ARCHIVE_SET_PREFS") {
+    (async () => {
+      const updates = {};
+      if (message.archiveEnabled !== undefined) updates.archiveEnabled = message.archiveEnabled;
+      if (message.archiveIdleDays !== undefined) updates.archiveIdleDays = message.archiveIdleDays;
+      await browser.storage.local.set(updates);
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message?.type === "ARCHIVE_RECONCILE_NOW") {
+    (async () => {
+      await archiveEngine.reconcileArchive();
       sendResponse({ ok: true });
     })();
     return true;

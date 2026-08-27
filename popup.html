@@ -3,324 +3,120 @@
 <head>
   <meta charset="UTF-8" />
   <title>SyncMyTabs</title>
+  <link rel="stylesheet" href="theme.css" />
   <style>
-    :root { color-scheme: light dark; }
     body {
       font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-      width: 320px;
-      max-height: 560px;
-      overflow-y: auto;
-      padding: 14px;
-      background: #ffffff;
-      color: #1a1a1a;
+      width: 300px;
+      padding: 16px;
     }
     .row {
       font-size: 13px;
-      margin-bottom: 6px;
-      color: #444;
+      margin-bottom: 8px;
+      color: var(--row-fg);
       display: flex;
       justify-content: space-between;
       gap: 8px;
     }
-    .row strong { color: #111; text-align: right; }
-    input[type="text"], input[type="number"], select {
-      width: 100%;
-      padding: 7px 8px;
-      font-size: 13px;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-      box-sizing: border-box;
-      background: white;
-      color: inherit;
-    }
-    label.field { display: block; font-size: 12px; color: #666; margin-top: 12px; }
-    label.field input { margin-top: 3px; }
+    .row strong { color: var(--row-strong); text-align: right; }
     button {
       width: 100%;
       margin-top: 10px;
       padding: 9px 0;
-      background: #2563eb;
-      color: white;
+      background: var(--accent);
+      color: var(--accent-fg);
       border: none;
       border-radius: 6px;
       cursor: pointer;
       font-size: 14px;
       font-weight: 600;
     }
-    button:hover { background: #1d4ed8; }
-    button:disabled { background: #93b4f0; cursor: default; }
-    .secondary { background: #444; }
-    .secondary:hover { background: #333; }
-    .danger { background: #dc2626; }
-    .danger:hover { background: #b91c1c; }
-    .section-title {
-      font-size: 12px;
-      color: #888;
-      margin-top: 16px;
-      margin-bottom: 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-    }
-    .inline-row {
-      display: flex;
-      gap: 6px;
-      align-items: center;
-      margin-top: 4px;
-    }
-    .inline-row input, .inline-row select { margin-top: 0; }
-    .inline-row button {
-      width: auto;
-      margin-top: 0;
-      padding: 6px 10px;
-      font-size: 12px;
-      white-space: nowrap;
-    }
-    .checkbox-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 12px;
-      color: #444;
-      margin-top: 10px;
-    }
-    .checkbox-row input { width: auto; }
-    .ttl-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
-    .ttl-row label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #444; flex: 1; }
-    .ttl-row input[type="number"] { width: 56px; }
-    .profile-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 0;
-      border-bottom: 1px solid #eee;
-      font-size: 12px;
-    }
-    .profile-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .profile-row .badge {
-      font-size: 10px;
-      color: #2563eb;
-      border: 1px solid #2563eb;
-      border-radius: 4px;
-      padding: 1px 5px;
-      white-space: nowrap;
-    }
-    .profile-row button { width: auto; margin-top: 0; padding: 4px 8px; font-size: 11px; }
-    .sync-bar {
+    button:hover { background: var(--accent-hover); }
+    button:disabled { background: var(--accent-disabled); color: var(--accent-disabled-fg); cursor: default; }
+    .secondary { background: var(--secondary-bg); }
+    .secondary:hover { background: var(--secondary-hover); }
+    .feature-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding-bottom: 10px;
-      margin-bottom: 10px;
-      border-bottom: 1px solid #eee;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--hairline);
     }
-    .sync-label { font-size: 13px; font-weight: 600; color: #111; }
-    .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+    .feature-row:last-of-type { border-bottom: none; }
+    .feature-name { font-size: 13px; font-weight: 500; }
+    .feature-hint { font-size: 11px; color: var(--muted); margin-top: 1px; }
+    .switch { position: relative; display: inline-block; width: 38px; height: 21px; flex-shrink: 0; }
     .switch input { opacity: 0; width: 0; height: 0; }
     .slider {
-      position: absolute; inset: 0; background: #c7ccd4;
-      border-radius: 22px; transition: 0.15s; cursor: pointer;
+      position: absolute; inset: 0; background: var(--switch-track);
+      border-radius: 21px; transition: 0.15s; cursor: pointer;
     }
     .slider::before {
-      content: ""; position: absolute; width: 16px; height: 16px;
-      left: 3px; top: 3px; background: #fff; border-radius: 50%;
+      content: ""; position: absolute; width: 15px; height: 15px;
+      left: 3px; top: 3px; background: var(--switch-thumb); border-radius: 50%;
       transition: 0.15s;
     }
-    .switch input:checked + .slider { background: #2563eb; }
-    .switch input:checked + .slider::before { transform: translateX(18px); }
+    .switch input:checked + .slider { background: var(--accent); }
+    .switch input:checked + .slider::before { transform: translateX(17px); }
     .paused-note {
-      font-size: 12px; color: #b45309; background: #fff7ed;
-      border: 1px solid #fed7aa; border-radius: 6px;
+      font-size: 12px; color: var(--paused-fg); background: var(--paused-bg);
+      border: 1px solid var(--paused-border); border-radius: 6px;
       padding: 6px 8px; margin-bottom: 10px;
     }
     #status {
-      font-size: 12px; color: #16a34a; text-align: center;
+      font-size: 12px; color: var(--status-ok); text-align: center;
       min-height: 14px; margin-top: 6px;
     }
-    .version {
-      font-size: 11px; color: #9aa0a6; text-align: center;
-      margin-top: 10px;
-    }
-    .group-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 0;
-      border-bottom: 1px solid #eee;
-      font-size: 12px;
-    }
-    .group-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .group-row .rule-count { font-size: 10px; color: #888; white-space: nowrap; }
-    .group-row .badge {
-      font-size: 10px;
-      color: #16a34a;
-      border: 1px solid #16a34a;
-      border-radius: 4px;
-      padding: 1px 5px;
-      white-space: nowrap;
-    }
-    .group-row button { width: auto; margin-top: 0; padding: 4px 8px; font-size: 11px; }
-    #groupEditor {
-      margin-top: 8px;
-      padding: 8px;
-      border: 1px solid #ddd;
-      border-radius: 6px;
-      background: #fafafa;
-    }
-    #groupEditor .editor-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
-    .rule-editor-row {
-      border-bottom: 1px solid #eee;
-      padding: 6px 0;
-    }
-    .rule-editor-row:last-child { border-bottom: none; }
-    .rule-editor-row label {
-      display: block;
-      font-size: 10px;
-      color: #888;
-      margin-top: 4px;
-    }
-    .rule-editor-row input {
-      width: 100%;
-      padding: 5px 6px;
-      font-size: 12px;
-      border: 1px solid #ccc;
-      border-radius: 5px;
-      box-sizing: border-box;
-      background: white;
-      color: inherit;
-      margin-top: 2px;
-    }
-    .rule-editor-row .delete-rule {
-      width: auto;
-      margin-top: 4px;
-      padding: 3px 8px;
-      font-size: 11px;
-    }
-    .quick-add-item {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 11px;
-      padding: 3px 0;
-    }
-    .quick-add-item span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .quick-add-item button { width: auto; margin-top: 0; padding: 3px 7px; font-size: 10px; }
-    @media (prefers-color-scheme: dark) {
-      body { background: #1e1f22; color: #e6e6e6; }
-      .row { color: #b8bcc4; }
-      .row strong { color: #f1f1f1; }
-      input[type="text"], input[type="number"], select {
-        background: #2a2b2e;
-        color: #e6e6e6;
-        border-color: #44464b;
-      }
-      label.field { color: #9aa0a6; }
-      .section-title { color: #9aa0a6; }
-      .checkbox-row, .ttl-row label { color: #b8bcc4; }
-      button:disabled { background: #2b3a63; color: #9db2e0; }
-      .secondary { background: #3a3b3f; }
-      .secondary:hover { background: #46474c; }
-      .profile-row { border-bottom-color: #333; }
-      .profile-row .badge { color: #7aa2ff; border-color: #7aa2ff; }
-      .sync-bar { border-bottom-color: #33353a; }
-      .sync-label { color: #f1f1f1; }
-      .slider { background: #4b4d52; }
-      .paused-note {
-        color: #fcd9a8; background: #3a2c17; border-color: #6b4f24;
-      }
-      .group-row { border-bottom-color: #333; }
-      .group-row .rule-count { color: #9aa0a6; }
-      .group-row .badge { color: #4ade80; border-color: #4ade80; }
-      #groupEditor { background: #26272b; border-color: #3a3b3f; }
-      .rule-editor-row { border-bottom-color: #333; }
-      .rule-editor-row label { color: #9aa0a6; }
-      .rule-editor-row input { background: #2a2b2e; color: #e6e6e6; border-color: #44464b; }
-    }
+    .version { font-size: 11px; color: var(--version-fg); text-align: center; margin-top: 10px; }
+    hr { border: none; border-top: 1px solid var(--hairline); margin: 12px 0; }
   </style>
 </head>
 <body>
-  <div class="sync-bar">
-    <span class="sync-label">Synchronization</span>
-    <label class="switch">
-      <input type="checkbox" id="syncToggle" />
-      <span class="slider"></span>
-    </label>
+  <div class="row">
+    <span>Profile</span><strong id="profileName">—</strong>
   </div>
   <div id="pausedNote" class="paused-note" hidden>
     Paused — this device won't send or receive tab updates.
   </div>
 
-  <label class="field">
-    Device name
-    <input type="text" id="deviceName" placeholder="e.g. laptop-vivobook" />
-  </label>
-
-  <div class="section-title">Profiles</div>
-  <div id="profileList"></div>
-  <div class="inline-row">
-    <input type="text" id="newProfileName" placeholder="New profile name" />
-    <button id="addProfile" class="secondary">Add</button>
-  </div>
-
-  <div class="section-title">Sync settings</div>
-  <label class="field" title="Opens/closes still sync immediately — this only sets the background double-check">
-    Check interval (minutes)
-    <input type="number" id="intervalMinutes" min="1" step="1" />
-  </label>
-  <label class="checkbox-row">
-    <input type="checkbox" id="openRestoredLazy" />
-    Open mirrored tabs lazily (load only when viewed)
-  </label>
-  <label class="checkbox-row" title="A lazily-restored placeholder waits for you to click it before loading the real page, instead of loading as soon as you switch to the tab — so a page that autoplays media (a YouTube video, for instance) never starts just from switching tabs.">
-    <input type="checkbox" id="lazyRequireClick" />
-    Require a click to load a lazy tab (prevents autoplay on switch)
-  </label>
-  <div class="ttl-row">
-    <label>
-      <input type="checkbox" id="ttlEnabled" />
-      Clean up stale entries after
+  <div class="feature-row">
+    <div>
+      <div class="feature-name">Open tabs sync</div>
+      <div class="feature-hint">Also the master switch</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="syncToggle" />
+      <span class="slider"></span>
     </label>
-    <input type="number" id="ttlDays" min="1" step="1" />
-    <span style="font-size: 12px;">days</span>
   </div>
-  <label class="checkbox-row" title="Closes extra tabs on this device with the exact same URL, keeping the oldest. Off by default — you may have two tabs on the same page on purpose.">
-    <input type="checkbox" id="closeDuplicateTabs" />
-    Close duplicate tabs with the same URL
-  </label>
+  <div class="feature-row">
+    <div class="feature-name">Tab groups</div>
+    <label class="switch">
+      <input type="checkbox" id="groupsToggle" />
+      <span class="slider"></span>
+    </label>
+  </div>
+  <div class="feature-row">
+    <div class="feature-name">Auto-archive idle tabs</div>
+    <label class="switch">
+      <input type="checkbox" id="archiveToggle" />
+      <span class="slider"></span>
+    </label>
+  </div>
+
   <button id="syncNow">Sync now</button>
-
-  <div class="section-title" title="Chrome/Brave only — links clicked inside a titled tab group either navigate in place, or always open in a fresh ungrouped tab; missing group tabs reopen automatically. Rules sync via bookmarks, per profile, same as tabs.">Tab groups (this profile)</div>
-  <label class="checkbox-row">
-    <input type="checkbox" id="groupsLeashEnabled" />
-    Leash links in configured groups
-  </label>
-  <label class="checkbox-row" title="Detaches the tab from the group — it stays open, just no longer grouped. Checked at browser startup and periodically, on the same interval as tab sync above.">
-    <input type="checkbox" id="groupsUngroupUndeclared" />
-    Ungroup tabs matching no rule
-  </label>
-  <label class="checkbox-row" title="Moves each configured group to the start of its window's tab strip on every check">
-    <input type="checkbox" id="groupsPinToStart" />
-    Pin configured groups to the start of the tab bar
-  </label>
-  <label class="field">
-    Startup check delay (seconds)
-    <input type="number" id="groupsStartupDelay" min="0" step="1" />
-  </label>
-  <div id="groupList"></div>
-  <div class="inline-row">
-    <input type="text" id="newGroupName" placeholder="New group title (must match an open browser tab group)" />
-    <button id="addGroup" class="secondary">Add</button>
-  </div>
-  <div id="groupEditor" hidden></div>
-  <button id="groupsReconcileNow" class="secondary">Reconcile groups now</button>
-
   <div id="status"></div>
 
   <div class="row" style="margin-top: 10px;">
     <span>Last activity</span><strong id="lastActivity">—</strong>
   </div>
+
+  <hr />
+  <button id="openOptions" class="secondary">Open full settings</button>
   <div class="version" id="version"></div>
 
   <script src="browser-polyfill.min.js"></script>
+  <script src="theme.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

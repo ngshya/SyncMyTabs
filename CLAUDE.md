@@ -56,13 +56,16 @@ Firefox.** Keep this in mind in every change:
 | `manifest.json` | Manifest V3, permissions, entry points, **version**; dual background (Chrome `service_worker` + Firefox `scripts`), `browser_specific_settings.gecko`, the tab-group leashing module's `<all_urls>` content script |
 | `sync-core.js` | **All the open-tab sync/reconcile logic**, factored out of `background.js` and parameterized over an `env` (bookmarks/tabs/windows/storage/runtime) instead of calling `browser.*` directly — see "Testing" below. Plain script, no import/export syntax (loaded via `importScripts`/`background.scripts` like the polyfill); `module.exports` at the bottom is a Node-only no-op elsewhere. |
 | `groups-core.js` | **The independent tab-group leashing module** (see its own "Tab-group leashing" section below) — same `env`-parameterized style as `sync-core.js`, plus takes the already-created sync engine instance (`createGroupsEngine(env, syncEngine)`) to reuse `getActiveProfile`/`getOrCreateProfileFolder`/`mergeFolderInto`/`isSyncEnabled` rather than re-implementing them. Chrome/Brave only (feature-detects `env.tabGroups`, a silent no-op on Firefox). |
-| `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s / `groups-core.js`'s `engine.handle*()` functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
+| `archive-core.js` | **The independent auto-archive module** (see its own "Auto-archive idle tabs" section below) — same `env`-parameterized style, takes the sync engine instance (`createArchiveEngine(env, syncEngine)`) for the same reuse reasons as `groups-core.js`. Tracks each tab's last-focused time and, opt-in, saves+closes one that's been idle past a threshold. |
+| `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s / `groups-core.js`'s / `archive-core.js`'s `engine.handle*()` functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
 | `link-leash-content.js` | Content script for the leashing module — see its section below |
-| `popup.html` / `popup.js` | The **only** UI — toolbar popup holding status, all settings (device name, profiles, interval, lazy restore, TTL), and tab-group rule editors. No separate options page; `browser.runtime.onInstalled` opens `popup.html` as a plain tab for first-run setup, since popups can't be opened programmatically. |
+| `popup.html` / `popup.js` | The **compact** toolbar popup — status, an on/off switch per feature module (open-tab sync, tab groups, auto-archive), a "Sync now" quick action, and a button to open `options.html`. Deliberately minimal; see "Popup vs. options page" below for why. |
+| `options.html` / `options.js` | The **full settings page**, opened as a plain tab (from the popup's "Open full settings" button, or by `browser.runtime.onInstalled` for first-run setup, since popups can't be opened programmatically) — device name, profiles, the shared check interval, and every module's detail settings (grouped into three cards: Open tabs sync, Tab groups, Auto-archive), plus the theme selector. Mostly the same DOM-building code the old all-in-one popup used to have. |
+| `theme.css` / `theme.js` | Shared dark/light/system theme system, loaded by both `popup.html` and `options.html` — see "Popup vs. options page" below |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page — by default loads the real URL only on an explicit click (not just on becoming visible), so autoplay media (YouTube, etc.) never starts just from switching tabs; `lazyRequireClick: false` in storage restores the old load-on-visible behavior |
 | `browser-polyfill.min.js` | Vendored Mozilla WebExtension polyfill so `browser.*` is promise-based on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
-| `test/` | The test suite for `sync-core.js` and `groups-core.js` — see "Testing" below |
+| `test/` | The test suite for `sync-core.js`, `groups-core.js`, and `archive-core.js` — see "Testing" below |
 
 There is **no build step** — the repository *is* the unpacked extension (the
 polyfill is vendored, not built; `package.json` exists only for `npm test`, no
@@ -135,6 +138,33 @@ going through a `SimDevice` helper, since it's a separate module from
 `groupsEngineFor(device)` is the shared one-liner for that, used by every
 `groups-*.test.js` file instead of each redeclaring it.
 
+`archive-core.js` tests follow the same "separate module, own helper"
+pattern as `groups-core.js` — `test/archive-test-helpers.js`'s
+`archiveEngineFor(device)` builds `createArchiveEngine(device.env,
+device.engine)` and wires it to the SAME `tabsApi`/`windowsApi` event
+hooks the real `background.js` registers (`onCreated`, `onActivated`,
+`onRemoved` — chained onto SimDevice's own existing `onRemoved` handler
+rather than replacing it, `onFocusChanged`), each queued onto
+`world.pending` exactly like `sim-env.js`'s own `onRemoved` wiring, so
+`world.flush()` waits for archive-core.js's reaction too. Calling
+`archiveEngine.reconcileArchive()` directly (there's no `SimDevice`
+helper for it — same reasoning as `groups-core.js`'s own engine) does
+**not** auto-flush afterward the way every `SimDevice` action method
+does; a test must `await device.world.flush()` itself if the reconcile
+closed a tab whose downstream reaction (e.g. propagating that close to
+another device) matters to the assertion —
+`test/archive-core.test.js`'s own `runReconcile()` helper wraps both
+calls together for this reason. `test/archive-test-helpers.js`'s
+`activateTab(device, url)` simulates the user switching to an
+already-open tab (deactivates every other tab in the same window, fires
+`tabs.onActivated` — see `SimTabsApi._setActiveTab`).
+`SimTabsApi.query(queryInfo)` filters for real (by `windowId`/`active`/
+`groupId`/`pinned`) — an earlier version silently ignored `queryInfo`
+entirely and always returned every tab, undetected until archive-core.js
+needed a real `windowId`+`active` lookup to mean something. A tab's
+`windowId` also now defaults to `windowsApi.defaultWindowId` (not a
+hardcoded `"1"`) for the same reason.
+
 Run the suite:
 ```bash
 npm test                    # same as: node --test test/*.test.js
@@ -142,12 +172,16 @@ npm test                    # same as: node --test test/*.test.js
 (`node --test test/` — a bare directory path, no glob — misbehaves on at
 least some Node versions; always pass the explicit glob.)
 
-When you change reconcile behavior in `sync-core.js` or `groups-core.js`,
-add/update a test in `test/` alongside it — this is the actual regression net
-for the safety rules documented below (the phantom-duplicate-entry guard,
-the "closes are only detected from a live tab event" rule, and the
-mirror-open debounce all have regression tests; a change that violates
-any of them should make one fail).
+When you change reconcile behavior in `sync-core.js`, `groups-core.js`, or
+`archive-core.js`, add/update a test in `test/` alongside it — this is the
+actual regression net for the safety rules documented below (the
+phantom-duplicate-entry guard, the "closes are only detected from a live tab
+event" rule, and the mirror-open debounce all have regression tests; a
+change that violates any of them should make one fail).
+
+`popup.js`/`options.js`/`theme.js` (and `lazy.js`, `link-leash-content.js`)
+are DOM/browser-API-only and stay outside the Node suite's scope, same as
+before — verify those live in a real (or headless, via Playwright) browser.
 
 ## How to work on it
 
@@ -156,7 +190,7 @@ any of them should make one fail).
    `sync-core.js`, not `background.js` — see "Testing" above.
 3. **Syntax-check** any JS you touched:
    ```bash
-   node --check background.js && node --check sync-core.js && node --check popup.js
+   node --check background.js && node --check sync-core.js && node --check groups-core.js && node --check archive-core.js && node --check popup.js && node --check options.js
    ```
 4. **Run the test suite** (`npm test`) — see "Testing" above. Add/update
    tests for any reconcile-logic change.
@@ -580,6 +614,114 @@ cross-browser rule as the rest of the codebase).
 - **`reconcileGroups()` also respects the master `syncEnabled` switch** —
   pausing sync pauses the whole extension, groups module included.
 
+## Auto-archive idle tabs (`archive-core.js`)
+
+A third independent module: tracks the last time each of this device's own
+tabs was actually looked at, and — opt-in, off by default since it's
+destructive — once a tab has gone unlooked-at for longer than a
+configurable threshold (default 3 days), saves it as a plain bookmark and
+closes it. Pinned tabs and tabs inside a browser tab group are never
+candidates, same exclusion `sync-core.js` applies everywhere else.
+
+- **Bookmark tree shape**, SIBLING to the per-URL folders and to `_groups`
+  under each profile (and, like `_groups`, invisible to `sync-core.js`'s
+  `readProfileEntries`, which only ever recognizes a folder with its own
+  `_url` marker child):
+  ```
+  SyncMyTabs/<profile>/_archive/<one plain bookmark per archived tab>
+  ```
+  Unlike the status/rule bookmarks elsewhere, an archived entry is a PLAIN
+  bookmark (`title` = the tab's title, `url` = its real url) — there's
+  nothing here the extension itself ever needs to parse back out. The
+  whole point is a folder the user can browse/restore/delete through their
+  ordinary bookmark manager, on any device once it syncs.
+- **Activity is tracked broadly, acted on narrowly.** Every tab's last-
+  active time is recorded regardless of pinned/grouped state, but only
+  eligible (non-pinned, non-grouped, fully loaded) tabs are ever candidates
+  for archiving. Deliberate: a tab that was pinned/grouped while last
+  focused and is later unpinned/ungrouped keeps its real, accurate
+  last-active time instead of suddenly looking artificially stale the
+  moment it becomes eligible.
+- **Persisted in `storage.local`, not just an in-memory `Map`.** A
+  Manifest V3 service worker gets suspended and torn down after a short
+  idle period — an in-memory-only map would silently lose all history
+  every time that happens, which is often. Tab ids stay valid as long as
+  the browser *process* is alive (a suspended-then-woken service worker is
+  the same session); only a genuine browser restart invalidates them —
+  `handleStartupSeed` (called from `onStartup`) drops the whole persisted
+  map and reseeds every currently-open tab to "now" rather than treating a
+  just-restored session as having been idle forever.
+- **A tab with no recorded activity is seeded to "now", never treated as
+  already stale.** This is what makes both a fresh browser launch (every
+  id is new) and the FIRST time a user ever enables the feature (no
+  history exists yet for tabs already open) safe — no mass-archiving
+  stampede the moment it's turned on. `seedAndPruneActivity` also drops
+  any recorded id no longer among currently-open tabs in the same pass —
+  self-healing against a missed `onRemoved` (e.g. the service worker was
+  dead when a tab closed).
+- **Tracking runs unconditionally; only the destructive action is gated on
+  `archiveEnabled`.** `tabs.onActivated`/`windows.onFocusChanged`/
+  `tabs.onCreated` all record activity regardless of the toggle — cheap
+  (an occasional timestamp write) — so turning the feature ON later
+  doesn't start from a blank slate for tabs the user has genuinely been
+  using. Only `reconcileArchive`'s actual archive-and-close step checks
+  `isArchiveEnabled()`.
+- **A tab is never closed unless its bookmark was saved first.**
+  `archiveTab` returns `false` on any bookmark-write failure, and
+  `reconcileArchive` skips `env.tabs.remove()` for that tab entirely in
+  that case — a tab is never lost without a saved trace of it.
+- **Closing an archived tab goes through the ordinary `env.tabs.remove()`**,
+  which fires a real `tabs.onRemoved` event exactly like any other close —
+  so if the archived tab was ALSO one of `sync-core.js`'s tracked open
+  URLs, the EXISTING `tabs.onRemoved` wiring (`background.js` ->
+  `engine.handleTabRemoved`) naturally flips this device's status bookmark
+  to "closed" too, propagating everywhere via the existing contagious-close
+  mechanism (see the Architecture section above). No special-casing needed
+  for that — it falls out of the two modules sharing the same real browser
+  event.
+- **No separate "archive check interval" setting.** `reconcileArchive`
+  piggybacks on the SAME periodic alarm as the main tab-sync check
+  (`saveTabsAlarm`/`syncIntervalMinutes`) — `background.js`'s `saveTabsAlarm`
+  handler calls `archiveEngine.handleArchiveAlarm()` right after
+  `engine.handleAlarm()`. Also respects the master `syncEnabled` switch,
+  same convention as `groups-core.js`.
+- **`windows.onFocusChanged` looks up the newly-focused window's own
+  active tab** (`tabs.query({windowId, active:true})`) and records activity
+  for THAT tab — covers the case where a window was already showing its
+  active tab (no new `tabs.onActivated` fires just from the window
+  regaining OS focus, e.g. Alt-Tab back to it) but the user is genuinely
+  looking at it again now.
+
+## Popup vs. options page
+
+Split in the same change auto-archive was added, once the popup had grown
+enough settings that keeping everything in one place stopped being the
+better trade-off. `popup.html`/`popup.js` is now deliberately minimal:
+status, one on/off switch per feature module (open-tab sync — also the
+master `syncEnabled` switch — tab groups, auto-archive), a "Sync now"
+quick action, and a button that opens `options.html` as a plain tab (same
+`browser.tabs.create({url: browser.runtime.getURL(...)})` mechanism the
+first-run prompt already used). `options.html`/`options.js` holds
+everything else: device name, profiles, the shared check interval (right
+after profiles), and every module's detail settings grouped into three
+cards in that same order (Open tabs sync / Tab groups / Auto-archive),
+plus the theme selector. `browser.runtime.onInstalled` now opens
+`options.html` (not `popup.html`) for first-run setup, since that's where
+device name + profile setup live now.
+
+`theme.css`/`theme.js` are shared between the two pages: `theme.css`
+defines CSS custom-property tokens on bare `:root` (light, the default),
+redefines them under `@media (prefers-color-scheme: dark)` guarded by
+`:root:not([data-theme="light"])`, then redefines them again under
+`:root[data-theme="dark"]` so an explicit choice always wins over the OS
+setting in both directions. `theme.js` reads `themePreference` from
+`storage.local` (`"system"` default / `"light"` / `"dark"`), stamps it as
+a `data-theme` attribute on `<html>`, and listens for `storage.onChanged`
+so a change made in one page is reflected live in the other if both happen
+to be open at once. Applied asynchronously (a brief flash of the OS-default
+theme before an explicit override applies is accepted — not worth a
+synchronous-localStorage-cache workaround for a page this short-lived).
+
 ## Known limitations (don't "fix" without discussion)
 
 - Chrome/Brave and Firefox are both supported targets (see **Cross-browser
@@ -624,3 +766,19 @@ cross-browser rule as the rest of the codebase).
   after its page already loaded doesn't get leashing until reloaded, by
   design (see that section's content-script note) — don't "fix" this by
   reverting to intercepting every click on every page.
+- **The browser's own tab-group sync (where the browser account itself,
+  not this extension, syncs tab-group membership across devices) should be
+  turned off for any profile this module manages.** Both mechanisms
+  reconciling group membership independently — this module's rule-based
+  reconcile pass and the browser's own — can fight each other. This is
+  surfaced as a warning in `options.html`'s Tab groups card and in
+  `README.md`, not something the extension can detect or disable on the
+  user's behalf (it's a browser-level setting, outside any WebExtension
+  API this codebase has access to).
+- **Archived tabs are a one-way export, not a restore feature.**
+  `archive-core.js` only ever writes to the `_archive` bookmark folder; it
+  never reads it back. Restoring an archived tab is just opening its
+  bookmark like any other, through the browser's own bookmark manager —
+  there's no in-extension "browse/restore archived tabs" UI. Don't add one
+  without the user asking; it wasn't requested and duplicates what the
+  browser's bookmark manager already does.

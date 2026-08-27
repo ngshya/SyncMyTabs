@@ -1,0 +1,143 @@
+/* ============================================================
+   SyncMyTabs - theme.css
+   Shared design tokens for popup.html and options.html. Three states:
+   - No stored preference (or "system"): follows the OS via
+     prefers-color-scheme, exactly as before this file existed.
+   - "light" / "dark": explicit override, wins in both directions —
+     stamped as data-theme="light"/"dark" on <html> by theme.js.
+   Every token is defined on bare :root (light, the default), redefined
+   under the dark media query (guarded so an explicit "light" choice
+   isn't clobbered by the OS being in dark mode), then redefined again
+   under [data-theme="dark"] so a manual choice always wins regardless
+   of the OS setting either way.
+   ============================================================ */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #6b7280;
+  --border: #cccccc;
+  --input-bg: #ffffff;
+  --card-bg: #fafafa;
+  --row-fg: #444444;
+  --row-strong: #111111;
+
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-fg: #ffffff;
+  --accent-disabled: #93b4f0;
+  --accent-disabled-fg: #ffffff;
+
+  --secondary-bg: #444444;
+  --secondary-hover: #333333;
+  --danger-bg: #dc2626;
+  --danger-hover: #b91c1c;
+
+  --section-title: #888888;
+  --hairline: #eeeeee;
+
+  --badge-blue-fg: #2563eb;
+  --badge-blue-border: #2563eb;
+  --badge-green-fg: #16a34a;
+  --badge-green-border: #16a34a;
+
+  --switch-track: #c7ccd4;
+  --switch-thumb: #ffffff;
+
+  --paused-fg: #b45309;
+  --paused-bg: #fff7ed;
+  --paused-border: #fed7aa;
+
+  --warn-fg: #92400e;
+  --warn-bg: #fffbeb;
+  --warn-border: #fde68a;
+
+  --status-ok: #16a34a;
+  --status-error: #dc2626;
+  --version-fg: #9aa0a6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1e1f22;
+    --fg: #e6e6e6;
+    --muted: #9aa0a6;
+    --border: #44464b;
+    --input-bg: #2a2b2e;
+    --card-bg: #26272b;
+    --row-fg: #b8bcc4;
+    --row-strong: #f1f1f1;
+
+    --accent-hover: #3b82f6;
+    --accent-disabled: #2b3a63;
+    --accent-disabled-fg: #9db2e0;
+
+    --secondary-bg: #3a3b3f;
+    --secondary-hover: #46474c;
+
+    --section-title: #9aa0a6;
+    --hairline: #333333;
+
+    --badge-blue-fg: #7aa2ff;
+    --badge-blue-border: #7aa2ff;
+    --badge-green-fg: #4ade80;
+    --badge-green-border: #4ade80;
+
+    --switch-track: #4b4d52;
+
+    --paused-fg: #fcd9a8;
+    --paused-bg: #3a2c17;
+    --paused-border: #6b4f24;
+
+    --warn-fg: #fcd9a8;
+    --warn-bg: #3a2c17;
+    --warn-border: #6b4f24;
+
+    --version-fg: #9aa0a6;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #1e1f22;
+  --fg: #e6e6e6;
+  --muted: #9aa0a6;
+  --border: #44464b;
+  --input-bg: #2a2b2e;
+  --card-bg: #26272b;
+  --row-fg: #b8bcc4;
+  --row-strong: #f1f1f1;
+
+  --accent-hover: #3b82f6;
+  --accent-disabled: #2b3a63;
+  --accent-disabled-fg: #9db2e0;
+
+  --secondary-bg: #3a3b3f;
+  --secondary-hover: #46474c;
+
+  --section-title: #9aa0a6;
+  --hairline: #333333;
+
+  --badge-blue-fg: #7aa2ff;
+  --badge-blue-border: #7aa2ff;
+  --badge-green-fg: #4ade80;
+  --badge-green-border: #4ade80;
+
+  --switch-track: #4b4d52;
+
+  --paused-fg: #fcd9a8;
+  --paused-bg: #3a2c17;
+  --paused-border: #6b4f24;
+
+  --warn-fg: #fcd9a8;
+  --warn-bg: #3a2c17;
+  --warn-border: #6b4f24;
+
+  --version-fg: #9aa0a6;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
