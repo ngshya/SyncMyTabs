@@ -79,8 +79,9 @@ a Chrome one (`service_worker` only) and a Firefox one (`scripts` only) — runs
 A merge that doesn't bump the version is a no-op for this workflow (skipped,
 not failed). It can also be triggered by pushing a matching `v*` tag, or
 manually from the Actions tab — both fail loudly instead of skipping if that
-version was already released. Store-listing docs live in `PRIVACY.md` and
-`PERMISSIONS.md`.
+version was already released. Store-listing docs live in `PRIVACY.md`,
+`PERMISSIONS.md`, and `STORE_LISTING.md` (the store's summary/description
+copy); listing screenshots live in `store-assets/`.
 
 **When you add a new top-level file** — a new module loaded via
 `importScripts`/`background.scripts` (like `archive-core.js`), or a new file
