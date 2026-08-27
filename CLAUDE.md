@@ -645,6 +645,23 @@ configurable threshold (default 3 days), saves it as a plain bookmark and
 closes it. Pinned tabs and tabs inside a browser tab group are never
 candidates, same exclusion `sync-core.js` applies everywhere else.
 
+- **The idle threshold is three independent fields — `archiveIdleDays`/
+  `archiveIdleHours`/`archiveIdleMinutes` — not one combined total.**
+  `archiveIdleThreshold()` reads all three (each via `??`, not `||`, so an
+  explicit `0` in any one of them is honored — e.g. "0 days, 6 hours" must
+  not fall back to the 3-day default just because `days` itself is 0) and
+  `archiveIdleThresholdMs()` sums them into one millisecond value:
+  `((days*24+hours)*60+minutes)*60*1000`. Three separate stored fields,
+  not one combined total, so the options page can be three plain number
+  inputs with no lossy round-tripping between a stored total and its
+  displayed day/hour/minute breakdown. `MIN_ARCHIVE_IDLE_MS` (1 minute)
+  is an absolute floor `archiveIdleThresholdMs()` always clamps to —
+  reachable only if all three fields are explicitly 0 (the options page's
+  own validation already refuses to save that combination), a defensive
+  backstop against storage edited some other way; a 0-or-negative
+  threshold would mean "archive everything that isn't the active tab
+  right now", far too destructive to ever run silently.
+
 - **Bookmark tree shape**, SIBLING to the per-URL folders and to `_groups`
   under each profile (and, like `_groups`, invisible to `sync-core.js`'s
   `readProfileEntries`, which only ever recognizes a folder with its own

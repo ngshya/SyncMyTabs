@@ -375,11 +375,16 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "ARCHIVE_GET_PREFS") {
     (async () => {
-      const [archiveEnabled, archiveIdleDays] = await Promise.all([
+      const [archiveEnabled, idle] = await Promise.all([
         archiveEngine.isArchiveEnabled(),
-        archiveEngine.archiveIdleDays(),
+        archiveEngine.archiveIdleThreshold(),
       ]);
-      sendResponse({ archiveEnabled, archiveIdleDays });
+      sendResponse({
+        archiveEnabled,
+        archiveIdleDays: idle.days,
+        archiveIdleHours: idle.hours,
+        archiveIdleMinutes: idle.minutes,
+      });
     })();
     return true;
   }
@@ -389,6 +394,8 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const updates = {};
       if (message.archiveEnabled !== undefined) updates.archiveEnabled = message.archiveEnabled;
       if (message.archiveIdleDays !== undefined) updates.archiveIdleDays = message.archiveIdleDays;
+      if (message.archiveIdleHours !== undefined) updates.archiveIdleHours = message.archiveIdleHours;
+      if (message.archiveIdleMinutes !== undefined) updates.archiveIdleMinutes = message.archiveIdleMinutes;
       await browser.storage.local.set(updates);
       sendResponse({ ok: true });
     })();

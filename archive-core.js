@@ -5,10 +5,12 @@
 // of this device's own tabs was actually looked at (became the active
 // tab AND its window had focus), and — opt-in, off by default since
 // it's destructive — once a tab has gone unlooked-at for longer than a
-// configurable threshold (default 3 days), saves it as a plain bookmark
-// under a per-profile archive folder and closes it. Pinned tabs and
-// tabs inside a browser tab group are never candidates, same exclusion
-// sync-core.js already applies everywhere else.
+// configurable threshold (default 3 days, adjustable down to individual
+// hours/minutes via three independent day/hour/minute fields — see
+// archiveIdleThreshold below), saves it as a plain bookmark under a
+// per-profile archive folder and closes it. Pinned tabs and tabs inside
+// a browser tab group are never candidates, same exclusion sync-core.js
+// already applies everywhere else.
 //
 // Parameterized the same way as groups-core.js: takes `env` (the
 // WebExtension-shaped bookmarks/tabs/windows/storage object) PLUS the
@@ -50,6 +52,16 @@
 
 const ARCHIVE_ROOT_TITLE = "_archive";
 const DEFAULT_ARCHIVE_IDLE_DAYS = 3;
+const DEFAULT_ARCHIVE_IDLE_HOURS = 0;
+const DEFAULT_ARCHIVE_IDLE_MINUTES = 0;
+// Absolute floor for the idle threshold, regardless of what's stored —
+// a 0 (or negative) threshold would mean "archive everything that isn't
+// the active tab right now", which is far too destructive to ever run
+// silently. Only reachable if days/hours/minutes are all explicitly set
+// to 0 (the UI itself already refuses to save that combination — see
+// options.js — this is the defensive backstop for storage edited some
+// other way).
+const MIN_ARCHIVE_IDLE_MS = 60 * 1000;
 const ARCHIVE_ACTIVITY_STORAGE_KEY = "archiveTabActivity";
 const WINDOW_ID_NONE = -1; // matches browser.windows.WINDOW_ID_NONE
 
@@ -66,9 +78,30 @@ function createArchiveEngine(env, syncEngine) {
     return archiveEnabled === true; // default OFF (destructive)
   }
 
-  async function archiveIdleDays() {
-    const { archiveIdleDays: v } = await env.storage.local.get("archiveIdleDays");
-    return v || DEFAULT_ARCHIVE_IDLE_DAYS;
+  // Days/hours/minutes are three independent fields (not one combined
+  // total) so the UI can offer three plain number inputs without any
+  // lossy round-tripping between a stored total and its displayed
+  // breakdown. `??` (not `||`) on each field so an explicit 0 in any one
+  // of them is honored — e.g. "0 days, 6 hours, 0 minutes" must not fall
+  // back to the 3-day default just because days itself is 0.
+  async function archiveIdleThreshold() {
+    const { archiveIdleDays, archiveIdleHours, archiveIdleMinutes } =
+      await env.storage.local.get([
+        "archiveIdleDays",
+        "archiveIdleHours",
+        "archiveIdleMinutes",
+      ]);
+    return {
+      days: archiveIdleDays ?? DEFAULT_ARCHIVE_IDLE_DAYS,
+      hours: archiveIdleHours ?? DEFAULT_ARCHIVE_IDLE_HOURS,
+      minutes: archiveIdleMinutes ?? DEFAULT_ARCHIVE_IDLE_MINUTES,
+    };
+  }
+
+  async function archiveIdleThresholdMs() {
+    const { days, hours, minutes } = await archiveIdleThreshold();
+    const ms = ((days * 24 + hours) * 60 + minutes) * 60 * 1000;
+    return Math.max(ms, MIN_ARCHIVE_IDLE_MS);
   }
 
   // ---- activity tracking ----
@@ -235,7 +268,7 @@ function createArchiveEngine(env, syncEngine) {
 
     if (!(await isArchiveEnabled())) return;
 
-    const idleMs = (await archiveIdleDays()) * 24 * 60 * 60 * 1000;
+    const idleMs = await archiveIdleThresholdMs();
     const now = Date.now();
     const stale = eligible.filter((t) => now - (activity[t.id] || now) >= idleMs);
     if (stale.length === 0) return;
@@ -301,8 +334,11 @@ function createArchiveEngine(env, syncEngine) {
   return {
     ARCHIVE_ROOT_TITLE,
     DEFAULT_ARCHIVE_IDLE_DAYS,
+    DEFAULT_ARCHIVE_IDLE_HOURS,
+    DEFAULT_ARCHIVE_IDLE_MINUTES,
     isArchiveEnabled,
-    archiveIdleDays,
+    archiveIdleThreshold,
+    archiveIdleThresholdMs,
     getOrCreateArchiveFolder,
     clearArchiveForActiveProfile,
     reconcileArchive,
@@ -319,6 +355,9 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     ARCHIVE_ROOT_TITLE,
     DEFAULT_ARCHIVE_IDLE_DAYS,
+    DEFAULT_ARCHIVE_IDLE_HOURS,
+    DEFAULT_ARCHIVE_IDLE_MINUTES,
+    MIN_ARCHIVE_IDLE_MS,
     ARCHIVE_ACTIVITY_STORAGE_KEY,
     WINDOW_ID_NONE,
     createArchiveEngine,
