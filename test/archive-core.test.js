@@ -1,8 +1,8 @@
 // Auto-archive idle tabs: track the last time each tab was actually
 // looked at, and — opt-in, off by default — save it as a plain bookmark
-// under SyncMyTabs/<profile>/_archive/ then close it, once idle for
-// longer than a configurable threshold. Pinned/grouped tabs are never
-// candidates. See archive-core.js's own header comment.
+// under SyncMyTabs/<profile>/_archive/<year>/<month>/<day>/ then close
+// it, once idle for longer than a configurable threshold. Pinned/grouped
+// tabs are never candidates. See archive-core.js's own header comment.
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
@@ -40,12 +40,24 @@ async function runReconcile(device, archiveEngine) {
   await device.world.flush();
 }
 
+// Collects every archived bookmark REGARDLESS of which year/month/day
+// subfolder it landed in — most tests here only care about what got
+// archived, not the exact date-folder structure (a dedicated test below
+// covers that specifically).
 async function archivedEntries(device, archiveEngine) {
   const profile = await device.engine.getActiveProfile();
   const profileFolder = await device.engine.getOrCreateProfileFolder(profile);
   const archiveFolder = await archiveEngine.getOrCreateArchiveFolder(profileFolder.id);
-  const kids = await device.env.bookmarks.getChildren(archiveFolder.id);
-  return kids.map((k) => ({ title: k.title, url: k.url }));
+  const out = [];
+  async function walk(folderId) {
+    const kids = await device.env.bookmarks.getChildren(folderId);
+    for (const k of kids) {
+      if (k.url) out.push({ title: k.title, url: k.url });
+      else await walk(k.id);
+    }
+  }
+  await walk(archiveFolder.id);
+  return out;
 }
 
 test("a tab idle longer than the threshold is archived (bookmarked, then closed)", async () => {
@@ -260,4 +272,82 @@ test("closing a tab cleans up its recorded activity (no leak)", async () => {
     const { archiveTabActivity } = await a.storage.get("archiveTabActivity");
     assert.deepEqual(archiveTabActivity, {}, "no stale activity entry should remain");
   });
+});
+
+test("archived tabs are organized by year/month/day (local date at archive time)", async () => {
+  const start = new Date(2024, 0, 15, 10, 0, 0).getTime(); // Jan 15, 2024, local
+  await withFakeClock(start, async (advance) => {
+    const world = new SimWorld();
+    const a = world.addDevice({
+      deviceName: "A",
+      storage: { archiveEnabled: true, archiveIdleDays: 3 },
+    });
+    const ae = archiveEngineFor(a);
+
+    await a.openTab("https://example.com/dated");
+    await activateTab(a, "https://example.com/dated");
+
+    advance(3 * DAY_MS + 1); // now Jan 18, 2024 — the archiving moment
+    await runReconcile(a, ae);
+
+    const profile = await a.engine.getActiveProfile();
+    const profileFolder = await a.engine.getOrCreateProfileFolder(profile);
+    const archiveFolder = await ae.getOrCreateArchiveFolder(profileFolder.id);
+
+    const years = await a.env.bookmarks.getChildren(archiveFolder.id);
+    assert.deepEqual(years.map((y) => y.title), ["2024"], "one year folder, named plainly");
+
+    const months = await a.env.bookmarks.getChildren(years[0].id);
+    assert.deepEqual(months.map((m) => m.title), ["01"], "month is zero-padded two digits");
+
+    const days = await a.env.bookmarks.getChildren(months[0].id);
+    assert.deepEqual(days.map((d) => d.title), ["18"], "day is zero-padded two digits");
+
+    const bookmarks = await a.env.bookmarks.getChildren(days[0].id);
+    assert.deepEqual(
+      bookmarks.map((b) => b.url),
+      ["https://example.com/dated"],
+      "the archived bookmark lands in the day folder matching the archiving date"
+    );
+  });
+});
+
+test("clearArchiveForActiveProfile empties the whole archive, and a later archive still works", async () => {
+  await withFakeClock(1_700_000_000_000, async (advance) => {
+    const world = new SimWorld();
+    const a = world.addDevice({
+      deviceName: "A",
+      storage: { archiveEnabled: true, archiveIdleDays: 3 },
+    });
+    const ae = archiveEngineFor(a);
+
+    await a.openTab("https://example.com/first");
+    await activateTab(a, "https://example.com/first");
+    advance(3 * DAY_MS + 1);
+    await runReconcile(a, ae);
+    assert.equal((await archivedEntries(a, ae)).length, 1, "one entry archived so far");
+
+    await ae.clearArchiveForActiveProfile();
+    assert.deepEqual(await archivedEntries(a, ae), [], "the whole archive must be empty now");
+
+    // A later archive action must still work correctly — the root
+    // "_archive" folder (and its year/month/day chain) is recreated
+    // fresh via getOrCreateArchiveFolder, not left broken by the clear.
+    await a.openTab("https://example.com/second");
+    await activateTab(a, "https://example.com/second");
+    advance(3 * DAY_MS + 1);
+    await runReconcile(a, ae);
+    assert.deepEqual(await archivedEntries(a, ae), [
+      { title: "https://example.com/second", url: "https://example.com/second" },
+    ]);
+  });
+});
+
+test("clearArchiveForActiveProfile with nothing archived yet is a safe no-op", async () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const ae = archiveEngineFor(a);
+
+  await ae.clearArchiveForActiveProfile(); // must not throw
+  assert.deepEqual(await archivedEntries(a, ae), []);
 });

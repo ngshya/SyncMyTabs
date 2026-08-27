@@ -628,13 +628,35 @@ candidates, same exclusion `sync-core.js` applies everywhere else.
   `readProfileEntries`, which only ever recognizes a folder with its own
   `_url` marker child):
   ```
-  SyncMyTabs/<profile>/_archive/<one plain bookmark per archived tab>
+  SyncMyTabs/<profile>/_archive/<year>/<month>/<day>/<one plain bookmark per archived tab>
   ```
   Unlike the status/rule bookmarks elsewhere, an archived entry is a PLAIN
   bookmark (`title` = the tab's title, `url` = its real url) — there's
   nothing here the extension itself ever needs to parse back out. The
   whole point is a folder the user can browse/restore/delete through their
-  ordinary bookmark manager, on any device once it syncs.
+  ordinary bookmark manager, on any device once it syncs. The year/month/
+  day nesting (this device's LOCAL calendar date at the moment `archiveTab`
+  runs, read through `Date.now()` — `new Date(Date.now())`, never a bare
+  `new Date()`, specifically so a test that fakes `Date.now()` also
+  controls which date folder a simulated archive lands in) is what keeps a
+  large archive browsable by roughly when something was last used, instead
+  of one flat folder; month/day are zero-padded two digits (`findSubfolder`/
+  `findOrCreateSubfolder`, the same generic titled-subfolder find-or-create-
+  with-duplicate-merge helper reused for every level of the chain) so
+  folders sort correctly in a plain bookmark manager, which typically sorts
+  alphabetically, not numerically.
+- **`clearArchiveForActiveProfile` empties the archive outright** — deletes
+  the whole `_archive` root folder (every year/month/day subfolder and
+  everything in them) for the active profile in one `removeTree` call. A
+  later archive action just recreates the root fresh
+  (`getOrCreateArchiveFolder`), so this is safe to call at any time,
+  including with nothing archived yet (a no-op — there's no root folder to
+  find). Wired to the options page's "Clear archived tabs" button via the
+  `ARCHIVE_CLEAR` message; the ONE place in this codebase's UI that shows a
+  `confirm()` dialog before acting, since — unlike every other destructive
+  button here (`Remove` on a profile, `Delete` on a group/rule) — this one
+  permanently deletes actual saved history, not just local
+  config/preferences.
 - **Activity is tracked broadly, acted on narrowly.** Every tab's last-
   active time is recorded regardless of pinned/grouped state, but only
   eligible (non-pinned, non-grouped, fully loaded) tabs are ever candidates

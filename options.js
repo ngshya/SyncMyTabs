@@ -571,6 +571,29 @@ document.getElementById("archiveNow").addEventListener("click", async () => {
   }, 1200);
 });
 
+// Destructive and irreversible (unlike every other button here) — the
+// one deliberate exception to this codebase's usual "no confirm()
+// dialogs" convention (see e.g. "Remove" on a profile, "Delete" on a
+// group/rule, neither of which asks first): those don't delete actual
+// saved history, this does.
+document.getElementById("archiveClear").addEventListener("click", async () => {
+  const ok = confirm(
+    "Delete every archived tab bookmark for this profile? The tabs themselves are already closed — this only clears the saved record of them. This can't be undone."
+  );
+  if (!ok) return;
+
+  const btn = document.getElementById("archiveClear");
+  const original = btn.textContent;
+  btn.textContent = "Clearing...";
+  btn.disabled = true;
+  await browser.runtime.sendMessage({ type: "ARCHIVE_CLEAR" });
+  flashStatus("Archive cleared ✓");
+  setTimeout(() => {
+    btn.textContent = original;
+    btn.disabled = false;
+  }, 1200);
+});
+
 document.getElementById("version").textContent =
   "v" + browser.runtime.getManifest().version;
 

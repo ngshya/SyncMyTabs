@@ -269,7 +269,7 @@
         <span class="slider"></span>
       </label>
     </div>
-    <div class="card-desc">Tracks the last time each of your tabs actually had focus. A tab you haven't looked at in a while is saved as a bookmark under SyncMyTabs/&lt;profile&gt;/_archive/ and then closed — pinned tabs and tabs in a browser tab group are never touched. Off by default.</div>
+    <div class="card-desc">Tracks the last time each of your tabs actually had focus. A tab you haven't looked at in a while is saved as a bookmark under SyncMyTabs/&lt;profile&gt;/_archive/&lt;year&gt;/&lt;month&gt;/&lt;day&gt;/ and then closed — pinned tabs and tabs in a browser tab group are never touched. Off by default.</div>
     <div class="card-body">
       <label class="field">
         Archive a tab after it's been idle for
@@ -278,6 +278,7 @@
       <span style="font-size: 12px; color: var(--muted);">days</span>
       <div class="inline-row">
         <button id="archiveNow" class="secondary">Archive idle tabs now</button>
+        <button id="archiveClear" class="danger" title="Deletes every bookmark under _archive for this profile. The tabs themselves are already closed — this only clears the saved record of them.">Clear archived tabs</button>
       </div>
     </div>
   </div>

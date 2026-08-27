@@ -402,4 +402,12 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })();
     return true;
   }
+
+  if (message?.type === "ARCHIVE_CLEAR") {
+    (async () => {
+      await archiveEngine.clearArchiveForActiveProfile();
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
 });

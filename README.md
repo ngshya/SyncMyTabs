@@ -188,8 +188,10 @@ unlooked-at for too long instead of letting it sit open forever.
   active, both count. Merely being open in a background tab doesn't.
 - **Archive, don't lose.** Once a tab crosses the threshold, it's saved as
   a plain bookmark — title and URL, just like a normal bookmark you made
-  yourself — under `SyncMyTabs/<profile>/_archive/`, and only then closed.
-  A tab is never closed unless its bookmark was saved first. Since it's an
+  yourself — under `SyncMyTabs/<profile>/_archive/<year>/<month>/<day>/`
+  (organized by the date it was archived, so a large archive stays easy to
+  browse through and fish something back out of), and only then closed. A
+  tab is never closed unless its bookmark was saved first. Since it's an
   ordinary bookmark, it syncs to your other devices the same way everything
   else here does, and you get it back exactly the way you'd get any
   bookmark back: open it from your bookmark manager. There's no separate
@@ -202,6 +204,11 @@ unlooked-at for too long instead of letting it sit open forever.
   a bookmark left behind — turn it on from the full settings page's
   **"Auto-archive idle tabs"** card, where you can also change the idle
   threshold and trigger a manual check.
+- **Clear archived tabs.** The same card has a button to delete every
+  archived bookmark for the active profile in one go, for when you just
+  want to empty it out — it asks for confirmation first, since (unlike
+  removing a profile from the picker or deleting a group's rules) this
+  permanently deletes actual saved history, not just a local preference.
 - Runs on the same check interval as tab sync, at browser startup and then
   periodically — no separate interval setting to configure.
 
@@ -284,7 +291,8 @@ that opens automatically on first run) holds:
   delay, per-group rule editors, and **Reconcile groups now** — see
   [Tab groups (leashing)](#tab-groups-leashing--chromebrave-only) above.
 - **Auto-archive idle tabs** card — its own on/off switch (off by default),
-  the idle-days threshold, and **Archive idle tabs now** — see
+  the idle-days threshold, **Archive idle tabs now**, and **Clear archived
+  tabs** (asks for confirmation first) — see
   [Auto-archive idle tabs](#auto-archive-idle-tabs) above.
 
 Every field except the checkboxes/switches (which save immediately) saves

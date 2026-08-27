@@ -137,13 +137,15 @@ function createArchiveEngine(env, syncEngine) {
   }
 
   // ---- bookmark-backed archive folder ----
-  // Mirrors groups-core.js's own root-folder find-or-create + duplicate-
-  // merge pattern (mergeFolderInto, reused from syncEngine), one level
-  // scoped further down (profile -> "_archive").
-
-  async function findArchiveFolder(profileFolderId) {
-    const children = await env.bookmarks.getChildren(profileFolderId);
-    const matches = children.filter((c) => !c.url && c.title === ARCHIVE_ROOT_TITLE);
+  // Generic find(-or-create) of a titled subfolder directly under
+  // `parentId`, with the same duplicate-merge self-healing as
+  // sync-core.js's/groups-core.js's own root-folder helpers
+  // (mergeFolderInto, reused from syncEngine) — used for every level of
+  // the archive's <profile>/_archive/<year>/<month>/<day> chain below,
+  // so that chain isn't four near-identical hand-rolled blocks.
+  async function findSubfolder(parentId, title) {
+    const children = await env.bookmarks.getChildren(parentId);
+    const matches = children.filter((c) => !c.url && c.title === title);
     if (matches.length === 0) return null;
     if (matches.length === 1) return matches[0];
     matches.sort((a, b) => (a.dateAdded || 0) - (b.dateAdded || 0));
@@ -152,21 +154,44 @@ function createArchiveEngine(env, syncEngine) {
     return canonical;
   }
 
-  async function getOrCreateArchiveFolder(profileFolderId) {
-    const found = await findArchiveFolder(profileFolderId);
+  async function findOrCreateSubfolder(parentId, title) {
+    const found = await findSubfolder(parentId, title);
     if (found) return found;
-    return env.bookmarks.create({ parentId: profileFolderId, title: ARCHIVE_ROOT_TITLE });
+    return env.bookmarks.create({ parentId, title });
   }
 
-  // Saves `tab` as a plain bookmark in the profile's archive folder.
+  async function getOrCreateArchiveFolder(profileFolderId) {
+    return findOrCreateSubfolder(profileFolderId, ARCHIVE_ROOT_TITLE);
+  }
+
+  function pad2(n) {
+    return String(n).padStart(2, "0");
+  }
+
+  // Saves `tab` as a plain bookmark in the profile's archive folder,
+  // organized by year/month/day (this device's local calendar date at
+  // archive time) — SyncMyTabs/<profile>/_archive/<year>/<month>/<day>/
+  // — so a large archive stays easy to browse and fish something back
+  // out of by roughly when it was last used, rather than one huge flat
+  // folder. Month/day are zero-padded two digits so folders sort
+  // correctly in a plain bookmark manager (which typically sorts
+  // alphabetically, not numerically). Reads the date through Date.now()
+  // (via `new Date(Date.now())`, not a bare `new Date()`) specifically
+  // so a test that fakes Date.now() also controls which date folder a
+  // simulated archive lands in.
+  //
   // Returns true on success — the caller must not close the tab unless
   // this succeeds, so a tab is never lost without a saved trace of it.
   async function archiveTab(profileFolderId, tab) {
     const url = syncEngine.realUrlOfTab(tab);
     try {
-      const folder = await getOrCreateArchiveFolder(profileFolderId);
+      const root = await getOrCreateArchiveFolder(profileFolderId);
+      const now = new Date(Date.now());
+      const yearFolder = await findOrCreateSubfolder(root.id, String(now.getFullYear()));
+      const monthFolder = await findOrCreateSubfolder(yearFolder.id, pad2(now.getMonth() + 1));
+      const dayFolder = await findOrCreateSubfolder(monthFolder.id, pad2(now.getDate()));
       await env.bookmarks.create({
-        parentId: folder.id,
+        parentId: dayFolder.id,
         title: tab.title || url,
         url,
       });
@@ -174,6 +199,22 @@ function createArchiveEngine(env, syncEngine) {
     } catch (e) {
       return false;
     }
+  }
+
+  // Empties the active profile's whole archive — every year/month/day
+  // subfolder and everything archived in them — by deleting the
+  // "_archive" root folder outright. A later archive action just
+  // recreates it fresh (getOrCreateArchiveFolder), so this is safe to
+  // call at any time, including with nothing archived yet (no-op: there's
+  // no root folder to find).
+  async function clearArchiveForActiveProfile() {
+    const profile = await syncEngine.getActiveProfile();
+    const profileFolder = await syncEngine.getOrCreateProfileFolder(profile);
+    const root = await findSubfolder(profileFolder.id, ARCHIVE_ROOT_TITLE);
+    if (!root) return;
+    try {
+      await env.bookmarks.removeTree(root.id);
+    } catch (e) {}
   }
 
   // ---- the reconcile pass ----
@@ -263,6 +304,7 @@ function createArchiveEngine(env, syncEngine) {
     isArchiveEnabled,
     archiveIdleDays,
     getOrCreateArchiveFolder,
+    clearArchiveForActiveProfile,
     reconcileArchive,
     handleTabActivated,
     handleWindowFocusChanged,
