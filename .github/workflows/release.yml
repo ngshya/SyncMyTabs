@@ -101,7 +101,10 @@ jobs:
           node --check background.js
           node --check sync-core.js
           node --check groups-core.js
+          node --check archive-core.js
           node --check popup.js
+          node --check options.js
+          node --check theme.js
           node --check lazy.js
           node --check link-leash-content.js
 
@@ -127,10 +130,20 @@ jobs:
           '
 
           # Keep this list in sync with every top-level source file the
-          # manifest actually references (background scripts + content
-          # scripts) — a file missing here ships a manifest that points
-          # at something the zip doesn't contain, which fails to load.
-          COMMON="background.js sync-core.js groups-core.js link-leash-content.js browser-polyfill.min.js popup.html popup.js lazy.html lazy.js icons"
+          # manifest references (background scripts + content scripts)
+          # AND every file an HTML page loads via its own <script>/<link>
+          # tags (options.html/popup.html -> theme.css/theme.js, in
+          # particular) — a file missing here either ships a manifest
+          # that points at something the zip doesn't contain (fails to
+          # load entirely — importScripts throws, no listeners ever
+          # register) or a page with a broken script/stylesheet link
+          # (e.g. options.html 404s -> "Open full settings" fails with
+          # ERR_FILE_NOT_FOUND; theme.css 404s -> every CSS custom
+          # property is undefined, so buttons render with no background
+          # at all). This exact omission (archive-core.js/options.html/
+          # options.js/theme.css/theme.js missing from a release build)
+          # shipped once already — see CLAUDE.md/git history.
+          COMMON="background.js sync-core.js groups-core.js archive-core.js link-leash-content.js browser-polyfill.min.js popup.html popup.js options.html options.js theme.css theme.js lazy.html lazy.js icons"
           mkdir -p build/chrome build/firefox
           cp -r $COMMON build/chrome/ && cp manifest.chrome.json build/chrome/manifest.json
           cp -r $COMMON build/firefox/ && cp manifest.firefox.json build/firefox/manifest.json

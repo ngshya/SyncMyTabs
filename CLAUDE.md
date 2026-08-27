@@ -82,6 +82,28 @@ manually from the Actions tab — both fail loudly instead of skipping if that
 version was already released. Store-listing docs live in `PRIVACY.md` and
 `PERMISSIONS.md`.
 
+**When you add a new top-level file** — a new module loaded via
+`importScripts`/`background.scripts` (like `archive-core.js`), or a new file
+an HTML page loads via its own `<script src>`/`<link href>` (like
+`options.js`/`theme.css`) — **add it to `release.yml`'s `COMMON` file list
+too** (and the syntax-check step, if it's JS). This isn't automatic: the
+dev tree (what `git clone` + "Load unpacked" gives you) and the store zips
+are built from two different file lists that only the workflow keeps in
+sync, and nothing here checks that they match. Missing this once already
+shipped a real regression: `archive-core.js` missing broke the WHOLE
+background service worker (a failed `importScripts` call throws, so
+**no** listener ever registers — sync and groups included, not just
+archive), `options.html` missing made "Open full settings" fail with
+`ERR_FILE_NOT_FOUND`, and `theme.css` missing left every CSS custom
+property undefined, rendering buttons with no background at all ("the
+theme looks all white, I can't see the buttons"). All invisible from
+`test/` (Node tests) and from testing via "Load unpacked" on the raw repo
+folder (always complete) — only a build from the actual `release.yml`
+file list would have caught it. Verify by actually building the zip
+locally (mirror the workflow's `COMMON` + packaging steps) and loading
+*that* folder via "Load unpacked" when you're unsure, not just the repo
+root.
+
 ## Testing
 
 `sync-core.js` holds all the sync logic as a factory, `createSyncEngine(env)`,
