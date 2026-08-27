@@ -143,8 +143,46 @@ class SimTabsApi {
     this.tabs = new Map();
   }
 
-  async query() {
-    return Array.from(this.tabs.values()).map((t) => ({ ...t }));
+  // Real filtering by the fields this codebase actually queries by
+  // (windowId, active, groupId, pinned) — matches the real
+  // chrome.tabs.query() contract of "every specified field must match,
+  // unspecified fields are unconstrained". An earlier version of this
+  // simulator ignored queryInfo entirely and always returned every tab,
+  // which every existing caller happened not to notice (none of their
+  // test scenarios had cross-window/cross-group noise tabs to reveal
+  // it) — real filtering is required for archive-core.js's
+  // windowId+active lookup to mean anything.
+  async query(queryInfo = {}) {
+    let list = Array.from(this.tabs.values());
+    if (queryInfo.windowId !== undefined) {
+      list = list.filter((t) => t.windowId === queryInfo.windowId);
+    }
+    if (queryInfo.active !== undefined) {
+      list = list.filter((t) => !!t.active === !!queryInfo.active);
+    }
+    if (queryInfo.groupId !== undefined) {
+      list = list.filter((t) => t.groupId === queryInfo.groupId);
+    }
+    if (queryInfo.pinned !== undefined) {
+      list = list.filter((t) => !!t.pinned === !!queryInfo.pinned);
+    }
+    return list.map((t) => ({ ...t }));
+  }
+
+  // Deactivates every OTHER tab in the same window — mirrors the real
+  // browser's "only one active tab per window" invariant, which nothing
+  // enforced here before archive-core.js's windowId+active query needed
+  // it to mean something. Also fires a real tabs.onActivated
+  // ({tabId, windowId}), same as any create()/update() that makes a tab
+  // active, or an explicit test-driven activation (see
+  // test/archive-test-helpers.js's activateTab).
+  _setActiveTab(id) {
+    const tab = this.tabs.get(id);
+    if (!tab) return;
+    for (const t of this.tabs.values()) {
+      if (t.windowId === tab.windowId) t.active = t.id === id;
+    }
+    if (this.onActivated) this.onActivated({ tabId: tab.id, windowId: tab.windowId });
   }
 
   async create({
@@ -181,11 +219,28 @@ class SimTabsApi {
       title: title || url,
       status: status || "complete",
       active: !!active,
-      windowId: windowId || "1",
+      // Falls back to whichever window is currently "focused" in this
+      // device's simulated windowsApi — NOT a hardcoded id. A caller
+      // that never specifies windowId (the common case: SimDevice's own
+      // openTab/openGroupedTab/etc.) still lands its tab in the same
+      // window windows.getLastFocused()/windowsApi.focus() would report,
+      // which is what makes windows.onFocusChanged's own
+      // tabs.query({windowId, active:true}) lookup findable at all (see
+      // archive-core.js / test/archive-core.test.js).
+      windowId: windowId || (this.windowsApi && this.windowsApi.defaultWindowId) || "1",
       groupId: effectiveGroupId === undefined ? -1 : effectiveGroupId,
       pinned: !!pinned,
     };
     this.tabs.set(id, tab);
+    if (active) this._setActiveTab(id);
+    // Mirrors a real quirk that matters for archive-core.js: any tab
+    // creation, from ANY code path (a direct open, a mirror-driven
+    // open, a group reconcile reopen, …), fires a real tabs.onCreated
+    // event — firing it from this one shared primitive, rather than
+    // from each higher-level SimDevice helper individually, is what
+    // keeps every creation path covered uniformly (same reasoning as
+    // remove()'s onRemoved below).
+    if (this.onCreated) this.onCreated({ ...tab });
     return { ...tab };
   }
 
@@ -198,6 +253,7 @@ class SimTabsApi {
     const tab = this.tabs.get(id);
     if (!tab) throw new Error(`no such tab ${id}`);
     Object.assign(tab, changes);
+    if (changes.active) this._setActiveTab(id);
     return { ...tab };
   }
 
@@ -319,6 +375,17 @@ class SimWindowsApi {
     return Array.from(this.windows.values()).map((w) => ({ ...w }));
   }
 
+  // Simulates OS focus moving to a different browser window (Alt-Tab, a
+  // click on another window, …) — for archive-core.js's
+  // windows.onFocusChanged wiring. Not called by any SimDevice helper
+  // automatically (multi-window scenarios are rare in this suite);
+  // tests that need it call this directly.
+  focus(windowId) {
+    if (!this.windows.has(windowId)) return;
+    this.defaultWindowId = windowId;
+    if (this.onFocusChanged) this.onFocusChanged(windowId);
+  }
+
   async create({ url }) {
     const w = { id: nextId(), type: "normal" };
     this.windows.set(w.id, w);
@@ -395,6 +462,10 @@ class SimDevice {
     this.tabGroupsApi = new SimTabGroupsApi(this.tabsApi);
     this.tabsApi.tabGroupsApi = this.tabGroupsApi;
     this.windowsApi = new SimWindowsApi(this.tabsApi);
+    // Cross-wired so SimTabsApi.create()'s windowId default can fall
+    // back to "whichever window is currently focused" instead of a
+    // hardcoded id — see create()'s own comment.
+    this.tabsApi.windowsApi = this.windowsApi;
     this.storage = new SimStorage({
       deviceName,
       activeProfile,

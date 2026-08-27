@@ -16,7 +16,10 @@ broad host permission and a content script for its tab-group leashing module
 > present (reopening one that's missing, closing accidental duplicates) and
 > keeps clicked links inside that group from wandering outside its declared
 > pages — the same bookmark-based sync mechanism carries this module's
-> configuration across devices too, scoped by the same profile.
+> configuration across devices too, scoped by the same profile. A second
+> optional, independent module tracks how recently each open tab was actually
+> looked at and, if enabled, saves a tab that's gone unused for too long as a
+> plain bookmark before closing it.
 
 ## Permission justifications
 
@@ -32,8 +35,12 @@ broad host permission and a content script for its tab-group leashing module
 > The extension reads the URLs and titles of the user's open tabs in order to
 > record them under the active profile, detects when the user opens or closes
 > one, and opens/closes/groups tabs when mirroring a tab in from another
-> device or reconciling a browser tab group's declared tabs. Access to tab
-> URLs, titles, and group membership requires the tabs permission.
+> device or reconciling a browser tab group's declared tabs. The optional
+> auto-archive module also uses this permission to detect which tab is
+> currently active, so it can track how recently each tab was last looked at,
+> and to close (after first bookmarking) a tab that's gone unused past a
+> user-configured threshold. Access to tab URLs, titles, activation state, and
+> group membership requires the tabs permission.
 
 ### `tabGroups`
 > Used only by the optional tab-group leashing module (Chrome/Brave; there is
@@ -44,17 +51,19 @@ broad host permission and a content script for its tab-group leashing module
 ### `storage`
 > Used to store this device's local configuration and state: the device name,
 > the list and active choice of profiles, the save interval, the cleanup
-> (TTL) preference, the tab-group leashing module's own on/off and
-> close-undeclared-tabs preferences, and the last-activity timestamp shown in
-> the popup. All of this is stored locally via chrome.storage.local and never
-> transmitted.
+> (TTL) preference, the theme choice, the tab-group leashing module's own
+> on/off and ungroup-undeclared-tabs preferences, the auto-archive module's
+> own on/off and idle-threshold preferences plus its per-tab last-active-time
+> bookkeeping, and the last-activity timestamp shown in the popup. All of
+> this is stored locally via chrome.storage.local and never transmitted.
 
 ### `alarms`
 > The extension periodically re-checks the active profile's tabs against the
 > synced bookmark state, sweeps stale entries per the configurable cleanup
-> setting, and (once per browser launch, after a short configurable delay)
-> reconciles the active profile's declared tab groups — all driven by
-> chrome.alarms alarms.
+> setting, reconciles the active profile's declared tab groups (at browser
+> launch, after a short configurable delay, and then periodically), and runs
+> the auto-archive idle-tab check — all driven by chrome.alarms alarms, all
+> on the same user-configurable interval.
 
 ## Host permissions
 
@@ -91,11 +100,12 @@ broad host permission and a content script for its tab-group leashing module
 When completing the data-usage certification, the accurate answers are:
 
 - **Data collected:** The extension handles tab URLs/titles, tab-group titles
-  and leashing rules, and user-entered settings, but stores them only in the
-  browser's bookmarks and local extension storage. It does **not** collect
-  this data to any remote/author-controlled service. The content script only
-  ever reads a clicked link's own href, never page content, and only sends it
-  to the extension's own background page (locally, never off-device).
+  and leashing rules, archived-tab bookmarks, and user-entered settings, but
+  stores them only in the browser's bookmarks and local extension storage. It
+  does **not** collect this data to any remote/author-controlled service. The
+  content script only ever reads a clicked link's own href, never page
+  content, and only sends it to the extension's own background page (locally,
+  never off-device).
 - **Sold to third parties:** No.
 - **Used or transferred for purposes unrelated to the item's core
   functionality:** No.
