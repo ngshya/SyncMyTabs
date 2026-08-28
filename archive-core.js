@@ -14,12 +14,23 @@
 //
 // Parameterized the same way as groups-core.js: takes `env` (the
 // WebExtension-shaped bookmarks/tabs/windows/storage object) PLUS the
-// already-created sync engine instance (`syncEngine`), reused here for
-// getActiveProfile/getOrCreateProfileFolder/mergeFolderInto/
-// isSyncEnabled/realUrlOfTab rather than re-implementing them. Plain
-// script, no import/export syntax — loaded via importScripts/
-// background.scripts like sync-core.js/groups-core.js; module.exports
-// at the bottom is a Node-only no-op elsewhere.
+// already-created sync engine instance (`syncEngine`). Plain script, no
+// import/export syntax — loaded via importScripts/background.scripts
+// like sync-core.js/groups-core.js; module.exports at the bottom is a
+// Node-only no-op elsewhere.
+//
+// CONTRACT with sync-core.js: this module reuses exactly
+// syncEngine.getActiveProfile() / .getOrCreateProfileFolder() /
+// .mergeFolderInto() / .isSyncEnabled() / .realUrlOfTab() and nothing
+// else — a session editing only this file's own activity-tracking/
+// archive logic does not need to read sync-core.js in full, only those
+// five signatures.
+//
+// See docs/archive-core.md for the full invariants (the day/hour/minute
+// threshold fields, bookmark tree shape, activity-tracking persistence,
+// the never-close-without-saving rule, …) — this file's own comments
+// carry the same detail near the relevant function; the doc is the
+// compact index into it.
 //
 // Bookmark tree shape, SIBLING to the per-URL folders and to _groups
 // under each profile (and, like _groups, invisible to sync-core.js's
@@ -297,6 +308,11 @@ function createArchiveEngine(env, syncEngine) {
     return recordTabActivity(activeInfo && activeInfo.tabId);
   }
 
+  // Looks up the newly-focused window's own active tab and records
+  // activity for THAT tab — covers the case where a window was already
+  // showing its active tab (no new tabs.onActivated fires just from the
+  // window regaining OS focus, e.g. Alt-Tab back to it) but the user is
+  // genuinely looking at it again now.
   async function handleWindowFocusChanged(windowId) {
     if (windowId === undefined || windowId === WINDOW_ID_NONE) return;
     let active;

@@ -12,27 +12,38 @@
 // the cross-device transport for group RULES instead of
 // chrome.storage.sync, and scoped by the SAME profile concept as the
 // rest of the extension: each profile has its own independent set of
-// group definitions. See CLAUDE.md's "Tab-group leashing" section.
+// group definitions.
 //
 // Parameterized the same way as sync-core.js: takes `env` (the
 // WebExtension-shaped bookmarks/tabs/tabGroups/windows/storage object)
 // PLUS the already-created sync engine instance (`syncEngine`, i.e.
-// createSyncEngine(env)'s return value), reused here for
-// getActiveProfile/getOrCreateProfileFolder/mergeFolderInto/
-// isSyncEnabled rather than re-implementing them. Plain script, no
-// import/export syntax — loaded via importScripts/background.scripts
-// like sync-core.js; module.exports at the bottom is a Node-only no-op
+// createSyncEngine(env)'s return value). Plain script, no import/export
+// syntax — loaded via importScripts/background.scripts like
+// sync-core.js; module.exports at the bottom is a Node-only no-op
 // elsewhere.
+//
+// CONTRACT with sync-core.js: this module reuses exactly
+// syncEngine.getActiveProfile() / .getOrCreateProfileFolder() /
+// .mergeFolderInto() / .isSyncEnabled() and nothing else — a session
+// editing only this file's own bookmark-tree/reconcile/leashing logic
+// does not need to read sync-core.js in full, only those four
+// signatures.
+//
+// See docs/groups-core.md for the full invariants (bookmark tree shape,
+// the config-vs-tab-state sync model, link-leashing mechanics, reconcile
+// cadence, …) — this file's own comments carry the same detail near the
+// relevant function; the doc is the compact index into it.
 //
 // Cross-browser note: `tabGroups` is a Chrome/Brave-only API (Firefox
 // exposes no tab-group API to extensions at all, matching sync-core.js's
-// isInTabGroup/CLAUDE.md note). Every function here feature-detects
-// `env.tabGroups` and no-ops when it's absent, so this module is a
-// silent no-op on Firefox — never assumed to exist.
+// isInTabGroup — see CLAUDE.md's Cross-browser support section). Every
+// function here feature-detects `env.tabGroups` and no-ops when it's
+// absent, so this module is a silent no-op on Firefox — never assumed
+// to exist.
 // ============================================================
 
-// Bookmark tree shape (see CLAUDE.md), under each profile folder,
-// SIBLING to the per-URL folders (and ignored by sync-core.js's
+// Bookmark tree shape, under each profile folder, SIBLING to the
+// per-URL folders (and ignored by sync-core.js's
 // readProfileEntries, which only ever recognizes a folder that has its
 // own `_url` marker child — a "_groups" folder never does):
 //   SyncMyTabs/<profile>/_groups/<group title>/<one bookmark per rule>
@@ -239,6 +250,17 @@ function createGroupsEngine(env, syncEngine) {
   // group folder outright rather than leaving a ruleless orphan behind,
   // mirroring the original extension's own "nothing left to identify it
   // by" cleanup.
+  //
+  // Config, not tab state — a deliberately different sync model from
+  // sync-core.js's open/closed tab entries. There's no contagion/
+  // propagation semantics here: a group's rules aren't something each
+  // device independently OBSERVES, they're shared configuration a user
+  // EDITS from any device, so wholesale replace-on-every-edit is the
+  // right model, not per-field merge. Two devices editing the SAME group
+  // concurrently is last-write-wins (whichever bookmark write lands
+  // last) — the same trade-off the original TabGroupsLeash already had
+  // with chrome.storage.sync.set. Accepted for infrequently-edited
+  // config data, not a bug.
   async function setGroupSettings(profileFolderId, title, rules) {
     const clean = (rules || []).filter((r) => r && (r.pattern || r.openUrl));
     if (clean.length === 0) {
@@ -385,8 +407,8 @@ function createGroupsEngine(env, syncEngine) {
   // grouped/leashed at all, and its currently-resolved pattern (if any)
   // — so the content script can decide SYNCHRONOUSLY, per click, whether
   // to intercept at all, instead of an async round-trip on every click.
-  // See handleLinkClick's own comment on why a plain, matching click
-  // must NOT be intercepted.
+  // See link-leash-content.js's own comment on why a plain, matching
+  // click must NOT be intercepted.
   async function getLeashInfoFor(tab) {
     if (!(await isLeashEnabled())) return { grouped: false, pattern: null };
     const grouped = !!env.tabGroups && isGrouped(tab);
@@ -426,6 +448,14 @@ function createGroupsEngine(env, syncEngine) {
     }
   }
 
+  // The authoritative decision-maker for a leashed click, re-validating
+  // via resolvePatternFor against the LIVE tab rather than trusting any
+  // cached info. Only reached for the cases that genuinely need
+  // intervention: a NON-matching link, or a MODIFIER-click on a matching
+  // one. A PLAIN click on an ALREADY-matching link never reaches this
+  // function at all — link-leash-content.js's onClick intercepts nothing
+  // in that case (see its own comment for why: routing it through this
+  // function's env.tabs.update() would break client-side-routed pages).
   async function handleLinkClick(href, tab, modifiers = {}) {
     if (!(await isLeashEnabled()) || !env.tabGroups || !isGrouped(tab)) {
       return fallbackOpen(href, tab, modifiers);
@@ -476,14 +506,22 @@ function createGroupsEngine(env, syncEngine) {
   // rest of the extension's sync — a device on a different profile
   // never touches another profile's groups. Only titled groups that
   // have at least one saved rule are touched at all. Runs once per
-  // browser launch (delayed, see groupsStartupDelaySeconds) AND
-  // periodically thereafter, on the SAME alarm/interval as the main tab
-  // sync (background.js registers both off `syncIntervalMinutes`) — see
-  // CLAUDE.md. Safe to run mid-session: reopening a missing essential
-  // tab or closing an exact duplicate only ever acts on unambiguous,
-  // fully-loaded tab state, and detaching an undeclared tab from its
-  // group (below) is non-destructive — the tab itself is never touched,
-  // only its group membership.
+  // browser launch AND periodically thereafter, on the SAME interval as
+  // the main tab-sync check (syncIntervalMinutes) — background.js
+  // registers both alarms (and keeps the recurring period in sync when
+  // syncIntervalMinutes changes mid-session — see its
+  // ensureGroupsAlarmPeriod); this module itself has no opinion on
+  // cadence, only the callable reconcileGroups()/handleGroupsAlarm(). The
+  // FIRST fire is delayed (groupsStartupDelaySeconds, default 15s) so
+  // the browser's own session restore has time to finish repopulating
+  // windows/tabs/groups first — reconciling against a still-incomplete
+  // snapshot could wrongly judge a not-yet-restored tab "missing" or
+  // "duplicate". Safe to run mid-session (not just at launch): reopening
+  // a missing essential tab or closing an exact duplicate only ever acts
+  // on unambiguous, fully-loaded tab state, and detaching an undeclared
+  // tab from its group (below) is non-destructive — the tab itself is
+  // never touched, only its group membership — the one thing that made a
+  // periodic mid-session pass too risky before that change.
 
   async function reconcileGroups() {
     if (!env.tabGroups) return; // Firefox: no tab-group API, nothing to do
@@ -541,7 +579,17 @@ function createGroupsEngine(env, syncEngine) {
       // Detach, don't close: a tab matching no rule at all just leaves
       // the group (stays open, ungrouped) rather than being destroyed —
       // this is the whole point of it being non-destructive, unlike the
-      // exact-duplicate cleanup above.
+      // exact-duplicate cleanup above. This used to be env.tabs.remove
+      // (an outright close); changed because this reconcile pass now
+      // also runs PERIODICALLY (not just once at startup — see the
+      // "reconcile pass" comment above reconcileGroups), and destructively
+      // closing a tab the user is actively using, every few minutes, on
+      // nothing more than "no rule declares it", was too aggressive once
+      // this stopped being a one-shot, post-launch-only check. Reopening
+      // a missing essential tab and closing an exact DUPLICATE (idsToClose,
+      // above) are unaffected by this history — those only ever act on an
+      // unambiguous duplicate of a tab already deliberately opened, never
+      // on "no rule matches this at all".
       for (const tab of openTabs) {
         if (idsToClose.includes(tab.id)) continue;
         const isDeclared = rules.some((r) => tabSatisfiesRule(tab.url, r));

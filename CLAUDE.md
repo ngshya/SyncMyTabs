@@ -55,8 +55,8 @@ Firefox.** Keep this in mind in every change:
 |---|---|
 | `manifest.json` | Manifest V3, permissions, entry points, **version**; dual background (Chrome `service_worker` + Firefox `scripts`), `browser_specific_settings.gecko`, the tab-group leashing module's `<all_urls>` content script |
 | `sync-core.js` | **All the open-tab sync/reconcile logic**, factored out of `background.js` and parameterized over an `env` (bookmarks/tabs/windows/storage/runtime) instead of calling `browser.*` directly — see "Testing" below. Plain script, no import/export syntax (loaded via `importScripts`/`background.scripts` like the polyfill); `module.exports` at the bottom is a Node-only no-op elsewhere. |
-| `groups-core.js` | **The independent tab-group leashing module** (see its own "Tab-group leashing" section below) — same `env`-parameterized style as `sync-core.js`, plus takes the already-created sync engine instance (`createGroupsEngine(env, syncEngine)`) to reuse `getActiveProfile`/`getOrCreateProfileFolder`/`mergeFolderInto`/`isSyncEnabled` rather than re-implementing them. Chrome/Brave only (feature-detects `env.tabGroups`, a silent no-op on Firefox). |
-| `archive-core.js` | **The independent auto-archive module** (see its own "Auto-archive idle tabs" section below) — same `env`-parameterized style, takes the sync engine instance (`createArchiveEngine(env, syncEngine)`) for the same reuse reasons as `groups-core.js`. Tracks each tab's last-focused time and, opt-in, saves+closes one that's been idle past a threshold. |
+| `groups-core.js` | **The independent tab-group leashing module** (see its own "Tab-group leashing" section below, and [`docs/groups-core.md`](docs/groups-core.md) for the full invariants) — same `env`-parameterized style as `sync-core.js`, plus takes the already-created sync engine instance (`createGroupsEngine(env, syncEngine)`) to reuse `getActiveProfile`/`getOrCreateProfileFolder`/`mergeFolderInto`/`isSyncEnabled` rather than re-implementing them. Chrome/Brave only (feature-detects `env.tabGroups`, a silent no-op on Firefox). |
+| `archive-core.js` | **The independent auto-archive module** (see its own "Auto-archive idle tabs" section below, and [`docs/archive-core.md`](docs/archive-core.md) for the full invariants) — same `env`-parameterized style, takes the sync engine instance (`createArchiveEngine(env, syncEngine)`) for the same reuse reasons as `groups-core.js`. Tracks each tab's last-focused time and, opt-in, saves+closes one that's been idle past a threshold. |
 | `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s / `groups-core.js`'s / `archive-core.js`'s `engine.handle*()` functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
 | `link-leash-content.js` | Content script for the leashing module — see its section below |
 | `popup.html` / `popup.js` | The **compact** toolbar popup — status, an on/off switch per feature module (open-tab sync, tab groups, auto-archive), a "Sync now" quick action, and a button to open `options.html`. Deliberately minimal; see "Popup vs. options page" below for why. |
@@ -342,152 +342,17 @@ extension: link "leashing" for a browser tab group (a clicked link either
 navigates in place / opens alongside in the SAME group if it matches that
 tab's configured pattern, or always opens in a fresh UNGROUPED tab
 otherwise) plus a reconcile pass (reopen a group's missing "essential"
-tabs, close duplicates, optionally detach undeclared ones from the group
-— see the ungroup-not-close bullet below). Chrome/Brave only — Firefox
-has no `tabGroups` API, so every function here feature-detects
-`env.tabGroups` and no-ops without it, never assumed to exist (same
-cross-browser rule as the rest of the codebase).
+tabs, close duplicates, optionally detach undeclared ones from the group).
+Chrome/Brave only — Firefox has no `tabGroups` API, so every function here
+feature-detects `env.tabGroups` and no-ops without it (same cross-browser
+rule as the rest of the codebase — see Cross-browser support above).
 
-- **Bookmark tree shape**, SIBLING to the per-URL folders under each
-  profile (and invisible to `sync-core.js`'s `readProfileEntries`, which
-  only ever recognizes a folder that has its own `_url` marker child — a
-  `_groups` folder never does, so the two coexist with zero interference):
-  ```
-  SyncMyTabs/<profile>/_groups/<group title>/<one bookmark per rule>
-  ```
-  A rule bookmark's `title` is its own `pattern` (or, for an openUrl-only
-  rule, its `openUrl` — human-readable in a plain bookmark manager); the
-  rule data itself is packed into the bookmark's `url`
-  (`buildGroupRuleUrl`/`parseGroupRuleUrl`, same `URLSearchParams`-based
-  encoding style as `sync-core.js`'s device status bookmarks): `p`=leash
-  pattern, `o`=reopen URL. A rule has only these two fields — `pattern`
-  decides BOTH which rule covers a tab's current page AND what a clicked
-  link must match to stay in-group (one field, one job, done twice); an
-  earlier version had a third, separate `match` field for the "which page"
-  half, which turned out to be a real footgun (a rule silently failing to
-  resolve because `match` and `pattern` had drifted apart) for no strong
-  enough use case, so it was dropped. An openUrl-only rule (no pattern at
-  all) never resolves for any tab — see `findRuleForTabUrl` — and exists
-  purely as a startup "make sure this exact URL is open somewhere"
-  declaration; `tabSatisfiesRule` is what `reconcileGroup`'s
-  missing/duplicate/undeclared checks use to test a tab against a rule
-  (pattern if set, else an exact `openUrl` match). **The group's
-  TITLE is the only stable, cross-device key** — a browser's own numeric
-  tab-group id is local and meaningless on another device — so an untitled
-  group is deliberately unsupported (mirrors the original TabGroupsLeash's
-  own "no reliable sync key" reasoning for its local-only fallback, which
-  this port doesn't carry over: "always use bookmarks to sync" ruled out a
-  local-storage-only fallback that can't sync in the first place).
-- **Config, not tab state — different sync model on purpose.** Unlike
-  open/closed tab entries, a group's rules are just replaced wholesale on
-  every edit (`setGroupSettings` deletes the old rule set, writes the new
-  one) — there's no contagion/propagation semantics here, because unlike
-  a tab's open/closed state, group rules aren't something each device
-  independently observes; they're shared configuration a user edits from
-  any device. Two devices editing the SAME group concurrently is
-  last-write-wins (whichever bookmark write lands last), same trade-off the
-  original TabGroupsLeash already had with `chrome.storage.sync.set` — an
-  accepted limitation for infrequently-edited config data, not a bug.
-- **Only the RULES sync via bookmarks — local per-device preferences don't.**
-  Whether leashing is on at all (`groupsLeashEnabled`), whether the
-  reconcile also ungroups undeclared tabs (`groupsUngroupUndeclaredTabs`),
-  and the startup delay (`groupsStartupDelaySeconds`) all live in
-  `env.storage.local`, same convention as `syncEnabled`/`ttlDays`/
-  `openRestoredLazy` — per-device operational toggles, not shared config.
-- **Undeclared tabs are UNGROUPED, never closed.** `groupsUngroupUndeclaredTabs`
-  (opt-in, default OFF) detaches a tab matching none of its group's rules
-  from the group — `env.tabs.ungroup`, same primitive `fallbackOpen`/
-  `handleLinkClick`'s own non-matching-link path already uses — the tab
-  itself stays open, only its group membership changes. This used to
-  `env.tabs.remove` it outright; changed because the reconcile pass below
-  now also runs periodically (not just once at startup), and destructively
-  closing a tab the user is actively using, every few minutes, on nothing
-  more than "no rule declares it", was too aggressive once this stopped
-  being a one-shot, post-launch-only check. Reopening a missing essential
-  tab and closing an exact DUPLICATE of one (`idsToClose`, kept separate
-  from `idsToUngroup` in `reconcileGroup`) are unaffected — those stay
-  genuine `env.tabs.remove` closes, since they only ever act on an
-  unambiguous duplicate of a tab the user (or a previous reconcile) already
-  opened deliberately, never on "no rule matches this at all".
-- **Scoped by the SAME active-profile concept as the rest of the
-  extension.** `activeProfileFolderId()` resolves through
-  `syncEngine.getActiveProfile()`/`getOrCreateProfileFolder()` — a device on
-  a different profile never sees, mirrors, or reconciles another profile's
-  groups. Each profile has its own independent set of group definitions,
-  exactly as requested.
-- **Link leashing is read-only-cheap for the common case.**
-  `resolvePatternFor(tab)` bails out immediately (no bookmark read at all)
-  unless the tab is ACTUALLY grouped (`typeof tab.groupId === "number" &&
-  tab.groupId !== -1`, same check as `sync-core.js`'s `isInTabGroup`) —
-  every click on every ordinary, ungrouped tab costs nothing. `readGroupSettings`
-  itself is also deliberately read-only (never creates a folder just to
-  read from it), since it's called on every leashed click.
-- **The content script (`link-leash-content.js`) doesn't intercept every
-  click on every page**, unlike the original TabGroupsLeash — it first asks
-  the background page `GROUP_LEASH_INFO` and only attaches its `click`/
-  `auxclick` capture-phase listeners if the tab is actually grouped at load
-  time. This is a deliberate improvement over a naive port: capturing +
-  `preventDefault`-ing every click on every page (including sites whose own
-  JS also listens for link clicks, e.g. SPA client-side routers) just to
-  fall back to default behavior server-side for the overwhelming majority
-  of (ungrouped) tabs would be a real regression risk. The trade-off: a tab
-  grouped AFTER its page already loaded won't get leashing until reloaded
-  (see Known limitations).
-- **A plain click on an already-matching link is left COMPLETELY alone —
-  no `preventDefault`, no message sent at all.** This is not an
-  optimization, it's a correctness fix: routing that case through
-  `handleLinkClick`'s `env.tabs.update()` (a hard, address-bar-equivalent
-  navigation) breaks any client-side-routed page — Telegram Web and
-  similar SPAs using pushState/hash routing for in-app navigation expect a
-  lightweight same-document transition from their OWN router, not a full
-  reload, and a forced reload can bounce the app back to its default view
-  instead of landing on the clicked destination (this shipped as a real
-  bug once — a matching link's URL would visibly change then snap back).
-  The `GROUP_LEASH_INFO` handshake response (`{grouped, pattern}`, from
-  `getLeashInfoFor`) is therefore cached in the content script and
-  re-checked **synchronously** on every click — not re-fetched per click
-  — so the decision to skip interception can be made before the native
-  click would otherwise be prevented. The content script also patches
-  `history.pushState`/`replaceState` and listens for `hashchange`/
-  `popstate` to refresh that cache on every SPA-internal route change (the
-  content script itself is never re-injected by these, only a real
-  navigation does that) — otherwise the cached pattern could go stale for
-  a tab that stays grouped across many in-app navigations. Only a
-  NON-matching link, or a MODIFIER-click on a matching one, still goes
-  through `handleLinkClick` — which remains the authoritative decision-maker
-  (re-validates via its own `resolvePatternFor` using the live tab) for
-  every case that does reach it, exactly as before this fix.
-- **Groups can be pinned to the start of the tab strip.** The
-  `groupsPinToStart` local preference (default off), checked in
-  `reconcileGroups()`, moves every reconciled group (via
-  `env.tabGroups.move(groupId, {index})`) to the start of its window on
-  EVERY reconcile — not just when something was reopened — so it stays put
-  even if the user (or the browser) moves it in between. Multiple pinned
-  groups stack in title order (`getAllGroupTitles`'s own sort) via
-  consecutive indices (0, 1, 2, …) assigned in `reconcileGroups()` and
-  passed down to each `reconcileGroup()` call, rather than every pinned
-  group independently fighting over index 0.
-- **Runs once per browser launch AND periodically thereafter**, on the
-  SAME interval as the main tab-sync check (`syncIntervalMinutes`), and
-  only for the active profile's groups that have at least one saved rule.
-  The first fire is delayed (`groupsStartupDelaySeconds`, default 15s) so
-  the browser's own session restore has time to finish repopulating
-  windows/tabs/groups first — reconciling against a still-incomplete
-  snapshot could wrongly judge a not-yet-restored tab "missing" or
-  "duplicate"; the alarm then recurs at `syncIntervalMinutes` going
-  forward, same as `saveTabsAlarm`. Alarm registration (both the initial
-  delay and the recurring period, plus keeping the period in sync when
-  `syncIntervalMinutes` changes mid-session — see `ensureGroupsAlarmPeriod`)
-  lives in `background.js` (browser-chrome-only bits) — `groups-core.js`
-  itself only exposes the callable `reconcileGroups()`/`handleGroupsAlarm()`
-  and has no opinion on cadence. Running mid-session (not just at launch)
-  is safe: reopening a missing essential tab, and closing an exact
-  duplicate, both only ever act on unambiguous, fully-loaded tab state; and
-  undeclared-tab handling is a non-destructive UNGROUP, not a close (see
-  the bullet above) — the one thing that made a periodic mid-session pass
-  too risky before that change.
-- **`reconcileGroups()` also respects the master `syncEnabled` switch** —
-  pausing sync pauses the whole extension, groups module included.
+**Full invariants (bookmark tree shape, the config-vs-tab-state sync
+model, link-leashing mechanics, reconcile cadence, …) are in
+[`docs/groups-core.md`](docs/groups-core.md) — read it before touching
+`groups-core.js` or `link-leash-content.js`.** Kept out of this file to
+keep every session's base context small; not needed unless you're
+actually working on this module.
 
 ## Auto-archive idle tabs (`archive-core.js`)
 
@@ -498,113 +363,11 @@ configurable threshold (default 3 days), saves it as a plain bookmark and
 closes it. Pinned tabs and tabs inside a browser tab group are never
 candidates, same exclusion `sync-core.js` applies everywhere else.
 
-- **The idle threshold is three independent fields — `archiveIdleDays`/
-  `archiveIdleHours`/`archiveIdleMinutes` — not one combined total.**
-  `archiveIdleThreshold()` reads all three (each via `??`, not `||`, so an
-  explicit `0` in any one of them is honored — e.g. "0 days, 6 hours" must
-  not fall back to the 3-day default just because `days` itself is 0) and
-  `archiveIdleThresholdMs()` sums them into one millisecond value:
-  `((days*24+hours)*60+minutes)*60*1000`. Three separate stored fields,
-  not one combined total, so the options page can be three plain number
-  inputs with no lossy round-tripping between a stored total and its
-  displayed day/hour/minute breakdown. `MIN_ARCHIVE_IDLE_MS` (1 minute)
-  is an absolute floor `archiveIdleThresholdMs()` always clamps to —
-  reachable only if all three fields are explicitly 0 (the options page's
-  own validation already refuses to save that combination), a defensive
-  backstop against storage edited some other way; a 0-or-negative
-  threshold would mean "archive everything that isn't the active tab
-  right now", far too destructive to ever run silently.
-
-- **Bookmark tree shape**, SIBLING to the per-URL folders and to `_groups`
-  under each profile (and, like `_groups`, invisible to `sync-core.js`'s
-  `readProfileEntries`, which only ever recognizes a folder with its own
-  `_url` marker child):
-  ```
-  SyncMyTabs/<profile>/_archive/<year>/<month>/<day>/<one plain bookmark per archived tab>
-  ```
-  Unlike the status/rule bookmarks elsewhere, an archived entry is a PLAIN
-  bookmark (`title` = the tab's title, `url` = its real url) — there's
-  nothing here the extension itself ever needs to parse back out. The
-  whole point is a folder the user can browse/restore/delete through their
-  ordinary bookmark manager, on any device once it syncs. The year/month/
-  day nesting (this device's LOCAL calendar date at the moment `archiveTab`
-  runs, read through `Date.now()` — `new Date(Date.now())`, never a bare
-  `new Date()`, specifically so a test that fakes `Date.now()` also
-  controls which date folder a simulated archive lands in) is what keeps a
-  large archive browsable by roughly when something was last used, instead
-  of one flat folder; month/day are zero-padded two digits (`findSubfolder`/
-  `findOrCreateSubfolder`, the same generic titled-subfolder find-or-create-
-  with-duplicate-merge helper reused for every level of the chain) so
-  folders sort correctly in a plain bookmark manager, which typically sorts
-  alphabetically, not numerically.
-- **`clearArchiveForActiveProfile` empties the archive outright** — deletes
-  the whole `_archive` root folder (every year/month/day subfolder and
-  everything in them) for the active profile in one `removeTree` call. A
-  later archive action just recreates the root fresh
-  (`getOrCreateArchiveFolder`), so this is safe to call at any time,
-  including with nothing archived yet (a no-op — there's no root folder to
-  find). Wired to the options page's "Clear archived tabs" button via the
-  `ARCHIVE_CLEAR` message; the ONE place in this codebase's UI that shows a
-  `confirm()` dialog before acting, since — unlike every other destructive
-  button here (`Remove` on a profile, `Delete` on a group/rule) — this one
-  permanently deletes actual saved history, not just local
-  config/preferences.
-- **Activity is tracked broadly, acted on narrowly.** Every tab's last-
-  active time is recorded regardless of pinned/grouped state, but only
-  eligible (non-pinned, non-grouped, fully loaded) tabs are ever candidates
-  for archiving. Deliberate: a tab that was pinned/grouped while last
-  focused and is later unpinned/ungrouped keeps its real, accurate
-  last-active time instead of suddenly looking artificially stale the
-  moment it becomes eligible.
-- **Persisted in `storage.local`, not just an in-memory `Map`.** A
-  Manifest V3 service worker gets suspended and torn down after a short
-  idle period — an in-memory-only map would silently lose all history
-  every time that happens, which is often. Tab ids stay valid as long as
-  the browser *process* is alive (a suspended-then-woken service worker is
-  the same session); only a genuine browser restart invalidates them —
-  `handleStartupSeed` (called from `onStartup`) drops the whole persisted
-  map and reseeds every currently-open tab to "now" rather than treating a
-  just-restored session as having been idle forever.
-- **A tab with no recorded activity is seeded to "now", never treated as
-  already stale.** This is what makes both a fresh browser launch (every
-  id is new) and the FIRST time a user ever enables the feature (no
-  history exists yet for tabs already open) safe — no mass-archiving
-  stampede the moment it's turned on. `seedAndPruneActivity` also drops
-  any recorded id no longer among currently-open tabs in the same pass —
-  self-healing against a missed `onRemoved` (e.g. the service worker was
-  dead when a tab closed).
-- **Tracking runs unconditionally; only the destructive action is gated on
-  `archiveEnabled`.** `tabs.onActivated`/`windows.onFocusChanged`/
-  `tabs.onCreated` all record activity regardless of the toggle — cheap
-  (an occasional timestamp write) — so turning the feature ON later
-  doesn't start from a blank slate for tabs the user has genuinely been
-  using. Only `reconcileArchive`'s actual archive-and-close step checks
-  `isArchiveEnabled()`.
-- **A tab is never closed unless its bookmark was saved first.**
-  `archiveTab` returns `false` on any bookmark-write failure, and
-  `reconcileArchive` skips `env.tabs.remove()` for that tab entirely in
-  that case — a tab is never lost without a saved trace of it.
-- **Closing an archived tab goes through the ordinary `env.tabs.remove()`**,
-  which fires a real `tabs.onRemoved` event exactly like any other close —
-  so if the archived tab was ALSO one of `sync-core.js`'s tracked open
-  URLs, the EXISTING `tabs.onRemoved` wiring (`background.js` ->
-  `engine.handleTabRemoved`) naturally flips this device's status bookmark
-  to "closed" too, propagating everywhere via the existing contagious-close
-  mechanism (see the Architecture section above). No special-casing needed
-  for that — it falls out of the two modules sharing the same real browser
-  event.
-- **No separate "archive check interval" setting.** `reconcileArchive`
-  piggybacks on the SAME periodic alarm as the main tab-sync check
-  (`saveTabsAlarm`/`syncIntervalMinutes`) — `background.js`'s `saveTabsAlarm`
-  handler calls `archiveEngine.handleArchiveAlarm()` right after
-  `engine.handleAlarm()`. Also respects the master `syncEnabled` switch,
-  same convention as `groups-core.js`.
-- **`windows.onFocusChanged` looks up the newly-focused window's own
-  active tab** (`tabs.query({windowId, active:true})`) and records activity
-  for THAT tab — covers the case where a window was already showing its
-  active tab (no new `tabs.onActivated` fires just from the window
-  regaining OS focus, e.g. Alt-Tab back to it) but the user is genuinely
-  looking at it again now.
+**Full invariants (the day/hour/minute threshold fields, bookmark tree
+shape, activity-tracking persistence, the never-close-without-saving
+rule, …) are in [`docs/archive-core.md`](docs/archive-core.md) — read it
+before touching `archive-core.js`.** Kept out of this file for the same
+reason as the groups-core.js doc above.
 
 ## Popup vs. options page
 
