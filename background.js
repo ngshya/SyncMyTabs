@@ -203,6 +203,10 @@ browser.storage.onChanged.addListener((changes, area) => {
     ensureAlarm();
     ensureGroupsAlarmPeriod();
   }
+  // Reacting here (rather than only right after the popup's own toggle
+  // write) makes storage.onChanged the single source of truth for the
+  // toolbar icon's paused state — it updates correctly no matter what
+  // changed syncEnabled.
   if (changes.syncEnabled) {
     updateActionIcon(changes.syncEnabled.newValue !== false);
   }

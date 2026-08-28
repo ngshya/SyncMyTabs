@@ -75,15 +75,28 @@ function folderTitleFor(title, url) {
     : base;
 }
 
-// Each device's own status bookmark inside a URL folder is titled with
-// the device's name (exact, unencoded) and its url packs open|closed
-// plus two timestamps: t=<last STATE-CHANGE time>, h=<last HEARTBEAT
-// time>. Deliberately separate: `t` only ever moves on a genuine local
-// open/close transition; `h` is bumped by routine liveness heartbeats
-// (so TTL cleanup doesn't sweep a tab that's simply been open a long
-// time). Conflating the two was the root of the open-time race fixed
-// in 2.6.2 — keeping them apart avoids reintroducing that class of bug,
-// and `h` (not `t`) is what folder-level TTL staleness checks.
+// Each device that has ever weighed in on a URL gets ONE status bookmark
+// of its own inside that URL's folder, titled with the device's name
+// (exact, unencoded); its url packs open|closed plus two timestamps:
+// t=<last STATE-CHANGE time>, h=<last HEARTBEAT time>. Deliberately
+// separate: `t` only ever moves on a genuine local open/close transition;
+// `h` is bumped by routine liveness heartbeats (so TTL cleanup doesn't
+// sweep a tab that's simply been open a long time). Conflating the two
+// was the root of the open-time race fixed in 2.6.2 — keeping them apart
+// avoids reintroducing that class of bug, and `h` (not `t`) is what
+// per-device TTL staleness checks (see cleanupProfileFolder) — neither
+// feeds any cross-device open/closed precedence decision (that's what
+// the v3->v4 redesign removed; see CLAUDE.md's Known limitations).
+//
+// A DEVICE ONLY EVER WRITES ITS OWN STATUS BOOKMARK — never another
+// device's — so there is never a concurrent write to the same bookmark.
+// This is the property that makes the whole design safe; don't introduce
+// a NEW code path where one device edits another's status bookmark
+// beyond the three sanctioned exceptions: cleanupProfileFolder's TTL
+// sweep of a stale entry, bulk deletion (cleanupProfileFolder or
+// reconcileMirror) of a folder everyone already agrees is fully
+// `closed`, and resetClosedPeers deleting a peer's stale `closed` entry
+// on a fresh open/reopen (see its own comment, below).
 const STATUS_URL_BASE = "https://syncmytabs.local/status";
 
 // "Other Bookmarks" folder id: "2" on Chrome/Brave, "unfiled_____" on
@@ -172,7 +185,10 @@ function createSyncEngine(env) {
 
   // The real http(s) target of a tab. For a lazy-restore placeholder
   // tab (still unopened) this is the encoded `u` param; for any other
-  // tab it's just its URL.
+  // tab it's just its URL. snapshotOwnTabs resolves through this, so an
+  // unopened placeholder counts as "open" exactly like any other tab —
+  // closing it (before or after the user ever actually looked at it) is
+  // handled identically either way.
   function realUrlOfTab(tab) {
     const u = (tab && (tab.url || tab.pendingUrl)) || "";
     if (u.startsWith(LAZY_PAGE)) {
@@ -292,17 +308,29 @@ function createSyncEngine(env) {
 
   // Snapshot of this device's own currently-open, real (non-placeholder-
   // pending, http/https) tabs. Tabs still mid-navigation
-  // (status !== "complete") are excluded entirely — see CLAUDE.md for
-  // why (the phantom-duplicate-entry bug this guards against).
+  // (status !== "complete") are excluded entirely: a tab's url/pendingUrl
+  // can pass through transient values while navigating (a redirect
+  // chain, for instance), and registering one of those as "open" would
+  // create a permanent phantom entry nothing ever closes, since the tab
+  // itself never goes away — it just finishes loading. This is the same
+  // guard the tabs.onUpdated listener (handleTabUpdated) already applies
+  // to itself; snapshotOwnTabs extends it to the alarm and
+  // bookmark-event triggers too, which aren't gated on any one tab's
+  // load state. See test/phantom-duplicate.test.js.
   //
   // Pinned tabs and tabs inside a browser tab group are deliberately
   // left out of `urls`/`titleByUrl`/`tabIdsByUrl` too: neither ever gets
   // its own bookmark entry, and mirror-driven open/close never touches
   // one (reconcileMirror only ever closes ids drawn from `tabIdsByUrl`).
-  // They ARE still counted in `allUrls`, which exists purely so callers
-  // that just want to know "is this URL already open here at all"
-  // (avoiding a duplicate open) don't ignore a tab merely because it's
-  // pinned or grouped.
+  // Pinning/grouping a tracked tab therefore reads as "no longer
+  // tracked" on the next live-event reconcile, flipping its own entry to
+  // closed WITHOUT touching the actual tab. They ARE still counted in
+  // `allUrls`, which exists purely so callers that just want to know "is
+  // this URL already open here at all" (avoiding a duplicate open) don't
+  // ignore a tab merely because it's pinned or grouped — so a remote
+  // open never duplicates a tab the user already has pinned or grouped.
+  // See test/grouped-tabs-excluded.test.js. Don't reintroduce pin or
+  // tab-group syncing without discussion.
   async function snapshotOwnTabs() {
     const urls = new Set();
     const allUrls = new Set();
@@ -344,8 +372,8 @@ function createSyncEngine(env) {
   }
 
   // ==========================================================
-  // Reconcile pipeline. See CLAUDE.md's SAFETY RULE section: closes
-  // are only ever detected from a live, specific-tab event
+  // Reconcile pipeline. See closeMyGoneTabs's own SAFETY RULE comment,
+  // below: closes are only ever detected from a live, specific-tab event
   // (handleTabRemoved / handleTabUpdated below), never from the alarm,
   // startup, or a bookmark-change reaction.
   // ==========================================================
@@ -423,7 +451,21 @@ function createSyncEngine(env) {
   // already caught up to the close was otherwise stuck closed forever.
   // A device that's still OPEN is never touched. Third sanctioned
   // exception (with TTL sweep and full-agreement folder deletion) to
-  // "a device only ever writes its own status bookmark" — see CLAUDE.md.
+  // "a device only ever writes its own status bookmark" — see
+  // STATUS_URL_BASE's own comment above.
+  //
+  // Known, accepted trade-off: this can't distinguish a peer's STALE
+  // closed entry (left over from following an earlier close that's since
+  // been undone) from that same peer's own CURRENT, independent close
+  // for unrelated reasons — both look identical in the bookmark tree, so
+  // a reopen anywhere forces a reopen on every currently-closed peer,
+  // regardless of why each one is closed. This is architectural (no
+  // shared clock, no cross-device "who's newer" comparison), confirmed
+  // explicitly with the user after an earlier "sticky" iteration (a
+  // device's own close was final, never overridden by another's state)
+  // was found to not match what was actually wanted — don't "fix" this
+  // into a per-device-final model without discussion. See
+  // test/reopen-propagation.test.js.
   async function resetClosedPeers(folderEntry, deviceName) {
     for (const [peerName, list] of folderEntry.devices) {
       if (peerName === deviceName) continue;
@@ -520,8 +562,37 @@ function createSyncEngine(env) {
   }
 
   // Flips THIS device's own entry to "closed" for URLs it had tracked
-  // as open but no longer has live. ONLY ever called from
-  // handleTabRemoved / handleTabUpdated.
+  // as open but no longer has live.
+  //
+  // SAFETY RULE: closes are only ever detected from a live, specific-tab
+  // event. This function is called ONLY from handleTabRemoved (guarded
+  // against isWindowClosing) and from handleTabUpdated once a navigation
+  // completes — both genuine, real-time signals about ONE particular
+  // tab, reported while the browser is definitely running normally.
+  // Calling it on a completed navigation too is what makes navigating an
+  // open tab to a different URL equivalent to closing the old URL and
+  // opening the new one, instead of a silent in-place swap. It is
+  // deliberately NEVER called from the alarm, onStartup, or a
+  // bookmark-change reaction, because those aren't tied to any one tab's
+  // event — they just compare tracked-open entries against a whole
+  // tabs.query() snapshot that isn't guaranteed complete at those
+  // moments — most notably right after startup, before session restore
+  // has repopulated windows. Treating that gap as "the user closed
+  // everything" would propagate a close for the entire session just
+  // because the browser started up slowly. Opening/mirroring
+  // (reconcileMyOpenEntries, reconcileMirror), by contrast, is always
+  // safe to run broadly — worst case a tab is registered a little late,
+  // which self-heals on the next trigger, never destructive. Preserve
+  // this asymmetry if you touch the reconcile pipeline.
+  //
+  // This rule is specifically about THIS function (inferring a close
+  // from this device's own, possibly-incomplete tab snapshot) — it does
+  // NOT apply to reconcileMirror's contagious close (see its own
+  // comment): that one acts on an explicit, unambiguous REMOTE signal
+  // (another device's bookmark already reads `closed`), not an
+  // inference, so it's safe to run from every trigger, including the
+  // alarm and onStartup. Don't conflate the two when reasoning about
+  // this code.
   async function closeMyGoneTabs(profileFolderId, deviceName) {
     const entries = await readProfileEntries(profileFolderId);
     const { urls: current } = await snapshotOwnTabs();
@@ -546,18 +617,27 @@ function createSyncEngine(env) {
   // "closed" too — until eventually every device agrees closed and the
   // folder is deleted (by whichever device's own write happens to be
   // the one that notices "now they're all closed", via that device's
-  // own immediate follow-up reconcile — see CLAUDE.md). A device that
-  // hasn't weighed in AT ALL yet (no entry of its own) mirrors in
-  // whatever's open elsewhere, same as before, but never once anyone
-  // has started closing it — see the isRelevantBookmarkChange trigger
-  // for why this reacts near-instantly to another device's write.
+  // own immediate follow-up reconcile). A device that hasn't weighed in
+  // AT ALL yet (no entry of its own) mirrors in whatever's open
+  // elsewhere, same as before, but never once anyone has started closing
+  // it — see the isRelevantBookmarkChange trigger for why this reacts
+  // near-instantly to another device's write. A close never deletes
+  // anything immediately — the folder is only deleted once EVERY device
+  // that ever weighed in shows closed, safe for any device to do since
+  // by then nobody is writing to those bookmarks anymore.
+  //
+  // (An earlier iteration of this design made a device's own close
+  // "sticky" — final for that device, never overridden by another's
+  // state. That was reverted: closing a tab anywhere now closes it
+  // everywhere — see resetClosedPeers's own comment for the matching
+  // reopen-side trade-off.)
   //
   // This is a REMOTE-DRIVEN close, not an inference from this device's
   // own (possibly incomplete) tab snapshot — the bookmark tree is the
   // unambiguous signal here, so it's safe to run from every trigger
-  // (alarm/startup/bookmark-event), unlike closeMyGoneTabs (see its own
-  // comment and the SAFETY RULE in CLAUDE.md, which is about a
-  // DIFFERENT failure mode and still fully applies to closeMyGoneTabs).
+  // (alarm/startup/bookmark-event), unlike closeMyGoneTabs — see its own
+  // SAFETY RULE comment, which is about a DIFFERENT failure mode and
+  // still fully applies to closeMyGoneTabs.
   //
   // A brand-new mirror-open candidate (a URL open elsewhere this device
   // has no entry for yet) is NOT opened on first sighting — see
@@ -758,6 +838,25 @@ function createSyncEngine(env) {
     }
   }
 
+  // The reconcile pipeline, in order: closeMyGoneTabs (only if
+  // checkClosed) -> reconcileMyOpenEntries -> reconcileMirror ->
+  // reconcileMyOpenEntries again (so this device's own entries reflect
+  // whatever the mirror pass just opened/closed locally). Triggered with
+  // checkClosed:true from tabs.onRemoved and tabs.onUpdated on
+  // navigation complete (see closeMyGoneTabs's SAFETY RULE), and without
+  // it from the alarm, onStartup, and reactions to bookmark
+  // create/change events under the active profile folder. Also respects
+  // the master syncEnabled switch — while paused, nothing touches
+  // bookmarks in either direction. Never call this directly — always go
+  // through scheduleReconcile, below, which serializes/coalesces
+  // concurrent triggers.
+  //
+  // The extension checks the SyncMyTabs folder on every CHANGE to it,
+  // never on a timer: bookmarks.onCreated/onChanged on the `_url` marker
+  // or any device status bookmark (isRelevantBookmarkChange) triggers a
+  // reconcile immediately; the alarm (default every
+  // DEFAULT_INTERVAL_MINUTES) is only a backstop double-check plus the
+  // TTL sweep, never the primary signal.
   async function runReconcile({ checkClosed } = {}) {
     if (!(await isSyncEnabled())) return;
     const { deviceName } = await env.storage.local.get("deviceName");
@@ -886,7 +985,7 @@ function createSyncEngine(env) {
 
   // Reaction to a remote (or our own) tab-entry bookmark change: an
   // `_url` marker's creation, or a device status bookmark's creation/
-  // update. Never triggers a close — see the safety rule.
+  // update. Never triggers a close — see closeMyGoneTabs's SAFETY RULE.
   function handleBookmarkEvent(title, url) {
     if (!isRelevantBookmarkChange(title, url)) return reconcileTail;
     return scheduleReconcile();
@@ -907,7 +1006,7 @@ function createSyncEngine(env) {
 
   // No checkClosed here: session restore may still be repopulating
   // windows, so a live-tab snapshot right now can't be trusted for
-  // deciding what's been closed. See the safety rule.
+  // deciding what's been closed. See closeMyGoneTabs's SAFETY RULE.
   async function handleStartup() {
     await scheduleReconcile();
     const profile = await getActiveProfile();
