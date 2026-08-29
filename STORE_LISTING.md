@@ -26,7 +26,9 @@ KEY FEATURES
 
 • Tab groups (Chrome/Brave) — keep a titled tab group's key pages present on every device, and keep links clicked inside it from wandering outside the group. Group rules sync the same way tabs do.
 
-• Auto-archive idle tabs (optional, off by default) — tabs you haven't looked at in a while (you choose the threshold, down to the minute) are saved as a bookmark and closed automatically, so your tab bar doesn't grow forever.
+• Auto-archive idle tabs (on by default, adjustable or toggleable off) — tabs you haven't looked at in a while (you choose the threshold, down to the minute) are saved as a bookmark and closed automatically, so your tab bar doesn't grow forever.
+
+• Tab & group order (optional, off by default) — keep tab groups (Chrome/Brave) at the start of the window, alphabetically, followed by your other tabs sorted by how recently you used them. Only reorders once you've stepped away or been reading for a while, never while you're actively switching between tabs.
 
 • Light, dark, or system theme.
 

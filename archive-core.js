@@ -3,14 +3,18 @@
 //
 // Independent module: auto-archive idle tabs. Tracks the last time each
 // of this device's own tabs was actually looked at (became the active
-// tab AND its window had focus), and — opt-in, off by default since
-// it's destructive — once a tab has gone unlooked-at for longer than a
-// configurable threshold (default 3 days, adjustable down to individual
+// tab AND its window had focus), and — on by default, despite being
+// destructive — once a tab has gone unlooked-at for longer than a
+// configurable threshold (default 4 days, adjustable down to individual
 // hours/minutes via three independent day/hour/minute fields — see
 // archiveIdleThreshold below), saves it as a plain bookmark under a
 // per-profile archive folder and closes it. Pinned tabs and tabs inside
 // a browser tab group are never candidates, same exclusion sync-core.js
-// already applies everywhere else.
+// already applies everywhere else. On-by-default is a deliberate product
+// choice, made safe by the never-close-without-saving rule below (see
+// archiveTab) — the tab is never actually lost, only moved into a
+// bookmark folder; still opt-out via isArchiveEnabled for anyone who'd
+// rather manage this manually.
 //
 // Parameterized the same way as groups-core.js: takes `env` (the
 // WebExtension-shaped bookmarks/tabs/windows/storage object) PLUS the
@@ -62,7 +66,7 @@
 // ============================================================
 
 const ARCHIVE_ROOT_TITLE = "_archive";
-const DEFAULT_ARCHIVE_IDLE_DAYS = 3;
+const DEFAULT_ARCHIVE_IDLE_DAYS = 4;
 const DEFAULT_ARCHIVE_IDLE_HOURS = 0;
 const DEFAULT_ARCHIVE_IDLE_MINUTES = 0;
 // Absolute floor for the idle threshold, regardless of what's stored —
@@ -86,7 +90,7 @@ function createArchiveEngine(env, syncEngine) {
 
   async function isArchiveEnabled() {
     const { archiveEnabled } = await env.storage.local.get("archiveEnabled");
-    return archiveEnabled === true; // default OFF (destructive)
+    return archiveEnabled !== false; // default ON (destructive, but safe — see the module header comment)
   }
 
   // Days/hours/minutes are three independent fields (not one combined
@@ -94,7 +98,7 @@ function createArchiveEngine(env, syncEngine) {
   // lossy round-tripping between a stored total and its displayed
   // breakdown. `??` (not `||`) on each field so an explicit 0 in any one
   // of them is honored — e.g. "0 days, 6 hours, 0 minutes" must not fall
-  // back to the 3-day default just because days itself is 0.
+  // back to the 4-day default just because days itself is 0.
   async function archiveIdleThreshold() {
     const { archiveIdleDays, archiveIdleHours, archiveIdleMinutes } =
       await env.storage.local.get([
@@ -364,6 +368,13 @@ function createArchiveEngine(env, syncEngine) {
     handleTabRemoved,
     handleStartupSeed,
     handleArchiveAlarm,
+    // Exposed for order-core.js's own "sort ungrouped tabs by most-
+    // recently-active first" — reuses this same tracking (recorded
+    // unconditionally, regardless of archiveEnabled, see readActivityMap's
+    // own comment above) rather than duplicating a second independent
+    // per-tab activity tracker for what is, conceptually, the exact same
+    // "when was this tab last looked at" data. `{ [tabId]: timestamp }`.
+    getActivityMap: readActivityMap,
   };
 }
 

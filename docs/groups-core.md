@@ -34,10 +34,10 @@ section).
   `groupsStartupDelaySeconds`, `groupsPinToStart` all live in
   `env.storage.local`).
 - **Undeclared tabs are UNGROUPED, never closed** (`groupsUngroupUndeclaredTabs`,
-  opt-in, default OFF) — non-destructive, unlike the exact-duplicate
-  cleanup it runs alongside. Full history/rationale: see the comment
-  above the `ungroupUndeclared` branch in `reconcileGroup` in
-  `groups-core.js`.
+  default ON — non-destructive, which is what makes defaulting it on
+  safe) — unlike the exact-duplicate cleanup it runs alongside. Full
+  history/rationale: see the comment above the `ungroupUndeclared` branch
+  in `reconcileGroup` in `groups-core.js`.
 - **Scoped by the SAME active-profile concept as the rest of the
   extension** — `activeProfileFolderId()` resolves through
   `syncEngine.getActiveProfile()`/`getOrCreateProfileFolder()`.
@@ -58,7 +58,7 @@ section).
   the authoritative decision-maker for every case that DOES reach it
   (non-matching link, or modifier-click on a matching one).
 - **Groups can be pinned to the start of the tab strip**
-  (`groupsPinToStart`, default off) — re-asserted on EVERY reconcile, not
+  (`groupsPinToStart`, default ON) — re-asserted on EVERY reconcile, not
   just when something reopened; multiple pinned groups stack in title
   order via consecutive indices. See the comment above the pin block in
   `reconcileGroup` in `groups-core.js`.

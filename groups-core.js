@@ -363,14 +363,14 @@ function createGroupsEngine(env, syncEngine) {
   }
 
   // Detaching (not closing) a tab from its group is non-destructive —
-  // the tab stays open, just outside the group — but still opt-in and
-  // default OFF, since it's still an automatic action on a tab the user
-  // didn't explicitly ask to touch.
+  // the tab stays open, just outside the group — which is what makes
+  // defaulting this ON safe: it only ever un-groups an undeclared tab,
+  // never touches the tab itself.
   async function ungroupUndeclaredTabsEnabled() {
     const { groupsUngroupUndeclaredTabs } = await env.storage.local.get(
       "groupsUngroupUndeclaredTabs"
     );
-    return groupsUngroupUndeclaredTabs === true; // default OFF
+    return groupsUngroupUndeclaredTabs !== false; // default ON
   }
 
   async function groupsStartupDelaySeconds() {
@@ -380,9 +380,29 @@ function createGroupsEngine(env, syncEngine) {
     return v || DEFAULT_STARTUP_DELAY_SECONDS;
   }
 
+  // Defers to order-core.js when it's active: that module's own
+  // reconcile already places every open group first (alphabetically),
+  // a strict superset of this — pin-to-start only ever repositions
+  // groups that have a saved rule in THIS module's own config, leaving
+  // any other open group's position untouched, and it runs on every
+  // check interval rather than order-core's idle-gated cadence. Running
+  // both at once wouldn't just be redundant: order-core.js's own
+  // manual-move detector (see its module comment) can't tell this
+  // module's own tabGroups.move() calls apart from a real user drag,
+  // so this module's periodic pin-to-start move would keep incorrectly
+  // triggering order-core's "pause after manual reorder" — a real
+  // false-positive, not just a cosmetic overlap. Reading
+  // `tabOrderEnabled` directly (order-core.js's own storage key,
+  // without a function-level dependency on that module) keeps this a
+  // cheap, one-way, read-only check rather than deeper cross-module
+  // coupling.
   async function pinGroupsToStartEnabled() {
-    const { groupsPinToStart } = await env.storage.local.get("groupsPinToStart");
-    return groupsPinToStart === true; // default OFF (repositioning tabs is surprising)
+    const { groupsPinToStart, tabOrderEnabled } = await env.storage.local.get([
+      "groupsPinToStart",
+      "tabOrderEnabled",
+    ]);
+    if (tabOrderEnabled === true) return false;
+    return groupsPinToStart !== false; // default ON
   }
 
   // ---- link leashing ----

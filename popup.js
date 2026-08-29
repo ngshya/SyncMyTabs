@@ -21,9 +21,10 @@ function flashStatus(text, isError) {
 const syncToggle = document.getElementById("syncToggle");
 const groupsToggle = document.getElementById("groupsToggle");
 const archiveToggle = document.getElementById("archiveToggle");
+const orderToggle = document.getElementById("orderToggle");
 
 async function refresh() {
-  const [{ syncEnabled, activeProfile, lastActivityTimestamp }, groupPrefs, archivePrefs] =
+  const [{ syncEnabled, activeProfile, lastActivityTimestamp }, groupPrefs, archivePrefs, orderPrefs] =
     await Promise.all([
       browser.storage.local.get([
         "syncEnabled",
@@ -32,6 +33,7 @@ async function refresh() {
       ]),
       browser.runtime.sendMessage({ type: "GROUPS_GET_PREFS" }),
       browser.runtime.sendMessage({ type: "ARCHIVE_GET_PREFS" }),
+      browser.runtime.sendMessage({ type: "ORDER_GET_PREFS" }),
     ]);
 
   const on = syncEnabled !== false; // default ON
@@ -39,7 +41,8 @@ async function refresh() {
   document.getElementById("pausedNote").hidden = on;
   document.getElementById("syncNow").disabled = !on;
   groupsToggle.checked = groupPrefs.leashEnabled !== false;
-  archiveToggle.checked = archivePrefs.archiveEnabled === true; // default OFF
+  archiveToggle.checked = archivePrefs.archiveEnabled !== false; // default ON
+  orderToggle.checked = orderPrefs.orderEnabled === true; // default OFF
 
   document.getElementById("profileName").textContent = activeProfile || DEFAULT_PROFILE;
   document.getElementById("lastActivity").textContent = lastActivityTimestamp
@@ -65,6 +68,14 @@ archiveToggle.addEventListener("change", async () => {
   await browser.runtime.sendMessage({
     type: "ARCHIVE_SET_PREFS",
     archiveEnabled: archiveToggle.checked,
+  });
+  flashStatus("Saved ✓");
+});
+
+orderToggle.addEventListener("change", async () => {
+  await browser.runtime.sendMessage({
+    type: "ORDER_SET_PREFS",
+    orderEnabled: orderToggle.checked,
   });
   flashStatus("Saved ✓");
 });

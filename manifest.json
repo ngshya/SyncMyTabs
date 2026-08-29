@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SyncMyTabs",
-  "version": "4.10.1",
+  "version": "4.12.0",
   "description": "Sync your open tabs across devices, organized by profile, using bookmarks as the transport.",
   "permissions": [
     "bookmarks",
@@ -13,7 +13,7 @@
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js",
-    "scripts": ["browser-polyfill.min.js", "sync-core.js", "groups-core.js", "archive-core.js", "background.js"]
+    "scripts": ["browser-polyfill.min.js", "sync-core.js", "groups-core.js", "archive-core.js", "order-core.js", "background.js"]
   },
   "content_scripts": [
     {

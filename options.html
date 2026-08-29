@@ -273,7 +273,7 @@
         <span class="slider"></span>
       </label>
     </div>
-    <div class="card-desc">Tracks the last time each of your tabs actually had focus. A tab you haven't looked at in a while is saved as a bookmark under SyncMyTabs/&lt;profile&gt;/_archive/&lt;year&gt;/&lt;month&gt;/&lt;day&gt;/ and then closed — pinned tabs and tabs in a browser tab group are never touched. Off by default.</div>
+    <div class="card-desc">Tracks the last time each of your tabs actually had focus. A tab you haven't looked at in a while is saved as a bookmark under SyncMyTabs/&lt;profile&gt;/_archive/&lt;year&gt;/&lt;month&gt;/&lt;day&gt;/ and then closed — pinned tabs and tabs in a browser tab group are never touched. On by default.</div>
     <div class="card-body">
       <div class="field" style="margin-top: 0;">Archive a tab after it's been idle for</div>
       <div class="idle-threshold-row">
@@ -293,6 +293,39 @@
       <div class="inline-row">
         <button id="archiveNow" class="secondary">Archive idle tabs now</button>
         <button id="archiveClear" class="danger" title="Deletes every bookmark under _archive for this profile. The tabs themselves are already closed — this only clears the saved record of them.">Clear archived tabs</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       Tab & group order
+       ============================================================ -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Tab &amp; group order</span>
+      <label class="switch">
+        <input type="checkbox" id="orderEnabled" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="card-desc">Keeps each window laid out with browser tab groups first (Chrome/Brave, alphabetical by title), then every other tab most-recently-active first. Only reorders once no tab anywhere has been touched for a while — never while you're actively using the browser. Off by default, since rearranging the tab strip is more disruptive than anything else here.</div>
+    <div class="warn-note">
+      ⚠️ Turning this on makes the Tab groups card's own "Pin configured groups to the start of the tab bar" a no-op — this module already does a superset of that for every open group, not just ones with saved rules here.
+    </div>
+    <div class="card-body">
+      <div id="orderPausedNote" class="paused-note" hidden>
+        Paused after a manual tab move — resumes automatically once the pause window below has passed.
+      </div>
+      <label class="field">
+        Reorder after no tab has been touched for (minutes)
+        <input type="number" id="orderIdleMinutes" min="1" step="1" />
+      </label>
+      <label class="field">
+        Pause automatic reordering for this long after you move a tab yourself (minutes)
+        <input type="number" id="orderManualPauseMinutes" min="0" step="1" />
+      </label>
+      <div class="inline-row">
+        <button id="orderReorderNow" class="secondary">Reorder now</button>
       </div>
     </div>
   </div>

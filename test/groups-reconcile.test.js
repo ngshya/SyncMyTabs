@@ -83,27 +83,29 @@ test("duplicate tabs covering the same essential rule: keep the leftmost, close 
   assert.equal(matching[0].id, first.id);
 });
 
-test("groupsUngroupUndeclaredTabs=false (default) leaves an unrelated tab in the group alone", async () => {
+test("groupsUngroupUndeclaredTabs=false leaves an unrelated tab in the group alone, still grouped", async () => {
   const world = new SimWorld();
-  const a = world.addDevice({ deviceName: "A" });
+  // groupsUngroupUndeclaredTabs now defaults ON — set it explicitly false
+  // here, since this test is specifically about the disabled case.
+  const a = world.addDevice({ deviceName: "A", storage: { groupsUngroupUndeclaredTabs: false } });
   const ga = groupsEngineFor(a);
 
   await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
+  const workGroupId = a.ensureOpenGroup("Work");
   await a.openGroupedTab("https://mail.example/inbox", "Inbox", "Work");
   await a.openGroupedTab("https://random.example/", "Random", "Work");
 
   await ga.reconcileGroups();
 
   const tabs = await a.tabsApi.query();
-  assert.ok(tabs.some((t) => t.url === "https://random.example/"), "undeclared tab must survive by default");
+  const undeclared = tabs.find((t) => t.url === "https://random.example/");
+  assert.ok(undeclared, "undeclared tab must survive when the toggle is off");
+  assert.equal(undeclared.groupId, workGroupId, "must stay in the group when the toggle is off");
 });
 
-test("groupsUngroupUndeclaredTabs=true ungroups (never closes) a tab matching NO rule at all in that group", async () => {
+test("groupsUngroupUndeclaredTabs=true (default) ungroups (never closes) a tab matching NO rule at all in that group", async () => {
   const world = new SimWorld();
-  const a = world.addDevice({
-    deviceName: "A",
-    storage: { groupsUngroupUndeclaredTabs: true },
-  });
+  const a = world.addDevice({ deviceName: "A" }); // no storage override — exercises the new default
   const ga = groupsEngineFor(a);
 
   await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
@@ -175,9 +177,11 @@ test("reconcileGroups only touches the ACTIVE profile's groups", async () => {
   assert.equal(tabs.length, 0, "a different profile's essential tab must not be opened");
 });
 
-test("pinGroupsToStart=false (default) never repositions a group", async () => {
+test("pinGroupsToStart=false never repositions a group", async () => {
   const world = new SimWorld();
-  const a = world.addDevice({ deviceName: "A" });
+  // groupsPinToStart now defaults ON — set it explicitly false here,
+  // since this test is specifically about the disabled case.
+  const a = world.addDevice({ deviceName: "A", storage: { groupsPinToStart: false } });
   const ga = groupsEngineFor(a);
 
   await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
@@ -189,12 +193,9 @@ test("pinGroupsToStart=false (default) never repositions a group", async () => {
   assert.equal(group.position, undefined, "no move() call should have happened");
 });
 
-test("pinGroupsToStart=true moves an already-open group to index 0", async () => {
+test("pinGroupsToStart=true (default) moves an already-open group to index 0", async () => {
   const world = new SimWorld();
-  const a = world.addDevice({
-    deviceName: "A",
-    storage: { groupsPinToStart: true },
-  });
+  const a = world.addDevice({ deviceName: "A" }); // no storage override — exercises the new default
   const ga = groupsEngineFor(a);
 
   await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
@@ -204,6 +205,29 @@ test("pinGroupsToStart=true moves an already-open group to index 0", async () =>
 
   const group = await a.tabGroupsApi.get(groupId);
   assert.equal(group.position, 0);
+});
+
+test("pinGroupsToStart defers to tabOrderEnabled — no pin-to-start move when order-core.js's own module is active", async () => {
+  const world = new SimWorld();
+  // groupsPinToStart explicitly true, but tabOrderEnabled ALSO true —
+  // order-core.js's own reconcile is a strict superset (see
+  // pinGroupsToStartEnabled's own comment in groups-core.js), and its
+  // manual-move detector can't tell this module's own tabGroups.move()
+  // calls apart from a real user drag, so this module must stay
+  // completely hands-off here, not just "somewhat redundant".
+  const a = world.addDevice({
+    deviceName: "A",
+    storage: { groupsPinToStart: true, tabOrderEnabled: true },
+  });
+  const ga = groupsEngineFor(a);
+
+  await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
+  const groupId = a.ensureOpenGroup("Work");
+
+  await ga.reconcileGroups();
+
+  const group = await a.tabGroupsApi.get(groupId);
+  assert.equal(group.position, undefined, "no move() call should have happened");
 });
 
 test("pinGroupsToStart=true also pins a group it just recreated from scratch", async () => {
