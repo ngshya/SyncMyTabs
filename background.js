@@ -55,6 +55,15 @@
 // configurable threshold (default 4 days) as a plain bookmark under a
 // per-profile "_archive" folder, then closes it. Pinned/grouped tabs are
 // never candidates. See archive-core.js's own header comment.
+//
+// order-core.js is a FOURTH independent module, opt-in and off by
+// default: keeps each window's tab strip laid out with browser tab
+// groups first (alphabetical by title) then every other tab most-
+// recently-active first, reusing archive-core.js's own per-tab
+// activity tracking rather than duplicating it. Only reorders once no
+// tab anywhere has been activated for a while (a proxy for "away, or
+// reading something long"), and pauses itself for a while after
+// detecting a real manual drag. See order-core.js's own header comment.
 // ============================================================
 
 // Cross-browser API access: use the promise-based `browser.*` namespace
@@ -68,25 +77,28 @@ if (typeof importScripts === "function") {
     "browser-polyfill.min.js",
     "sync-core.js",
     "groups-core.js",
-    "archive-core.js"
+    "archive-core.js",
+    "order-core.js"
   );
 }
 
 const engine = createSyncEngine(browser);
 const groupsEngine = createGroupsEngine(browser, engine);
 const archiveEngine = createArchiveEngine(browser, engine);
+const orderEngine = createOrderEngine(browser, engine, archiveEngine);
 
-// NOTE: sync-core.js, groups-core.js, AND archive-core.js are loaded
-// into this SAME script via importScripts (Chrome) / sequential
-// <script> tags (Firefox) — all four share ONE top-level `let`/`const`
-// lexical scope, so declaring a top-level const/let here (or in
-// groups-core.js/archive-core.js) with the SAME NAME as one of another
-// file's own top-level bindings (e.g. sync-core.js's internal
-// DEFAULT_PROFILE, DEFAULT_INTERVAL_MINUTES) throws a SyntaxError
-// ("already been declared") that silently prevents this ENTIRE script
-// from running — no listeners get registered at all. Always read such
-// values off `engine.*`/`groupsEngine.*`/`archiveEngine.*` instead of
-// re-declaring a same-named local, and give any background.js-only
+// NOTE: sync-core.js, groups-core.js, archive-core.js, AND order-core.js
+// are loaded into this SAME script via importScripts (Chrome) /
+// sequential <script> tags (Firefox) — all five share ONE top-level
+// `let`/`const` lexical scope, so declaring a top-level const/let here
+// (or in groups-core.js/archive-core.js/order-core.js) with the SAME
+// NAME as one of another file's own top-level bindings (e.g.
+// sync-core.js's internal DEFAULT_PROFILE, DEFAULT_INTERVAL_MINUTES)
+// throws a SyntaxError ("already been declared") that silently
+// prevents this ENTIRE script from running — no listeners get
+// registered at all. Always read such values off
+// `engine.*`/`groupsEngine.*`/`archiveEngine.*`/`orderEngine.*` instead
+// of re-declaring a same-named local, and give any background.js-only
 // constant a name that can't collide (see test/no-name-collision.test.js).
 const FALLBACK_INTERVAL_MINUTES = 1;
 const GROUPS_RECONCILE_ALARM = "groupsReconcileAlarm";
@@ -202,6 +214,15 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
   // there's no separate "archive check interval" setting, it just piggy-
   // backs on the main sync cadence (syncIntervalMinutes).
   await archiveEngine.handleArchiveAlarm();
+  // Same reasoning for order-core.js: no separate "tab order check
+  // interval" setting either. Its own reconcileOrder() no-ops on almost
+  // every tick anyway (disabled, master-paused, still idle-gated, or
+  // paused from a recent manual move) — piggybacking here rather than
+  // registering yet another alarm also means it can never end up with
+  // the SAME missing-from-onInstalled bug groups-core.js's own alarm
+  // had (see ensureGroupsAlarmPeriod's own comment above) — there's no
+  // dedicated alarm to forget to (re-)arm in the first place.
+  await orderEngine.handleOrderAlarm();
 });
 
 browser.alarms.onAlarm.addListener(async (alarm) => {
@@ -248,6 +269,21 @@ browser.windows.onFocusChanged.addListener((windowId) => {
 browser.tabs.onCreated.addListener((tab) => {
   archiveEngine.handleTabCreated(tab);
 });
+
+// order-core.js's own "was this move mine, or a real user drag"
+// detector (see its module comment) — every tabs.onMoved fires here,
+// including moves order-core.js's own reconcile pass just issued
+// (guarded internally there, not here — this file stays a thin
+// wrapper). tabGroups.onMoved is Chrome/Brave-only (no such event, or
+// API, on Firefox); browser.tabs.onMoved itself exists on both.
+browser.tabs.onMoved.addListener(() => {
+  orderEngine.handleTabMoved();
+});
+if (browser.tabGroups && browser.tabGroups.onMoved) {
+  browser.tabGroups.onMoved.addListener(() => {
+    orderEngine.handleGroupMoved();
+  });
+}
 
 browser.bookmarks.onCreated.addListener((id, node) => {
   engine.handleBookmarkEvent(node && node.title, node && node.url);
@@ -429,6 +465,44 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "ARCHIVE_CLEAR") {
     (async () => {
       await archiveEngine.clearArchiveForActiveProfile();
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  // ---- Tab & group order module (order-core.js) ----
+
+  if (message?.type === "ORDER_GET_PREFS") {
+    (async () => {
+      const [orderEnabled, idleMinutes, manualPauseMinutes, pausedFromManualMove] =
+        await Promise.all([
+          orderEngine.isOrderEnabled(),
+          orderEngine.orderIdleMinutes(),
+          orderEngine.orderManualPauseMinutes(),
+          orderEngine.isPausedFromManualMove(),
+        ]);
+      sendResponse({ orderEnabled, idleMinutes, manualPauseMinutes, pausedFromManualMove });
+    })();
+    return true;
+  }
+
+  if (message?.type === "ORDER_SET_PREFS") {
+    (async () => {
+      const updates = {};
+      if (message.orderEnabled !== undefined) updates.tabOrderEnabled = message.orderEnabled;
+      if (message.idleMinutes !== undefined) updates.tabOrderIdleMinutes = message.idleMinutes;
+      if (message.manualPauseMinutes !== undefined) {
+        updates.tabOrderManualPauseMinutes = message.manualPauseMinutes;
+      }
+      await browser.storage.local.set(updates);
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message?.type === "ORDER_REORDER_NOW") {
+    (async () => {
+      await orderEngine.reorderNow();
       sendResponse({ ok: true });
     })();
     return true;

@@ -217,9 +217,39 @@ unlooked-at for too long instead of letting it sit open forever.
 
 ---
 
+## Tab & group order
+
+A third independent module, **off by default**: keeps each window laid out
+with browser tab groups first (Chrome/Brave, alphabetical by title), then
+every other tab sorted by how recently you actually used it.
+
+- **Only reorders once you've stepped away.** It checks whether ANY tab in
+  the browser has been switched to recently, and only reorders once that's
+  been true for a while (default **5 minutes**, adjustable) — a proxy for
+  "reading something long" or "away from the computer". The tab you're
+  actively using never jumps position under you.
+- **Moving a tab yourself pauses it.** Drag a tab (or a group) to reorder it
+  by hand, and automatic reordering steps aside for a while (default **30
+  minutes**, adjustable) rather than immediately undoing what you just did.
+- **A manual "Reorder now" button** (full settings page) does it immediately,
+  skipping both the wait-for-idle check and any pause from a recent manual
+  move.
+- **Pinned tabs are never touched.** They stay wherever the browser itself
+  keeps them (always first), same exclusion the rest of SyncMyTabs applies
+  everywhere else.
+- **Turning this on supersedes the Tab groups card's own "pin configured
+  groups to the start" toggle** — that one only repositions groups you've
+  saved leash rules for; this module does the same for every open group, so
+  the narrower one becomes a no-op while this one is active.
+- Runs on the same check interval as tab sync — no separate interval setting
+  to configure, beyond the idle-before-reordering minutes above.
+
+---
+
 SyncMyTabs runs on **Chromium browsers (Chrome / Brave)** and **Firefox**
-(the tab-groups module above is Chrome/Brave only; everything else works
-identically on both).
+(the tab-groups module, and the "groups first" half of tab & group order,
+are both Chrome/Brave only; everything else — including tab & group order's
+recency sort — works identically on both).
 
 ## Install (developer mode)
 
@@ -249,12 +279,12 @@ Then, on either browser:
 ## Usage
 
 The **popup** (click the toolbar icon) is a compact status/quick-toggle
-panel: your active profile, an on/off switch for each of the three feature
-modules (open-tab sync, tab groups, auto-archive), a **Sync now** button,
-the last mirror activity, and a button to open the **full settings page**
-for everything else. The toolbar icon itself changes to a greyed-out
-"paused" icon (with an **OFF** badge) whenever sync is off, so the state is
-obvious without opening anything.
+panel: your active profile, an on/off switch for each of the four feature
+modules (open-tab sync, tab groups, auto-archive, tab & group order), a
+**Sync now** button, the last mirror activity, and a button to open the
+**full settings page** for everything else. The toolbar icon itself changes
+to a greyed-out "paused" icon (with an **OFF** badge) whenever sync is off,
+so the state is obvious without opening anything.
 
 The full settings page (**Open full settings** in the popup, or the tab
 that opens automatically on first run) holds:
@@ -298,6 +328,9 @@ that opens automatically on first run) holds:
   the idle threshold as separate days/hours/minutes fields, **Archive idle
   tabs now**, and **Clear archived tabs** (asks for confirmation first) — see
   [Auto-archive idle tabs](#auto-archive-idle-tabs) above.
+- **Tab & group order** card — its own on/off switch (**off** by default),
+  the idle-before-reordering minutes, the manual-move pause minutes, and
+  **Reorder now** — see [Tab & group order](#tab--group-order) above.
 
 Every field except the checkboxes/switches (which save immediately) saves
 when you leave it (blur, or press Enter).
@@ -317,10 +350,10 @@ SyncMyTabs' own initiative):
 | Permission | Why |
 |---|---|
 | `bookmarks` | Read/write the SyncMyTabs bookmark tree |
-| `tabs` | Read open tab URLs/titles; open/close/group tabs to mirror, restore, and reconcile tab groups |
-| `tabGroups` | Tab-group leashing module only (Chrome/Brave — no such API on Firefox): read a group's title, create/update a group when reopening a missing declared tab |
+| `tabs` | Read open tab URLs/titles; open/close/group/reposition tabs to mirror, restore, reconcile tab groups, and (tab & group order module only, off by default) lay out a window |
+| `tabGroups` | Tab-group leashing and tab & group order modules only (Chrome/Brave — no such API on Firefox): read a group's title, create/update/reposition a group |
 | `storage` | Store this device's settings and state |
-| `alarms` | Drive the periodic double-check, cleanup sweep, tab-groups reconcile, and auto-archive idle check |
+| `alarms` | Drive the periodic double-check, cleanup sweep, tab-groups reconcile, auto-archive idle check, and tab & group order idle check |
 | `<all_urls>` host permission + content script | Tab-group leashing module only: intercepts a link click on a page that's inside a *configured* tab group (see [Tab groups (leashing)](#tab-groups-leashing--chromebrave-only)) — an ungrouped tab is unaffected |
 
 ---
@@ -390,6 +423,13 @@ SyncMyTabs' own initiative):
 - **The browser's own tab-group sync should be off** for any profile the
   tab-groups module manages — see its own section above. SyncMyTabs can't
   detect or disable it for you; this is a browser-level setting.
+- **Tab & group order's "groups first" behavior is Chrome/Brave only**, same
+  reason as tab-group leashing — Firefox has no tab-groups API. Its recency
+  sort of every other tab still applies there.
+- **Tab & group order isn't a real-time layout enforcer.** It only acts
+  periodically, and only once the browser's been idle a while (see its own
+  section above) — a tab you just opened, or just switched to, won't jump
+  into its "correct" position immediately, by design.
 
 ---
 
@@ -401,7 +441,8 @@ SyncMyTabs' own initiative):
 | `sync-core.js` | All the open-tab sync/reconcile logic, testable independently of a real browser (see Testing below) |
 | `groups-core.js` | The independent tab-group leashing module's logic — its own bookmark-backed rule storage, link-leash decision, and reconcile pass — same `env`-parameterized, testable style as `sync-core.js` |
 | `archive-core.js` | The independent auto-archive module's logic — tracks tab focus, saves+closes idle ones — same `env`-parameterized, testable style |
-| `background.js` | Thin wiring: real browser events → `sync-core.js` / `groups-core.js` / `archive-core.js` |
+| `order-core.js` | The independent tab & group order module's logic — lays out groups first then tabs by recency, idle-gated, pauses after a manual move — same `env`-parameterized, testable style |
+| `background.js` | Thin wiring: real browser events → `sync-core.js` / `groups-core.js` / `archive-core.js` / `order-core.js` |
 | `link-leash-content.js` | Content script for the leashing module — intercepts link clicks on a tab it's confirmed is inside a configured group |
 | `popup.html` / `popup.js` | Compact toolbar popup — status, per-module on/off switches, Sync now, and a link to full settings |
 | `options.html` / `options.js` | Full settings page — device name, profiles, check interval, every module's detail settings, theme |

@@ -380,8 +380,28 @@ function createGroupsEngine(env, syncEngine) {
     return v || DEFAULT_STARTUP_DELAY_SECONDS;
   }
 
+  // Defers to order-core.js when it's active: that module's own
+  // reconcile already places every open group first (alphabetically),
+  // a strict superset of this — pin-to-start only ever repositions
+  // groups that have a saved rule in THIS module's own config, leaving
+  // any other open group's position untouched, and it runs on every
+  // check interval rather than order-core's idle-gated cadence. Running
+  // both at once wouldn't just be redundant: order-core.js's own
+  // manual-move detector (see its module comment) can't tell this
+  // module's own tabGroups.move() calls apart from a real user drag,
+  // so this module's periodic pin-to-start move would keep incorrectly
+  // triggering order-core's "pause after manual reorder" — a real
+  // false-positive, not just a cosmetic overlap. Reading
+  // `tabOrderEnabled` directly (order-core.js's own storage key,
+  // without a function-level dependency on that module) keeps this a
+  // cheap, one-way, read-only check rather than deeper cross-module
+  // coupling.
   async function pinGroupsToStartEnabled() {
-    const { groupsPinToStart } = await env.storage.local.get("groupsPinToStart");
+    const { groupsPinToStart, tabOrderEnabled } = await env.storage.local.get([
+      "groupsPinToStart",
+      "tabOrderEnabled",
+    ]);
+    if (tabOrderEnabled === true) return false;
     return groupsPinToStart !== false; // default ON
   }
 

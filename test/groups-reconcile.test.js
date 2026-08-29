@@ -207,6 +207,29 @@ test("pinGroupsToStart=true (default) moves an already-open group to index 0", a
   assert.equal(group.position, 0);
 });
 
+test("pinGroupsToStart defers to tabOrderEnabled — no pin-to-start move when order-core.js's own module is active", async () => {
+  const world = new SimWorld();
+  // groupsPinToStart explicitly true, but tabOrderEnabled ALSO true —
+  // order-core.js's own reconcile is a strict superset (see
+  // pinGroupsToStartEnabled's own comment in groups-core.js), and its
+  // manual-move detector can't tell this module's own tabGroups.move()
+  // calls apart from a real user drag, so this module must stay
+  // completely hands-off here, not just "somewhat redundant".
+  const a = world.addDevice({
+    deviceName: "A",
+    storage: { groupsPinToStart: true, tabOrderEnabled: true },
+  });
+  const ga = groupsEngineFor(a);
+
+  await ga.setGroupSettingsForActiveProfile("Work", [MAIL_ESSENTIAL_RULE]);
+  const groupId = a.ensureOpenGroup("Work");
+
+  await ga.reconcileGroups();
+
+  const group = await a.tabGroupsApi.get(groupId);
+  assert.equal(group.position, undefined, "no move() call should have happened");
+});
+
 test("pinGroupsToStart=true also pins a group it just recreated from scratch", async () => {
   const world = new SimWorld();
   const a = world.addDevice({

@@ -138,9 +138,46 @@ class SimBookmarksApi {
 // Per-device fake tabs. `status` defaults to "complete" — tests that
 // want to exercise the mid-navigation guard use openTabLoading() +
 // finishNavigation() instead of the plain openTab() helper.
+//
+// Tab STRIP ORDER (tab.index) is modeled for real, per window
+// (`orderByWindow`: windowId -> [tabId, ...] in on-screen order) — an
+// earlier version of this simulator didn't track order at all (every
+// tab's `.index` was simply `undefined`), which order-core.js's own
+// tests need to be meaningful, and which also silently made
+// groups-core.js's existing `matchingTabs.sort((a,b) => a.index -
+// b.index)` a no-op (comparing undefined-undefined) that happened to
+// not matter for any PRIOR test scenario. `_reindexWindow` is the one
+// place that (re)assigns every tab's `.index` field from its position
+// in the order array — call it after any mutation to that array, never
+// hand-patch `.index` directly.
 class SimTabsApi {
   constructor() {
     this.tabs = new Map();
+    this.orderByWindow = new Map(); // windowId -> [tabId, ...] in strip order
+  }
+
+  _orderArrayFor(windowId) {
+    let arr = this.orderByWindow.get(windowId);
+    if (!arr) {
+      arr = [];
+      this.orderByWindow.set(windowId, arr);
+    }
+    return arr;
+  }
+
+  _reindexWindow(windowId) {
+    const arr = this._orderArrayFor(windowId);
+    arr.forEach((id, i) => {
+      const t = this.tabs.get(id);
+      if (t) t.index = i;
+    });
+  }
+
+  _removeFromOrder(tab) {
+    const arr = this._orderArrayFor(tab.windowId);
+    const i = arr.indexOf(tab.id);
+    if (i !== -1) arr.splice(i, 1);
+    this._reindexWindow(tab.windowId);
   }
 
   // Real filtering by the fields this codebase actually queries by
@@ -166,6 +203,15 @@ class SimTabsApi {
     if (queryInfo.pinned !== undefined) {
       list = list.filter((t) => !!t.pinned === !!queryInfo.pinned);
     }
+    // Real chrome.tabs.query() returns tabs in on-screen strip order —
+    // sort by (windowId, index) so a caller (groups-core.js's own
+    // `matchingTabs.sort((a,b) => a.index - b.index)`, or order-core.js
+    // reading a whole window's layout) sees the same ordering a real
+    // browser would, not Map insertion order.
+    list = list.slice().sort((a, b) => {
+      if (a.windowId !== b.windowId) return String(a.windowId).localeCompare(String(b.windowId));
+      return (a.index || 0) - (b.index || 0);
+    });
     return list.map((t) => ({ ...t }));
   }
 
@@ -194,6 +240,7 @@ class SimTabsApi {
     groupId,
     pinned,
     openerTabId,
+    index,
   }) {
     const id = nextId();
     let effectiveGroupId = groupId;
@@ -230,8 +277,33 @@ class SimTabsApi {
       windowId: windowId || (this.windowsApi && this.windowsApi.defaultWindowId) || "1",
       groupId: effectiveGroupId === undefined ? -1 : effectiveGroupId,
       pinned: !!pinned,
+      index: 0, // placeholder — _reindexWindow below assigns the real value
     };
     this.tabs.set(id, tab);
+
+    // Strip-order placement: an explicit `index` wins (real callers pass
+    // this to open a tab adjacent to another, e.g. groups-core.js's
+    // fallbackOpen/handleLinkClick with `index: tab.index + 1`); failing
+    // that, a tab created directly INTO an already-open group is placed
+    // right after that group's last current member — mirroring real
+    // Chrome, which never lets tabs.create() silently break a group's
+    // on-screen contiguity — never just appended past unrelated tabs.
+    // Everything else (the common case) is appended at the window's end.
+    const order = this._orderArrayFor(tab.windowId);
+    let insertAt = order.length;
+    if (typeof index === "number") {
+      insertAt = Math.max(0, Math.min(index, order.length));
+    } else if (typeof effectiveGroupId === "number" && effectiveGroupId !== -1) {
+      let lastMemberPos = -1;
+      order.forEach((otherId, i) => {
+        const other = this.tabs.get(otherId);
+        if (other && other.groupId === effectiveGroupId) lastMemberPos = i;
+      });
+      if (lastMemberPos !== -1) insertAt = lastMemberPos + 1;
+    }
+    order.splice(insertAt, 0, id);
+    this._reindexWindow(tab.windowId);
+
     if (active) this._setActiveTab(id);
     // Mirrors a real quirk that matters for archive-core.js: any tab
     // creation, from ANY code path (a direct open, a mirror-driven
@@ -268,10 +340,82 @@ class SimTabsApi {
   async remove(idOrIds, removeInfo = {}) {
     const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
     for (const id of ids) {
-      if (!this.tabs.has(id)) continue;
+      const tab = this.tabs.get(id);
+      if (!tab) continue;
+      this._removeFromOrder(tab);
       this.tabs.delete(id);
       if (this.onRemoved) this.onRemoved(id, removeInfo);
     }
+  }
+
+  // chrome.tabs.move()-alike, for order-core.js. Moves one or more tabs
+  // (already-grouped tabs included — see order-core.js's own comment on
+  // why it only ever moves a group's members as one contiguous block via
+  // tabGroups.move, never through here individually) to `index` within
+  // `windowId` (defaulting to the tabs' own current window, same
+  // semantics as the real API when windowId is omitted). All moved ids
+  // must already share one window — order-core.js never mixes windows
+  // in one call, so this doesn't bother supporting a cross-window batch.
+  // Preserves the moved ids' relative order among themselves, exactly
+  // like the real API. Returns the updated Tab object(s), and fires
+  // `.onMoved` per id (used by order-core.js's own tests to verify a
+  // move it triggered doesn't look like a foreign/manual one — see
+  // reorderInProgress in order-core.js).
+  async move(idOrIds, { index, windowId } = {}) {
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+    const tabs = ids.map((id) => this.tabs.get(id)).filter(Boolean);
+    if (tabs.length === 0) return Array.isArray(idOrIds) ? [] : undefined;
+    const targetWindowId = windowId !== undefined ? windowId : tabs[0].windowId;
+
+    for (const tab of tabs) {
+      this._removeFromOrder(tab);
+      tab.windowId = targetWindowId;
+    }
+    const order = this._orderArrayFor(targetWindowId);
+    const insertAt = Math.max(0, Math.min(index, order.length));
+    order.splice(insertAt, 0, ...tabs.map((t) => t.id));
+    this._reindexWindow(targetWindowId);
+
+    for (const tab of tabs) {
+      // Awaited (unlike onRemoved/onCreated/onActivated elsewhere in
+      // this file, which are fire-and-forget or queued onto
+      // world.pending for deferred, flush()-driven propagation) — this
+      // event backs order-core.js's own synchronous "was this move
+      // mine" guard (reorderInProgress), which only works if the
+      // listener runs and finishes BEFORE move()'s own promise
+      // resolves, not on some later microtask/flush. Safe even if a
+      // future hook here doesn't return a promise: `await`ing a
+      // non-promise is a same-tick no-op.
+      if (this.onMoved) {
+        await this.onMoved(tab.id, { windowId: tab.windowId, toIndex: tab.index });
+      }
+    }
+    const results = tabs.map((t) => ({ ...t }));
+    return Array.isArray(idOrIds) ? results : results[0];
+  }
+
+  // Collapses every current member of group `gid` into one contiguous
+  // block in its window's strip order — real Chrome never leaves a
+  // group's tabs scattered, so group()/ungroup() below keep this
+  // invariant true after every call, the same way tabGroups.move()
+  // does for an explicit reposition. Settles the block at the EARLIEST
+  // position any current member already occupies (rather than some
+  // arbitrary end-of-window jump), so grouping a batch of tabs that
+  // were already sitting next to each other is a no-op-looking
+  // consolidation, not a surprising relocation.
+  _consolidateGroupBlock(gid) {
+    const members = Array.from(this.tabs.values()).filter((t) => t.groupId === gid);
+    if (members.length === 0) return;
+    const windowId = members[0].windowId;
+    const order = this._orderArrayFor(windowId);
+    const sorted = members.slice().sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+    const targetPos = Math.min(...sorted.map((m) => order.indexOf(m.id)));
+    for (const m of sorted) {
+      const i = order.indexOf(m.id);
+      if (i !== -1) order.splice(i, 1);
+    }
+    order.splice(Math.min(targetPos, order.length), 0, ...sorted.map((m) => m.id));
+    this._reindexWindow(windowId);
   }
 
   // chrome.tabs.group()-alike, for groups-core.js's reconcileGroup /
@@ -290,6 +434,7 @@ class SimTabsApi {
       const tab = this.tabs.get(id);
       if (tab) tab.groupId = gid;
     }
+    this._consolidateGroupBlock(gid);
     return gid;
   }
 
@@ -334,15 +479,26 @@ class SimTabGroupsApi {
     return { ...g };
   }
 
-  // chrome.tabGroups.move()-alike. The simulator doesn't model full tab-
-  // strip adjacency/reordering (no other test needs that level of
-  // fidelity) — it just records the requested position on the group
-  // itself, which tests read back directly to verify pinning behavior.
+  // chrome.tabGroups.move()-alike. Moves every current member tab of
+  // this group as one contiguous block to `index` (real strip-order
+  // reordering, via tabsApi.move() below — order-core.js's own tests
+  // depend on this being real, not just recorded). Also still sets
+  // `g.position` for the existing groups-reconcile pin-to-start tests,
+  // which only ever assert that field directly.
   async move(id, { index, windowId } = {}) {
     const g = this.groups.get(id);
     if (!g) throw new Error(`no such group ${id}`);
+    const members = Array.from(this.tabsApi.tabs.values())
+      .filter((t) => t.groupId === id)
+      .sort((a, b) => a.index - b.index)
+      .map((t) => t.id);
+    if (members.length > 0) {
+      await this.tabsApi.move(members, { index, windowId: windowId || g.windowId });
+    }
     g.position = index;
     if (windowId !== undefined) g.windowId = windowId;
+    // Awaited — same reasoning as SimTabsApi.move()'s own onMoved above.
+    if (this.onMoved) await this.onMoved(id, { windowId: g.windowId, toIndex: index });
     return { ...g };
   }
 
@@ -454,6 +610,13 @@ class SimDevice {
       // very next flush()" behavior. Tests specifically exercising the
       // debounce mechanism pass a non-zero value here instead.
       mirrorOpenDebounceMs = 0,
+      // Overrides order-core.js's own trailing reorder-guard grace
+      // period (see its own comment). Defaults to 0 for the same
+      // reason as mirrorOpenDebounceMs above: SimTabsApi/SimTabGroupsApi
+      // fire onMoved synchronously (no real event-loop delay to guard
+      // against here), so a real wall-clock wait would only slow every
+      // test down for no correctness benefit.
+      reorderGuardGraceMs = 0,
     }
   ) {
     this.world = world;
@@ -481,6 +644,7 @@ class SimDevice {
       storage: { local: this.storage },
       runtime: { getURL: (p) => `sim-extension://${p}` },
       mirrorOpenDebounceMs,
+      reorderGuardGraceMs,
     };
     this.env = env;
     this.engine = createSyncEngine(env);
@@ -511,6 +675,7 @@ class SimDevice {
       active: true,
       status: "complete",
       groupId: opts.groupId,
+      pinned: opts.pinned,
     });
     await this.engine.handleTabUpdated(tab.id, { status: "complete" });
     await this.world.flush();

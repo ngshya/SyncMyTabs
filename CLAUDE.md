@@ -57,15 +57,16 @@ Firefox.** Keep this in mind in every change:
 | `sync-core.js` | **All the open-tab sync/reconcile logic**, factored out of `background.js` and parameterized over an `env` (bookmarks/tabs/windows/storage/runtime) instead of calling `browser.*` directly — see "Testing" below. Plain script, no import/export syntax (loaded via `importScripts`/`background.scripts` like the polyfill); `module.exports` at the bottom is a Node-only no-op elsewhere. |
 | `groups-core.js` | **The independent tab-group leashing module** (see its own "Tab-group leashing" section below, and [`docs/groups-core.md`](docs/groups-core.md) for the full invariants) — same `env`-parameterized style as `sync-core.js`, plus takes the already-created sync engine instance (`createGroupsEngine(env, syncEngine)`) to reuse `getActiveProfile`/`getOrCreateProfileFolder`/`mergeFolderInto`/`isSyncEnabled` rather than re-implementing them. Chrome/Brave only (feature-detects `env.tabGroups`, a silent no-op on Firefox). |
 | `archive-core.js` | **The independent auto-archive module** (see its own "Auto-archive idle tabs" section below, and [`docs/archive-core.md`](docs/archive-core.md) for the full invariants) — same `env`-parameterized style, takes the sync engine instance (`createArchiveEngine(env, syncEngine)`) for the same reuse reasons as `groups-core.js`. Tracks each tab's last-focused time and, on by default, saves+closes one that's been idle past a threshold. |
-| `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s / `groups-core.js`'s / `archive-core.js`'s `engine.handle*()` functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
+| `order-core.js` | **The independent tab & group order module** (see its own "Tab & group order" section below, and [`docs/order-core.md`](docs/order-core.md) for the full invariants) — same `env`-parameterized style, takes BOTH the sync engine (`isSyncEnabled`) and the archive engine (`getActivityMap`, reused rather than duplicated) instances: `createOrderEngine(env, syncEngine, archiveEngine)`. Off by default; lays out each window with groups first (alphabetical) then tabs by recency, only once idle, pausing after a detected manual move. |
+| `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s / `groups-core.js`'s / `archive-core.js`'s / `order-core.js`'s `engine.handle*()` functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
 | `link-leash-content.js` | Content script for the leashing module — see its section below |
-| `popup.html` / `popup.js` | The **compact** toolbar popup — status, an on/off switch per feature module (open-tab sync, tab groups, auto-archive), a "Sync now" quick action, and a button to open `options.html`. Deliberately minimal; see "Popup vs. options page" below for why. |
-| `options.html` / `options.js` | The **full settings page**, opened as a plain tab (from the popup's "Open full settings" button, or by `browser.runtime.onInstalled` for first-run setup, since popups can't be opened programmatically) — device name, profiles, the shared check interval, and every module's detail settings (grouped into three cards: Open tabs sync, Tab groups, Auto-archive), plus the theme selector. Mostly the same DOM-building code the old all-in-one popup used to have. |
+| `popup.html` / `popup.js` | The **compact** toolbar popup — status, an on/off switch per feature module (open-tab sync, tab groups, auto-archive, tab & group order), a "Sync now" quick action, and a button to open `options.html`. Deliberately minimal; see "Popup vs. options page" below for why. |
+| `options.html` / `options.js` | The **full settings page**, opened as a plain tab (from the popup's "Open full settings" button, or by `browser.runtime.onInstalled` for first-run setup, since popups can't be opened programmatically) — device name, profiles, the shared check interval, and every module's detail settings (grouped into four cards: Open tabs sync, Tab groups, Auto-archive, Tab & group order), plus the theme selector. Mostly the same DOM-building code the old all-in-one popup used to have. |
 | `theme.css` / `theme.js` | Shared dark/light/system theme system, loaded by both `popup.html` and `options.html` — see "Popup vs. options page" below |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page — by default loads the real URL only on an explicit click (not just on becoming visible), so autoplay media (YouTube, etc.) never starts just from switching tabs; `lazyRequireClick: false` in storage restores the old load-on-visible behavior |
 | `browser-polyfill.min.js` | Vendored Mozilla WebExtension polyfill so `browser.*` is promise-based on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
-| `test/` | The test suite for `sync-core.js`, `groups-core.js`, and `archive-core.js` — see "Testing" below |
+| `test/` | The test suite for `sync-core.js`, `groups-core.js`, `archive-core.js`, and `order-core.js` — see "Testing" below |
 
 There is **no build step** — the repository *is* the unpacked extension (the
 polyfill is vendored, not built; `package.json` exists only for `npm test`, no
@@ -188,6 +189,25 @@ needed a real `windowId`+`active` lookup to mean something. A tab's
 `windowId` also now defaults to `windowsApi.defaultWindowId` (not a
 hardcoded `"1"`) for the same reason.
 
+`order-core.js` tests follow the same "separate module, own helper"
+pattern again — `test/order-test-helpers.js`'s `orderEngineFor(device,
+archiveEngine)` builds `createOrderEngine(device.env, device.engine,
+archiveEngine)` (an already-built `archiveEngineFor(device)` instance
+must be passed in — order-core.js reuses its activity map, see its own
+CONTRACT comment) and wires `tabs.onMoved`/`tabGroups.onMoved`.
+Deliberately **not** queued onto `world.pending` like every other hook
+here — this one backs order-core.js's own synchronous "was this move
+mine" guard (`reorderInProgress`), which only means anything if it runs
+at the moment the move happens, not on a later `flush()`; `SimTabsApi
+.move()`/`SimTabGroupsApi.move()` `await` this hook directly before
+their own promise resolves, for the same reason. This is also where
+`SimTabsApi` gained REAL strip-order tracking (`tab.index`, a per-window
+`orderByWindow` array) — previously every tab's `.index` was simply
+`undefined`, which had already been silently making
+`groups-core.js`'s own `matchingTabs.sort((a,b) => a.index - b.index)`
+a no-op for every existing test scenario before order-core.js needed
+real ordering to test anything meaningful.
+
 Run the suite:
 ```bash
 npm test                    # same as: node --test test/*.test.js
@@ -195,12 +215,13 @@ npm test                    # same as: node --test test/*.test.js
 (`node --test test/` — a bare directory path, no glob — misbehaves on at
 least some Node versions; always pass the explicit glob.)
 
-When you change reconcile behavior in `sync-core.js`, `groups-core.js`, or
-`archive-core.js`, add/update a test in `test/` alongside it — this is the
-actual regression net for the safety rules documented below (the
-phantom-duplicate-entry guard, the "closes are only detected from a live tab
-event" rule, and the mirror-open debounce all have regression tests; a
-change that violates any of them should make one fail).
+When you change reconcile behavior in `sync-core.js`, `groups-core.js`,
+`archive-core.js`, or `order-core.js`, add/update a test in `test/`
+alongside it — this is the actual regression net for the safety rules
+documented below (the phantom-duplicate-entry guard, the "closes are only
+detected from a live tab event" rule, and the mirror-open debounce all
+have regression tests; a change that violates any of them should make one
+fail).
 
 `popup.js`/`options.js`/`theme.js` (and `lazy.js`, `link-leash-content.js`)
 are DOM/browser-API-only and stay outside the Node suite's scope, same as
@@ -213,7 +234,7 @@ before — verify those live in a real (or headless, via Playwright) browser.
    `sync-core.js`, not `background.js` — see "Testing" above.
 3. **Syntax-check** any JS you touched:
    ```bash
-   node --check background.js && node --check sync-core.js && node --check groups-core.js && node --check archive-core.js && node --check popup.js && node --check options.js
+   node --check background.js && node --check sync-core.js && node --check groups-core.js && node --check archive-core.js && node --check order-core.js && node --check popup.js && node --check options.js
    ```
 4. **Run the test suite** (`npm test`) — see "Testing" above. Add/update
    tests for any reconcile-logic change.
@@ -369,6 +390,25 @@ rule, …) are in [`docs/archive-core.md`](docs/archive-core.md) — read it
 before touching `archive-core.js`.** Kept out of this file for the same
 reason as the groups-core.js doc above.
 
+## Tab & group order module (`order-core.js`)
+
+A fourth independent module, **off by default**: lays out each window with
+browser tab groups first (Chrome/Brave, alphabetical by title) then every
+other non-pinned tab most-recently-active first — reusing `archive-core.js`'s
+own per-tab activity tracking rather than duplicating it. Only reorders once
+no tab anywhere has been activated for a while (idle-gated, a proxy for
+"away, or reading something long"), and pauses itself for a while after
+detecting a real manual move — neither the browser nor
+`tabs.onMoved`/`tabGroups.onMoved` tells an extension "was this move
+programmatic", so this module guards its own moves with an in-memory flag
+for the duration of its own reconcile pass.
+
+**Full invariants (the idle-before-reordering trigger, the manual-move
+pause and its own-move guard, the `groupsPinToStart` hand-off, …) are in
+[`docs/order-core.md`](docs/order-core.md) — read it before touching
+`order-core.js`.** Kept out of this file for the same reason as the
+groups-core.js/archive-core.js docs above.
+
 ## Popup vs. options page
 
 Split in the same change auto-archive was added, once the popup had grown
@@ -459,3 +499,20 @@ synchronous-localStorage-cache workaround for a page this short-lived).
   there's no in-extension "browse/restore archived tabs" UI. Don't add one
   without the user asking; it wasn't requested and duplicates what the
   browser's bookmark manager already does.
+- **`order-core.js`'s own-move guard (`reorderInProgress`) is a
+  heuristic time window, not a real acknowledgment** — same class of
+  trade-off as `MIRROR_OPEN_DEBOUNCE_MS` above: neither `tabs.onMoved`
+  nor `tabGroups.onMoved` tells an extension whether a move was
+  programmatic, so there's no exact signal available. A move that
+  somehow lands outside the guarded window (a very slow/suspended
+  service worker mid-reconcile, say) could be misread as manual and
+  trigger an unnecessary pause — self-correcting on its own once the
+  pause expires, never a correctness problem, just an extra delay. Don't
+  "fix" this into a stronger guarantee without discussion; there's no
+  channel to do so beyond this heuristic.
+- **`order-core.js` is opt-in and off by default, unlike every other
+  module here.** Deliberate: reordering the tab strip is more visibly
+  disruptive than anything else in this codebase (closing/archiving a
+  tab happens to ONE tab a user hasn't touched in a while; this can
+  rearrange an entire window at once). Don't flip its default without
+  the user asking.

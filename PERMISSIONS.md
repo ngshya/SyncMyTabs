@@ -19,7 +19,11 @@ broad host permission and a content script for its tab-group leashing module
 > configuration across devices too, scoped by the same profile. A second
 > optional, independent module tracks how recently each open tab was actually
 > looked at and, if enabled, saves a tab that's gone unused for too long as a
-> plain bookmark before closing it.
+> plain bookmark before closing it. A third optional, independent module
+> (off by default) keeps each window's tab strip laid out with browser tab
+> groups first (Chrome/Brave, alphabetical by title) and every other tab
+> most-recently-active first, only reordering once the browser has been idle
+> for a while.
 
 ## Permission justifications
 
@@ -39,14 +43,18 @@ broad host permission and a content script for its tab-group leashing module
 > auto-archive module also uses this permission to detect which tab is
 > currently active, so it can track how recently each tab was last looked at,
 > and to close (after first bookmarking) a tab that's gone unused past a
-> user-configured threshold. Access to tab URLs, titles, activation state, and
-> group membership requires the tabs permission.
+> user-configured threshold. The optional tab-order module (off by default)
+> also uses this permission to reposition tabs within a window. Access to tab
+> URLs, titles, activation state, position, and group membership requires the
+> tabs permission.
 
 ### `tabGroups`
-> Used only by the optional tab-group leashing module (Chrome/Brave; there is
-> no such API on Firefox). Reads a browser tab group's title (the stable,
-> cross-device key its bookmark-based configuration is keyed by) and creates/
-> updates a group when reopening a missing declared tab.
+> Used by two optional modules (Chrome/Brave; there is no such API on
+> Firefox). The tab-group leashing module reads a browser tab group's title
+> (the stable, cross-device key its bookmark-based configuration is keyed
+> by) and creates/updates a group when reopening a missing declared tab. The
+> tab-order module (off by default) also reads groups' titles and moves them
+> to reposition them within a window.
 
 ### `storage`
 > Used to store this device's local configuration and state: the device name,
@@ -54,16 +62,19 @@ broad host permission and a content script for its tab-group leashing module
 > (TTL) preference, the theme choice, the tab-group leashing module's own
 > on/off and ungroup-undeclared-tabs preferences, the auto-archive module's
 > own on/off and idle-threshold preferences plus its per-tab last-active-time
-> bookkeeping, and the last-activity timestamp shown in the popup. All of
-> this is stored locally via chrome.storage.local and never transmitted.
+> bookkeeping, the tab-order module's own on/off, idle-before-reordering, and
+> manual-move-pause preferences, and the last-activity timestamp shown in the
+> popup. All of this is stored locally via chrome.storage.local and never
+> transmitted.
 
 ### `alarms`
 > The extension periodically re-checks the active profile's tabs against the
 > synced bookmark state, sweeps stale entries per the configurable cleanup
 > setting, reconciles the active profile's declared tab groups (at browser
-> launch, after a short configurable delay, and then periodically), and runs
-> the auto-archive idle-tab check — all driven by chrome.alarms alarms, all
-> on the same user-configurable interval.
+> launch, after a short configurable delay, and then periodically), runs the
+> auto-archive idle-tab check, and (if the tab-order module is enabled)
+> checks whether the browser has been idle long enough to reorder tabs — all
+> driven by chrome.alarms alarms, all on the same user-configurable interval.
 
 ## Host permissions
 

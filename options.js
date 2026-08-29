@@ -629,6 +629,67 @@ document.getElementById("archiveClear").addEventListener("click", async () => {
   }, 1200);
 });
 
+// ------------------------------------------------------------
+// Tab & group order (see order-core.js / docs/order-core.md).
+// orderEnabled/orderIdleMinutes/orderManualPauseMinutes are per-device
+// local preferences, same convention as everything else above.
+// ------------------------------------------------------------
+const orderEnabledInput = document.getElementById("orderEnabled");
+const orderIdleMinutesInput = document.getElementById("orderIdleMinutes");
+const orderManualPauseMinutesInput = document.getElementById("orderManualPauseMinutes");
+const orderPausedNoteEl = document.getElementById("orderPausedNote");
+
+async function loadOrderPrefs() {
+  const { orderEnabled, idleMinutes, manualPauseMinutes, pausedFromManualMove } =
+    await browser.runtime.sendMessage({ type: "ORDER_GET_PREFS" });
+  orderEnabledInput.checked = orderEnabled === true; // default OFF
+  orderIdleMinutesInput.value = idleMinutes ?? 5;
+  orderManualPauseMinutesInput.value = manualPauseMinutes ?? 30;
+  orderPausedNoteEl.hidden = !pausedFromManualMove;
+}
+
+orderEnabledInput.addEventListener("change", async () => {
+  await browser.runtime.sendMessage({
+    type: "ORDER_SET_PREFS",
+    orderEnabled: orderEnabledInput.checked,
+  });
+  flashStatus("Saved ✓");
+});
+
+async function saveOrderTimings() {
+  const clampMin1 = (v) => Math.max(1, Math.round(Number(v)) || 1);
+  const clampMin0 = (v) => Math.max(0, Math.round(Number(v)) || 0);
+  const idleMinutes = clampMin1(orderIdleMinutesInput.value);
+  const manualPauseMinutes = clampMin0(orderManualPauseMinutesInput.value);
+
+  orderIdleMinutesInput.value = idleMinutes;
+  orderManualPauseMinutesInput.value = manualPauseMinutes;
+  await browser.runtime.sendMessage({
+    type: "ORDER_SET_PREFS",
+    idleMinutes,
+    manualPauseMinutes,
+  });
+  flashStatus("Saved ✓");
+}
+
+for (const input of [orderIdleMinutesInput, orderManualPauseMinutesInput]) {
+  input.addEventListener("change", saveOrderTimings);
+}
+
+document.getElementById("orderReorderNow").addEventListener("click", async () => {
+  const btn = document.getElementById("orderReorderNow");
+  const original = btn.textContent;
+  btn.textContent = "Reordering...";
+  btn.disabled = true;
+  await browser.runtime.sendMessage({ type: "ORDER_REORDER_NOW" });
+  btn.textContent = "Done ✓";
+  await loadOrderPrefs(); // refresh the "paused" note too — reorderNow() clears it
+  setTimeout(() => {
+    btn.textContent = original;
+    btn.disabled = false;
+  }, 1200);
+});
+
 document.getElementById("version").textContent =
   "v" + browser.runtime.getManifest().version;
 
@@ -638,3 +699,4 @@ renderProfiles();
 loadGroupPrefs();
 renderGroups();
 loadArchivePrefs();
+loadOrderPrefs();

@@ -28,6 +28,8 @@ KEY FEATURES
 
 • Auto-archive idle tabs (on by default, adjustable or toggleable off) — tabs you haven't looked at in a while (you choose the threshold, down to the minute) are saved as a bookmark and closed automatically, so your tab bar doesn't grow forever.
 
+• Tab & group order (optional, off by default) — keep tab groups (Chrome/Brave) at the start of the window, alphabetically, followed by your other tabs sorted by how recently you used them. Only reorders once you've stepped away or been reading for a while, never while you're actively switching between tabs.
+
 • Light, dark, or system theme.
 
 • Nothing leaves your device except through your own bookmark sync — no account, no sign-up, no analytics, no ads.

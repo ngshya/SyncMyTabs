@@ -26,6 +26,7 @@ explains exactly what the extension accesses and what happens to that data.
 | **Clicked link URLs** (optional module) | Only on a tab that's inside a configured tab group: the clicked link's own href and click modifiers (ctrl/cmd/shift/middle-click), to decide whether to navigate in place, open alongside, or open a fresh ungrouped tab | Sent locally to the extension's own background page only — never off-device |
 | **Tab activation times** (optional module) | To track when each of your tabs was last actually looked at, so the auto-archive module (on by default) can tell which ones have gone idle past your configured threshold | Local extension storage (`chrome.storage.local`) only |
 | **Archived tab bookmarks** (optional module) | When auto-archive closes an idle tab, its title and URL are saved first as a plain bookmark, so nothing is lost | Written into the same local bookmarks tree, under the active profile |
+| **Tab and tab-group positions** (optional module, off by default) | To lay out a window with tab groups first (Chrome/Brave, alphabetical by title) and every other tab most-recently-active first, reusing the same tab-activation tracking above | Nothing is stored beyond your existing local activity/preference data — reordering only repositions tabs already open in your own browser window |
 
 ## How syncing actually works
 

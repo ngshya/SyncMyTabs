@@ -368,6 +368,13 @@ function createArchiveEngine(env, syncEngine) {
     handleTabRemoved,
     handleStartupSeed,
     handleArchiveAlarm,
+    // Exposed for order-core.js's own "sort ungrouped tabs by most-
+    // recently-active first" — reuses this same tracking (recorded
+    // unconditionally, regardless of archiveEnabled, see readActivityMap's
+    // own comment above) rather than duplicating a second independent
+    // per-tab activity tracker for what is, conceptually, the exact same
+    // "when was this tab last looked at" data. `{ [tabId]: timestamp }`.
+    getActivityMap: readActivityMap,
   };
 }
 
