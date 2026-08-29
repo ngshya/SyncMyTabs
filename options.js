@@ -260,8 +260,8 @@ async function loadGroupPrefs() {
   const { leashEnabled, ungroupUndeclared, startupDelaySeconds, pinToStart } =
     await browser.runtime.sendMessage({ type: "GROUPS_GET_PREFS" });
   groupsLeashEnabledInput.checked = leashEnabled !== false;
-  groupsUngroupUndeclaredInput.checked = ungroupUndeclared === true;
-  groupsPinToStartInput.checked = pinToStart === true;
+  groupsUngroupUndeclaredInput.checked = ungroupUndeclared !== false;
+  groupsPinToStartInput.checked = pinToStart !== false;
   groupsStartupDelayInput.value = startupDelaySeconds || 15;
 }
 
@@ -540,8 +540,8 @@ const archiveIdleMinutesInput = document.getElementById("archiveIdleMinutes");
 async function loadArchivePrefs() {
   const { archiveEnabled, archiveIdleDays, archiveIdleHours, archiveIdleMinutes } =
     await browser.runtime.sendMessage({ type: "ARCHIVE_GET_PREFS" });
-  archiveEnabledInput.checked = archiveEnabled === true; // default OFF
-  archiveIdleDaysInput.value = archiveIdleDays ?? 3;
+  archiveEnabledInput.checked = archiveEnabled !== false; // default ON
+  archiveIdleDaysInput.value = archiveIdleDays ?? 4;
   archiveIdleHoursInput.value = archiveIdleHours ?? 0;
   archiveIdleMinutesInput.value = archiveIdleMinutes ?? 0;
 }

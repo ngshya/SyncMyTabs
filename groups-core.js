@@ -363,14 +363,14 @@ function createGroupsEngine(env, syncEngine) {
   }
 
   // Detaching (not closing) a tab from its group is non-destructive —
-  // the tab stays open, just outside the group — but still opt-in and
-  // default OFF, since it's still an automatic action on a tab the user
-  // didn't explicitly ask to touch.
+  // the tab stays open, just outside the group — which is what makes
+  // defaulting this ON safe: it only ever un-groups an undeclared tab,
+  // never touches the tab itself.
   async function ungroupUndeclaredTabsEnabled() {
     const { groupsUngroupUndeclaredTabs } = await env.storage.local.get(
       "groupsUngroupUndeclaredTabs"
     );
-    return groupsUngroupUndeclaredTabs === true; // default OFF
+    return groupsUngroupUndeclaredTabs !== false; // default ON
   }
 
   async function groupsStartupDelaySeconds() {
@@ -382,7 +382,7 @@ function createGroupsEngine(env, syncEngine) {
 
   async function pinGroupsToStartEnabled() {
     const { groupsPinToStart } = await env.storage.local.get("groupsPinToStart");
-    return groupsPinToStart === true; // default OFF (repositioning tabs is surprising)
+    return groupsPinToStart !== false; // default ON
   }
 
   // ---- link leashing ----

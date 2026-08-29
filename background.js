@@ -50,9 +50,9 @@
 // scoped by the SAME active-profile concept.
 //
 // archive-core.js is a THIRD independent module: tracks the last time
-// each of this device's own tabs was actually looked at, and — opt-in,
-// off by default — saves a tab that's gone unlooked-at for longer than
-// a configurable threshold (default 3 days) as a plain bookmark under a
+// each of this device's own tabs was actually looked at, and — on by
+// default — saves a tab that's gone unlooked-at for longer than a
+// configurable threshold (default 4 days) as a plain bookmark under a
 // per-profile "_archive" folder, then closes it. Pinned/grouped tabs are
 // never candidates. See archive-core.js's own header comment.
 // ============================================================

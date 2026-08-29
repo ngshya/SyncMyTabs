@@ -1,8 +1,9 @@
 // Auto-archive idle tabs: track the last time each tab was actually
-// looked at, and — opt-in, off by default — save it as a plain bookmark
-// under SyncMyTabs/<profile>/_archive/<year>/<month>/<day>/ then close
-// it, once idle for longer than a configurable threshold. Pinned/grouped
-// tabs are never candidates. See archive-core.js's own header comment.
+// looked at, and — on by default — save it as a plain bookmark under
+// SyncMyTabs/<profile>/_archive/<year>/<month>/<day>/ then close it,
+// once idle for longer than a configurable threshold (default 4 days).
+// Pinned/grouped tabs are never candidates. See archive-core.js's own
+// header comment.
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
@@ -158,10 +159,12 @@ test("pinned and grouped tabs are never archived, however idle", async () => {
   });
 });
 
-test("archiveEnabled=false (default) never archives, however idle", async () => {
+test("archiveEnabled=false never archives, however idle", async () => {
   await withFakeClock(1_700_000_000_000, async (advance) => {
     const world = new SimWorld();
-    const a = world.addDevice({ deviceName: "A" }); // archiveEnabled defaults OFF
+    // archiveEnabled now defaults ON — set it explicitly false here, since
+    // this test is specifically about the disabled case, not the default.
+    const a = world.addDevice({ deviceName: "A", storage: { archiveEnabled: false } });
     const ae = archiveEngineFor(a);
 
     await a.openTab("https://example.com/never-touched");
@@ -172,6 +175,27 @@ test("archiveEnabled=false (default) never archives, however idle", async () => 
 
     assert.deepEqual(a.openUrls(), ["https://example.com/never-touched"]);
     assert.deepEqual(await archivedEntries(a, ae), []);
+  });
+});
+
+test("with no storage configured, a tab is archived after the DEFAULT 4-day threshold (default ON)", async () => {
+  await withFakeClock(1_700_000_000_000, async (advance) => {
+    const world = new SimWorld();
+    const a = world.addDevice({ deviceName: "A" }); // no archiveEnabled/archiveIdleDays set at all
+    const ae = archiveEngineFor(a);
+
+    await a.openTab("https://example.com/idle");
+    await activateTab(a, "https://example.com/idle");
+
+    await runReconcile(a, ae); // seeds the baseline
+    advance(4 * DAY_MS - 1);
+    await runReconcile(a, ae);
+    assert.deepEqual(a.openUrls(), ["https://example.com/idle"], "not yet idle 4 full days");
+
+    advance(2);
+    await runReconcile(a, ae);
+    assert.deepEqual(a.openUrls(), [], "archived once past the default 4-day threshold");
+    assert.equal((await archivedEntries(a, ae)).length, 1);
   });
 });
 

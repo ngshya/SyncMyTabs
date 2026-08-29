@@ -7,9 +7,9 @@
 > and per-function comments already carry most of it near-verbatim).
 
 A third independent module: tracks the last time each of this device's own
-tabs was actually looked at, and — opt-in, off by default since it's
+tabs was actually looked at, and — on by default, despite being
 destructive — once a tab has gone unlooked-at for longer than a
-configurable threshold (default 3 days), saves it as a plain bookmark and
+configurable threshold (default 4 days), saves it as a plain bookmark and
 closes it. Pinned tabs and tabs inside a browser tab group are never
 candidates, same exclusion `sync-core.js` applies everywhere else.
 

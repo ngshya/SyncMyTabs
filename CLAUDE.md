@@ -56,7 +56,7 @@ Firefox.** Keep this in mind in every change:
 | `manifest.json` | Manifest V3, permissions, entry points, **version**; dual background (Chrome `service_worker` + Firefox `scripts`), `browser_specific_settings.gecko`, the tab-group leashing module's `<all_urls>` content script |
 | `sync-core.js` | **All the open-tab sync/reconcile logic**, factored out of `background.js` and parameterized over an `env` (bookmarks/tabs/windows/storage/runtime) instead of calling `browser.*` directly — see "Testing" below. Plain script, no import/export syntax (loaded via `importScripts`/`background.scripts` like the polyfill); `module.exports` at the bottom is a Node-only no-op elsewhere. |
 | `groups-core.js` | **The independent tab-group leashing module** (see its own "Tab-group leashing" section below, and [`docs/groups-core.md`](docs/groups-core.md) for the full invariants) — same `env`-parameterized style as `sync-core.js`, plus takes the already-created sync engine instance (`createGroupsEngine(env, syncEngine)`) to reuse `getActiveProfile`/`getOrCreateProfileFolder`/`mergeFolderInto`/`isSyncEnabled` rather than re-implementing them. Chrome/Brave only (feature-detects `env.tabGroups`, a silent no-op on Firefox). |
-| `archive-core.js` | **The independent auto-archive module** (see its own "Auto-archive idle tabs" section below, and [`docs/archive-core.md`](docs/archive-core.md) for the full invariants) — same `env`-parameterized style, takes the sync engine instance (`createArchiveEngine(env, syncEngine)`) for the same reuse reasons as `groups-core.js`. Tracks each tab's last-focused time and, opt-in, saves+closes one that's been idle past a threshold. |
+| `archive-core.js` | **The independent auto-archive module** (see its own "Auto-archive idle tabs" section below, and [`docs/archive-core.md`](docs/archive-core.md) for the full invariants) — same `env`-parameterized style, takes the sync engine instance (`createArchiveEngine(env, syncEngine)`) for the same reuse reasons as `groups-core.js`. Tracks each tab's last-focused time and, on by default, saves+closes one that's been idle past a threshold. |
 | `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s / `groups-core.js`'s / `archive-core.js`'s `engine.handle*()` functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
 | `link-leash-content.js` | Content script for the leashing module — see its section below |
 | `popup.html` / `popup.js` | The **compact** toolbar popup — status, an on/off switch per feature module (open-tab sync, tab groups, auto-archive), a "Sync now" quick action, and a button to open `options.html`. Deliberately minimal; see "Popup vs. options page" below for why. |
@@ -357,9 +357,9 @@ actually working on this module.
 ## Auto-archive idle tabs (`archive-core.js`)
 
 A third independent module: tracks the last time each of this device's own
-tabs was actually looked at, and — opt-in, off by default since it's
+tabs was actually looked at, and — on by default, despite being
 destructive — once a tab has gone unlooked-at for longer than a
-configurable threshold (default 3 days), saves it as a plain bookmark and
+configurable threshold (default 4 days), saves it as a plain bookmark and
 closes it. Pinned tabs and tabs inside a browser tab group are never
 candidates, same exclusion `sync-core.js` applies everywhere else.
 

@@ -152,12 +152,12 @@ group from wandering outside them.
   periodically after that, on the same check interval as tab sync,
   SyncMyTabs reopens any group's "reopen URL" that isn't currently open
   there, closes accidental duplicates of the same declared page (keeping the
-  oldest), and — if you turn on "ungroup tabs matching no rule" (off by
-  default) — detaches any tab in that group that matches none of its rules
-  at all from the group. That's an ungroup, not a close: the tab stays open,
-  it just leaves the group. Turning on "pin configured groups to the start
-  of the tab bar" also keeps every reconciled group pinned at the start of
-  its window on every check.
+  oldest), and — by default, via "ungroup tabs matching no rule" (on by
+  default; you can turn it off) — detaches any tab in that group that
+  matches none of its rules at all from the group. That's an ungroup, not a
+  close: the tab stays open, it just leaves the group. "Pin configured
+  groups to the start of the tab bar" (also on by default) keeps every
+  reconciled group pinned at the start of its window on every check.
 - **Untitled groups aren't supported.** A group's title is its only stable,
   cross-device identifier (a browser's internal group id is local and
   meaningless on another device) — an untitled group is simply invisible to
@@ -179,12 +179,12 @@ group from wandering outside them.
 ## Auto-archive idle tabs
 
 Another independent module: tracks the last time each of your open tabs
-actually had focus, and — off by default — archives one that's gone
+actually had focus, and — on by default — archives one that's gone
 unlooked-at for too long instead of letting it sit open forever.
 
-- **Idle threshold** (default **3 days**), set as separate days/hours/
+- **Idle threshold** (default **4 days**), set as separate days/hours/
   minutes fields — so a threshold under a day (e.g. "2 hours") is just as
-  easy to set as "3 days" is. A tab counts as "looked at" whenever it's
+  easy to set as "4 days" is. A tab counts as "looked at" whenever it's
   the active tab in a window that has focus — switching to it, or
   Alt-Tabbing back to a window that already had it active, both count.
   Merely being open in a background tab doesn't.
@@ -202,8 +202,9 @@ unlooked-at for too long instead of letting it sit open forever.
 - **Pinned tabs and tabs in a browser tab group are never touched**, no
   matter how idle — same exclusion the rest of SyncMyTabs applies
   everywhere else.
-- **Off by default.** Closing tabs automatically is destructive, even with
-  a bookmark left behind — turn it on from the full settings page's
+- **On by default.** Closing tabs automatically is destructive, but the
+  bookmark left behind means nothing is actually lost — if you'd rather
+  manage this yourself, turn it off from the full settings page's
   **"Auto-archive idle tabs"** card, where you can also change the idle
   threshold and trigger a manual check.
 - **Clear archived tabs.** The same card has a button to delete every
@@ -289,10 +290,11 @@ that opens automatically on first run) holds:
   - **Sync now** — force an immediate check in both directions.
 - **Tab groups** card (Chrome/Brave only) — the leashing module's own
   on/off switch, the tab-group-sync warning, the "ungroup tabs matching no
-  rule" toggle (off by default), the pin-to-start toggle, the startup check
-  delay, per-group rule editors, and **Reconcile groups now** — see
-  [Tab groups (leashing)](#tab-groups-leashing--chromebrave-only) above.
-- **Auto-archive idle tabs** card — its own on/off switch (off by default),
+  rule" toggle (on by default), the pin-to-start toggle (on by default), the
+  startup check delay, per-group rule editors, and **Reconcile groups now**
+  — see [Tab groups (leashing)](#tab-groups-leashing--chromebrave-only)
+  above.
+- **Auto-archive idle tabs** card — its own on/off switch (on by default),
   the idle threshold as separate days/hours/minutes fields, **Archive idle
   tabs now**, and **Clear archived tabs** (asks for confirmation first) — see
   [Auto-archive idle tabs](#auto-archive-idle-tabs) above.

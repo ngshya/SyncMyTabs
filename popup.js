@@ -39,7 +39,7 @@ async function refresh() {
   document.getElementById("pausedNote").hidden = on;
   document.getElementById("syncNow").disabled = !on;
   groupsToggle.checked = groupPrefs.leashEnabled !== false;
-  archiveToggle.checked = archivePrefs.archiveEnabled === true; // default OFF
+  archiveToggle.checked = archivePrefs.archiveEnabled !== false; // default ON
 
   document.getElementById("profileName").textContent = activeProfile || DEFAULT_PROFILE;
   document.getElementById("lastActivity").textContent = lastActivityTimestamp
