@@ -140,6 +140,18 @@ async function refreshActionIcon() {
 // ------------------------------------------------------------
 browser.runtime.onInstalled.addListener(async () => {
   ensureAlarm();
+  // GROUPS_RECONCILE_ALARM must ALSO be (re-)armed here, not just from
+  // onStartup below — onInstalled fires on a fresh install AND on every
+  // extension update/reload, none of which necessarily involve a real
+  // browser restart (onStartup only fires on that). Without this, a
+  // user who installs/updates without also restarting their browser
+  // never gets the alarm created at all: the automatic periodic groups
+  // reconcile silently never runs (only the popup's manual "Reconcile
+  // groups now" button works), even though the check-interval setting
+  // says it should. No startup-delay logic needed here (unlike
+  // onStartup's use of groupsStartupDelaySeconds) — there's no session
+  // restore to wait out on install/update, tabs are already stable.
+  ensureGroupsAlarmPeriod();
   refreshActionIcon();
   const { deviceName, profiles } = await browser.storage.local.get([
     "deviceName",
@@ -203,6 +215,10 @@ browser.storage.onChanged.addListener((changes, area) => {
     ensureAlarm();
     ensureGroupsAlarmPeriod();
   }
+  // Reacting here (rather than only right after the popup's own toggle
+  // write) makes storage.onChanged the single source of truth for the
+  // toolbar icon's paused state — it updates correctly no matter what
+  // changed syncEnabled.
   if (changes.syncEnabled) {
     updateActionIcon(changes.syncEnabled.newValue !== false);
   }

@@ -450,8 +450,10 @@ manually from the Actions tab (`Release` → `Run workflow`).
 Upload the Chrome zip to the Chrome Web Store and the Firefox zip to
 [AMO](https://addons.mozilla.org).
 
-For publishing, see [`PRIVACY.md`](PRIVACY.md) (privacy policy) and
-[`PERMISSIONS.md`](PERMISSIONS.md) (per-permission justifications).
+For publishing, see [`PRIVACY.md`](PRIVACY.md) (privacy policy),
+[`PERMISSIONS.md`](PERMISSIONS.md) (per-permission justifications),
+[`STORE_LISTING.md`](STORE_LISTING.md) (summary/description copy), and
+[`store-assets/`](store-assets/) (listing screenshots).
 
 ---
 

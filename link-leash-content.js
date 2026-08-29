@@ -2,7 +2,7 @@
 // SyncMyTabs - link-leash-content.js
 //
 // Content script for the tab-group "leashing" module (see
-// groups-core.js / CLAUDE.md). Intercepts left/middle clicks on links
+// groups-core.js). Intercepts left/middle clicks on links
 // and hands them to background.js's LINK_CLICK handler
 // (groupsEngine.handleLinkClick), which decides whether to navigate in
 // place, open alongside in the same group, or open a fresh ungrouped
@@ -14,7 +14,7 @@
 // only attaches its click/auxclick listeners if so. This keeps the
 // vast majority of ordinary browsing (any non-grouped tab) completely
 // unaffected. The trade-off: a tab grouped AFTER its page already
-// loaded won't get leashing until reloaded (see CLAUDE.md).
+// loaded won't get leashing until reloaded.
 //
 // It ALSO caches the resolved leash pattern from that same handshake
 // and re-checks it SYNCHRONOUSLY on every click, instead of an async
