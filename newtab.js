@@ -702,15 +702,23 @@
     await loadSections();
     if (sections.focusSearch && selfTab && !/[?&]focus\b/.test(location.search)) {
       // A browser opens its new tab page with the cursor in the address
-      // bar, and a page can't take it from there. Reloading this same
-      // page under its own extension address does put the cursor in the
-      // page — at the cost of the address bar showing that address rather
-      // than staying empty (and the browser's Back button returning to the
-      // plain new tab page, which comes straight back here). That's why it
-      // is a setting (`focusSearch`, on by default). `?focus` marks the
-      // second load so it doesn't loop.
+      // bar, and a page can't take it from there. Reloading this page in
+      // the same tab (tabs.update) doesn't either: a navigation leaves
+      // the focus where it was. What works is a tab that is BORN with a
+      // normal address — the browser gives such a tab's content the
+      // focus — so this page opens itself again in a new tab, at the same
+      // place in the strip, and closes the original. Costs: the address
+      // bar shows the page's own address instead of staying empty, and
+      // the tab briefly blinks. Hence a setting (`focusSearch`, on by
+      // default). `?focus` marks the second page so it doesn't loop.
       try {
-        await browser.tabs.update(selfTab.id, { url: browser.runtime.getURL("newtab.html?focus") });
+        await browser.tabs.create({
+          url: browser.runtime.getURL("newtab.html?focus"),
+          windowId: selfTab.windowId,
+          index: selfTab.index,
+          active: true,
+        });
+        await browser.tabs.remove(selfTab.id);
         return;
       } catch (e) {} // couldn't: carry on as a normal new tab page
     }

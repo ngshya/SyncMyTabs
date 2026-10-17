@@ -164,7 +164,7 @@ via `NODE_PATH`/a global install (in the cloud environment it's in
 A tab the extension itself creates with `chrome.tabs.create` can slip
 past request interception for its first load — open test sites with
 `openSite`. The search-box focus redirect (`focusSearch`) is off by
-default in tests (it reloads the page right after opening);
+default in tests (it replaces the page with a new tab right after opening);
 `features.browser.js` turns it on to test it. Headless Chromium has no
 address bar, so "the cursor left the address bar" can only be verified by
 hand.
