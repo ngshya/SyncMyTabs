@@ -16,21 +16,34 @@ describe("new tab page extras", { skip: SKIP }, () => {
   });
   after(() => b && b.close());
 
-  test("focusSearch: the page reopens as newtab.html?focus with the search box focused; off → stays put", async () => {
+  test("focusSearch: the page reopens itself as a new tab (same place) with ?focus and closes the original; off → stays put", async () => {
     await b.setSettings({ focusSearch: true });
+    const tabsBefore = await b.bg(async () => (await chrome.tabs.query({})).length);
+    const reborn = b.ctx.waitForEvent("page", { predicate: (pg) => /newtab\.html\?focus$/.test(pg.url()), timeout: 5000 });
     const p = await b.openNewtab({ waitFor: null });
-    await p.waitForURL(/newtab\.html\?focus$/, { timeout: 5000 });
-    await p.waitForSelector(".item");
-    await sleep(200);
-    assert.equal(await p.evaluate(() => document.activeElement.id), "search");
-    assert.ok(!(await p.locator(".item .title", { hasText: /newtab|New Tab/ }).count()), "the page doesn't list itself");
-    await p.close();
+    const indexBefore = await b.bg(async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0].index);
+    const q = await reborn;
+    await q.waitForSelector(".item");
+    await sleep(300);
+    assert.equal(p.isClosed(), true, "the original new tab is closed");
+    assert.equal(await q.evaluate(() => document.activeElement.id), "search");
+    const after = await b.bg(async () => {
+      const all = await chrome.tabs.query({});
+      const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      return { count: all.length, index: active.index, url: active.url };
+    });
+    assert.equal(after.count, tabsBefore + 1, "one new tab page, not two");
+    assert.equal(after.index, indexBefore, "same place in the tab strip");
+    assert.match(after.url, /newtab\.html\?focus$/);
+    assert.ok(!(await q.locator(".item .title", { hasText: /newtab|New Tab/ }).count()), "the page doesn't list itself");
+    await q.close();
 
     await b.setSettings({ focusSearch: false });
-    const q = await b.openNewtab();
+    const r = await b.openNewtab();
     await sleep(500);
-    assert.doesNotMatch(q.url(), /\?focus/, "no redirect");
-    await q.close();
+    assert.equal(r.isClosed(), false);
+    assert.doesNotMatch(r.url(), /\?focus/, "no redirect");
+    await r.close();
   });
 
   test("options card: two groups, seven settings, defaults as documented", async () => {

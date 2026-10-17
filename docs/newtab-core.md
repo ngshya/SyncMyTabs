@@ -120,11 +120,14 @@ profile.
   search company — the query leaves the device only on Enter/click.
 - **Search-box focus (`focusSearch`, on by default).** A browser opens a
   new tab with the cursor in its address bar, and no page can take it
-  from there; the page reloads itself under its own address
-  (`newtab.html?focus` — the marker stops a loop), which does put the
-  cursor in the page. Costs: the address bar shows that address, and Back
-  goes to the plain new tab page (which comes straight back). Hence a
-  setting.
+  from there — nor does reloading the page in the same tab
+  (`tabs.update`, the first attempt: a navigation leaves focus where it
+  was). What works: the page opens itself again in a NEW tab
+  (`newtab.html?focus` — the marker stops a loop) at the same index and
+  closes the original; a tab born with a normal address gets content
+  focus. Costs: the address bar shows that address, the tab blinks once.
+  Hence a setting. Headless tests can check the mechanics but not the
+  address bar itself (no address bar there) — confirm by hand.
 - **Clock** (`newtab-clock.js`) — bold; 24-hour (`clock24h`, `hourCycle:
   "h23"`) and seconds (`clockSeconds`) by default; with `clock24h` off,
   the browser language's own format.
