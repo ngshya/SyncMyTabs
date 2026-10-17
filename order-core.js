@@ -19,10 +19,11 @@
 // no-op elsewhere.
 //
 // CONTRACT: reuses exactly syncEngine.isSyncEnabled() (the master
-// pause switch) and archiveEngine.getActivityMap() (per-tab
-// last-active timestamps, `{ [tabId]: timestamp }`) — a session
-// editing only this file's own layout logic does not need to read
-// sync-core.js or archive-core.js in full, only those two signatures.
+// pause switch), syncEngine.realUrlOfTab()/.isHttpUrl() (non-web tabs
+// sort last, see reorderWindow) and archiveEngine.getActivityMap()
+// (per-tab last-active timestamps, `{ [tabId]: timestamp }`) — a
+// session editing only this file's own layout logic does not need to
+// read sync-core.js or archive-core.js in full, only those signatures.
 //
 // See docs/order-core.md for the full invariants (the idle-before-
 // reordering trigger, the manual-move pause, the groups-pin-to-start
@@ -154,7 +155,21 @@ function createOrderEngine(env, syncEngine, archiveEngine) {
     const eligibleGrouped = new Set(
       tabs.filter((t) => !t.pinned && isGrouped(t)).map((t) => t.id)
     );
-    const ungrouped = tabs.filter((t) => !t.pinned && !isGrouped(t));
+    // Only real web pages (http(s), a lazy-restore placeholder counting
+    // as the page it stands for) are sorted by recency — the same rule
+    // sync-core.js applies to what it syncs. Anything else (a new tab
+    // page, chrome://settings, an extension page) goes at the very end,
+    // in its own current order: a just-opened blank tab is the most
+    // recently activated one, and would otherwise jump right up next to
+    // the groups, ahead of everything the user actually has open. Still
+    // part of desiredOrder (not just skipped), so the "already settled?"
+    // check below compares like with like — leaving them out would make
+    // every pass look unsettled and re-move the whole window each time.
+    const isWebTab = (t) => syncEngine.isHttpUrl(syncEngine.realUrlOfTab(t));
+    const ungrouped = tabs.filter((t) => !t.pinned && !isGrouped(t) && isWebTab(t));
+    const nonWebTabs = tabs
+      .filter((t) => !t.pinned && !isGrouped(t) && !isWebTab(t))
+      .sort((a, b) => a.index - b.index);
 
     // A tab with no recorded activity yet (just opened, activity map
     // not written for it yet) sorts as if active RIGHT NOW — not to the
@@ -170,6 +185,7 @@ function createOrderEngine(env, syncEngine, archiveEngine) {
       }
     }
     for (const t of ungrouped) desiredOrder.push(t.id);
+    for (const t of nonWebTabs) desiredOrder.push(t.id);
 
     // Already exactly right? Skip entirely — avoids issuing no-op
     // move() calls (and toggling the reorder guard above) on every
@@ -192,7 +208,7 @@ function createOrderEngine(env, syncEngine, archiveEngine) {
       } catch (e) {}
       nextIndex += memberCount;
     }
-    for (const t of ungrouped) {
+    for (const t of [...ungrouped, ...nonWebTabs]) {
       try {
         await env.tabs.move(t.id, { index: nextIndex });
       } catch (e) {}

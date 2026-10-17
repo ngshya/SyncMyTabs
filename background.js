@@ -64,6 +64,14 @@
 // tab anywhere has been activated for a while (a proxy for "away, or
 // reading something long"), and pauses itself for a while after
 // detecting a real manual drag. See order-core.js's own header comment.
+//
+// newtab-core.js is the data side of the custom new tab page
+// (newtab.html, via manifest.json's chrome_url_overrides): this
+// device's tabs across every window grouped by tab group, plus the tabs
+// open on the user's other devices. Fully self-contained — no other
+// module knows it exists; it's wired with its own onMessage listener at
+// the very end of this file, apart from the one every other module
+// shares. See newtab-core.js's own header comment.
 // ============================================================
 
 // Cross-browser API access: use the promise-based `browser.*` namespace
@@ -78,7 +86,8 @@ if (typeof importScripts === "function") {
     "sync-core.js",
     "groups-core.js",
     "archive-core.js",
-    "order-core.js"
+    "order-core.js",
+    "newtab-core.js"
   );
 }
 
@@ -86,10 +95,11 @@ const engine = createSyncEngine(browser);
 const groupsEngine = createGroupsEngine(browser, engine);
 const archiveEngine = createArchiveEngine(browser, engine);
 const orderEngine = createOrderEngine(browser, engine, archiveEngine);
+const newtabEngine = createNewtabEngine(browser, engine);
 
-// NOTE: sync-core.js, groups-core.js, archive-core.js, AND order-core.js
-// are loaded into this SAME script via importScripts (Chrome) /
-// sequential <script> tags (Firefox) — all five share ONE top-level
+// NOTE: sync-core.js, groups-core.js, archive-core.js, order-core.js AND
+// newtab-core.js are loaded into this SAME script via importScripts
+// (Chrome) / sequential <script> tags (Firefox) — all six share ONE top-level
 // `let`/`const` lexical scope, so declaring a top-level const/let here
 // (or in groups-core.js/archive-core.js/order-core.js) with the SAME
 // NAME as one of another file's own top-level bindings (e.g.
@@ -507,4 +517,19 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })();
     return true;
   }
+});
+
+// ------------------------------------------------------------
+// Custom new tab page (newtab-core.js) — its own listener, deliberately
+// kept apart from the one above, so the custom new tab page adds to this
+// file without changing anything every other module relies on.
+// handleMessage() only answers the NEWTAB_* messages and returns null
+// for anything else; in that case this listener returns undefined and
+// leaves the reply to the listener above, exactly as before it existed.
+// ------------------------------------------------------------
+browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const reply = newtabEngine.handleMessage(message);
+  if (!reply) return;
+  reply.then(sendResponse, () => sendResponse(null));
+  return true;
 });

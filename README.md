@@ -246,6 +246,43 @@ every other tab sorted by how recently you actually used it.
 
 ---
 
+## Custom new tab page
+
+Every new tab opens on a minimal SyncMyTabs page instead of the browser's
+own: the time and date, a search box, and everything you have open.
+
+- **Your open tabs, every window** — in the same order as your tab strip,
+  browser tab groups (Chrome/Brave) right where they sit, folded if
+  they're folded in the browser (click a group's name to fold/unfold it
+  on the page only). Pinned tabs are marked as such.
+- **Your other devices' tabs** — what's open on each of your other devices
+  on the same profile, read from the same synced bookmarks as everything
+  else. Ones that are also open here are marked "open here".
+- **Click to jump** — clicking a tab switches to it (bringing its window to
+  the front) and closes the new tab you came from, so blank tabs don't pile
+  up. A tab that's only open on another device opens right there instead.
+- **Just start typing** to filter by title or address; **Enter** opens the
+  first match, the arrow keys move through the list, **Esc** clears. The
+  search box stays at the top while you scroll.
+- **Every tab has a number** — type it and press **Enter** to jump there
+  without touching the mouse (typing `1` keeps 1, 10, 11… in view; the
+  exact match is the one Enter opens). Numbers follow the list order, so
+  they shift when tabs open, close or move.
+- **Two columns on a wide window** — tabs fill them in reading order, one
+  on the left and the next on its right.
+- **Choose what's listed** — the options page's *New tab page* card turns
+  each section (this window, your other windows, your other devices) on or
+  off.
+- The date and time are in your browser's language.
+- Favicons are only ever the tab's own icon — no third-party favicon
+  service, nothing leaves your device.
+- Follows the same light/dark/system theme as the rest of the extension.
+
+There's no switch to turn this page off from SyncMyTabs' own settings —
+see Known limitations.
+
+---
+
 SyncMyTabs runs on **Chromium browsers (Chrome / Brave)** and **Firefox**
 (the tab-groups module, and the "groups first" half of tab & group order,
 are both Chrome/Brave only; everything else — including tab & group order's
@@ -430,6 +467,13 @@ SyncMyTabs' own initiative):
   periodically, and only once the browser's been idle a while (see its own
   section above) — a tab you just opened, or just switched to, won't jump
   into its "correct" position immediately, by design.
+- **The custom new tab page can't be turned off from SyncMyTabs' settings.**
+  Browsers only let an extension replace the new tab page for the whole
+  installation, and an extension page can't hand back to the browser's own.
+  ⚠️ On Chrome, the "Change it back" button on the prompt Chrome shows
+  after installing **disables the whole extension** — tab sync included,
+  not just this page. Choose "Keep it" to keep SyncMyTabs working. On
+  Firefox the page simply has no tab-groups part.
 
 ---
 
@@ -442,11 +486,13 @@ SyncMyTabs' own initiative):
 | `groups-core.js` | The independent tab-group leashing module's logic — its own bookmark-backed rule storage, link-leash decision, and reconcile pass — same `env`-parameterized, testable style as `sync-core.js` |
 | `archive-core.js` | The independent auto-archive module's logic — tracks tab focus, saves+closes idle ones — same `env`-parameterized, testable style |
 | `order-core.js` | The independent tab & group order module's logic — lays out groups first then tabs by recency, idle-gated, pauses after a manual move — same `env`-parameterized, testable style |
-| `background.js` | Thin wiring: real browser events → `sync-core.js` / `groups-core.js` / `archive-core.js` / `order-core.js` |
+| `newtab-core.js` | Data side of the custom new tab page — this device's tabs by window/group, other devices' open tabs — same `env`-parameterized, testable style |
+| `background.js` | Thin wiring: real browser events → `sync-core.js` / `groups-core.js` / `archive-core.js` / `order-core.js` / `newtab-core.js` |
 | `link-leash-content.js` | Content script for the leashing module — intercepts link clicks on a tab it's confirmed is inside a configured group |
 | `popup.html` / `popup.js` | Compact toolbar popup — status, per-module on/off switches, Sync now, and a link to full settings |
 | `options.html` / `options.js` | Full settings page — device name, profiles, check interval, every module's detail settings, theme |
-| `theme.css` / `theme.js` | Shared dark/light/system theme, used by both the popup and the settings page |
+| `theme.css` / `theme.js` | Shared dark/light/system theme, used by the popup, the settings page and the new tab page |
+| `newtab.html` / `newtab.js` | The custom new tab page |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page |
 | `browser-polyfill.min.js` | Mozilla's WebExtension polyfill (vendored) so `browser.*` works on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |

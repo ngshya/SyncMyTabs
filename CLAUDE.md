@@ -58,15 +58,18 @@ Firefox.** Keep this in mind in every change:
 | `groups-core.js` | **The independent tab-group leashing module** (see its own "Tab-group leashing" section below, and [`docs/groups-core.md`](docs/groups-core.md) for the full invariants) — same `env`-parameterized style as `sync-core.js`, plus takes the already-created sync engine instance (`createGroupsEngine(env, syncEngine)`) to reuse `getActiveProfile`/`getOrCreateProfileFolder`/`mergeFolderInto`/`isSyncEnabled` rather than re-implementing them. Chrome/Brave only (feature-detects `env.tabGroups`, a silent no-op on Firefox). |
 | `archive-core.js` | **The independent auto-archive module** (see its own "Auto-archive idle tabs" section below, and [`docs/archive-core.md`](docs/archive-core.md) for the full invariants) — same `env`-parameterized style, takes the sync engine instance (`createArchiveEngine(env, syncEngine)`) for the same reuse reasons as `groups-core.js`. Tracks each tab's last-focused time and, on by default, saves+closes one that's been idle past a threshold. |
 | `order-core.js` | **The independent tab & group order module** (see its own "Tab & group order" section below, and [`docs/order-core.md`](docs/order-core.md) for the full invariants) — same `env`-parameterized style, takes BOTH the sync engine (`isSyncEnabled`) and the archive engine (`getActivityMap`, reused rather than duplicated) instances: `createOrderEngine(env, syncEngine, archiveEngine)`. Off by default; lays out each window with groups first (alphabetical) then tabs by recency, only once idle, pausing after a detected manual move. |
-| `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s / `groups-core.js`'s / `archive-core.js`'s / `order-core.js`'s `engine.handle*()` functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
+| `newtab-core.js` | **The data side of the custom new tab page** (see its own "Custom new tab page" section below, and [`docs/newtab-core.md`](docs/newtab-core.md) for the full invariants) — same `env`-parameterized style, takes the sync engine instance (`createNewtabEngine(env, syncEngine)`). Assembles this device's tabs by window in tab-strip order (groups in place, with the browser's fold state) and the other devices' open tabs for `newtab.html`, served through background.js messages so the background engine stays the only bookmark writer. |
+| `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s / `groups-core.js`'s / `archive-core.js`'s / `order-core.js`'s / `newtab-core.js`'s engine functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
 | `link-leash-content.js` | Content script for the leashing module — see its section below |
 | `popup.html` / `popup.js` | The **compact** toolbar popup — status, an on/off switch per feature module (open-tab sync, tab groups, auto-archive, tab & group order), a "Sync now" quick action, and a button to open `options.html`. Deliberately minimal; see "Popup vs. options page" below for why. |
-| `options.html` / `options.js` | The **full settings page**, opened as a plain tab (from the popup's "Open full settings" button, or by `browser.runtime.onInstalled` for first-run setup, since popups can't be opened programmatically) — device name, profiles, the shared check interval, and every module's detail settings (grouped into four cards: Open tabs sync, Tab groups, Auto-archive, Tab & group order), plus the theme selector. Mostly the same DOM-building code the old all-in-one popup used to have. |
+| `options.html` / `options.js` | The **full settings page**, opened as a plain tab (from the popup's "Open full settings" button, or by `browser.runtime.onInstalled` for first-run setup, since popups can't be opened programmatically) — device name, profiles, the shared check interval, and every module's detail settings (grouped into four cards: Open tabs sync, Tab groups, Auto-archive, Tab & group order — plus a fifth, New tab page, built by `newtab-options.js`, not `options.js`), plus the theme selector. Mostly the same DOM-building code the old all-in-one popup used to have. |
 | `theme.css` / `theme.js` | Shared dark/light/system theme system, loaded by both `popup.html` and `options.html` — see "Popup vs. options page" below |
+| `newtab.html` / `newtab.js` | The **custom new tab page** (`chrome_url_overrides.newtab` in the manifest) — clock/date, a sticky type-to-search box, this device's tabs by window in tab-strip order, and the tabs open on other devices; tabs flow in two columns (reading order) on wide windows; every tab is numbered for keyboard-only jumps; clicking one switches to it and closes the new tab page. DOM-only — all data comes from `newtab-core.js` via the `NEWTAB_LOCAL`/`NEWTAB_REMOTE` messages. |
+| `newtab-options.js` | The new tab page's own card on the options page (which tab sections it shows, `newtabSections` in storage) — loaded by `options.html` after `options.js` and builds its card itself, so `options.js` knows nothing about the new tab page. |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page — by default loads the real URL only on an explicit click (not just on becoming visible), so autoplay media (YouTube, etc.) never starts just from switching tabs; `lazyRequireClick: false` in storage restores the old load-on-visible behavior |
 | `browser-polyfill.min.js` | Vendored Mozilla WebExtension polyfill so `browser.*` is promise-based on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
-| `test/` | The test suite for `sync-core.js`, `groups-core.js`, `archive-core.js`, and `order-core.js` — see "Testing" below |
+| `test/` | The test suite for `sync-core.js`, `groups-core.js`, `archive-core.js`, `order-core.js`, and `newtab-core.js` — see "Testing" below |
 
 There is **no build step** — the repository *is* the unpacked extension (the
 polyfill is vendored, not built; `package.json` exists only for `npm test`, no
@@ -215,17 +218,30 @@ npm test                    # same as: node --test test/*.test.js
 (`node --test test/` — a bare directory path, no glob — misbehaves on at
 least some Node versions; always pass the explicit glob.)
 
+`newtab-core.js` tests (`test/newtab-core.test.js`) build
+`createNewtabEngine(device.env, device.engine)` inline — no event wiring
+to set up, it only ever reads on request. `test/newtab-isolation.test.js`
+statically checks the module stays self-contained (see its section
+below).
+
 When you change reconcile behavior in `sync-core.js`, `groups-core.js`,
-`archive-core.js`, or `order-core.js`, add/update a test in `test/`
+`archive-core.js`, `order-core.js`, or `newtab-core.js`, add/update a test in `test/`
 alongside it — this is the actual regression net for the safety rules
 documented below (the phantom-duplicate-entry guard, the "closes are only
 detected from a live tab event" rule, and the mirror-open debounce all
 have regression tests; a change that violates any of them should make one
 fail).
 
-`popup.js`/`options.js`/`theme.js` (and `lazy.js`, `link-leash-content.js`)
-are DOM/browser-API-only and stay outside the Node suite's scope, same as
-before — verify those live in a real (or headless, via Playwright) browser.
+`popup.js`/`options.js`/`theme.js` (and `lazy.js`, `newtab.js`,
+`link-leash-content.js`) are DOM/browser-API-only and stay outside the Node
+suite's scope, same as before — verify those live in a real (or headless,
+via Playwright) browser. Playwright + Chromium are available in the cloud
+environment: `chromium.launchPersistentContext(dir, { channel: "chromium",
+headless: true, args: ["--disable-extensions-except=<repo>",
+"--load-extension=<repo>"] })` loads the real unpacked extension
+(`channel: "chromium"` matters — the default headless shell can't load
+extensions), and `context.serviceWorkers()[0].evaluate(...)` runs
+`chrome.*` calls in the background script to set up tabs/groups/storage.
 
 ## How to work on it
 
@@ -234,7 +250,7 @@ before — verify those live in a real (or headless, via Playwright) browser.
    `sync-core.js`, not `background.js` — see "Testing" above.
 3. **Syntax-check** any JS you touched:
    ```bash
-   node --check background.js && node --check sync-core.js && node --check groups-core.js && node --check archive-core.js && node --check order-core.js && node --check popup.js && node --check options.js
+   node --check background.js && node --check sync-core.js && node --check groups-core.js && node --check archive-core.js && node --check order-core.js && node --check newtab-core.js && node --check popup.js && node --check options.js && node --check newtab.js && node --check newtab-options.js
    ```
 4. **Run the test suite** (`npm test`) — see "Testing" above. Add/update
    tests for any reconcile-logic change.
@@ -409,6 +425,41 @@ pause and its own-move guard, the `groupsPinToStart` hand-off, …) are in
 `order-core.js`.** Kept out of this file for the same reason as the
 groups-core.js/archive-core.js docs above.
 
+## Custom new tab page (`newtab-core.js` + `newtab.html`)
+
+Replaces the browser's new tab page (`chrome_url_overrides.newtab`, on
+both Chrome/Brave and Firefox): a clock and date, a search box, this
+device's open tabs by window in the browser's own tab-strip order (tab
+groups where they sit, folded when folded in the browser), and the tabs
+open on the user's other devices on the same profile, under a search
+bar that stays pinned while the list scrolls; on a wide window tabs
+flow in two columns, left then right. Which of those three tab sections
+show is a setting (a "New tab page" card on the options page). The date
+and time follow the browser's UI language. Every tab is numbered: typing a number narrows to it,
+Enter opens it, no mouse needed. A click switches to the tab — focusing
+its window — then closes the new tab page behind it; a tab only open on
+another device opens in place.
+
+**Unlike every other module, this one has no on/off switch**:
+`chrome_url_overrides` is declarative, the browser either applies it for
+the whole installation or not at all, and an extension page can't hand
+control back to the native new tab page (navigating to `chrome://newtab`
+from one is blocked). See Known limitations.
+
+**Self-contained by design**: no other module, nor the popup/options
+UI, references it; `background.js` wires it through an `onMessage`
+listener of its own, separate from the one every other module shares,
+and `options.html` only loads `newtab-options.js`, which builds the
+settings card itself. `test/newtab-isolation.test.js` enforces this —
+keep new-tab-page knowledge inside `newtab-core.js`/`newtab.js`/
+`newtab-options.js`.
+
+**Full invariants (why the data side goes through background messages,
+the paused-sync rule for the remote half, favicon privacy, how to remove
+the feature cleanly, …) are in
+[`docs/newtab-core.md`](docs/newtab-core.md) — read it before touching
+`newtab-core.js`/`newtab.js`.**
+
 ## Popup vs. options page
 
 Split in the same change auto-archive was added, once the popup had grown
@@ -426,7 +477,8 @@ plus the theme selector. `browser.runtime.onInstalled` now opens
 `options.html` (not `popup.html`) for first-run setup, since that's where
 device name + profile setup live now.
 
-`theme.css`/`theme.js` are shared between the two pages: `theme.css`
+`theme.css`/`theme.js` are shared between the two pages (and the custom
+new tab page, `newtab.html`): `theme.css`
 defines CSS custom-property tokens on bare `:root` (light, the default),
 redefines them under `@media (prefers-color-scheme: dark)` guarded by
 `:root:not([data-theme="light"])`, then redefines them again under
@@ -516,3 +568,17 @@ synchronous-localStorage-cache workaround for a page this short-lived).
   tab happens to ONE tab a user hasn't touched in a while; this can
   rearrange an entire window at once). Don't flip its default without
   the user asking.
+- **The custom new tab page can't be switched off from inside the
+  extension.** `chrome_url_overrides.newtab` is all-or-nothing per
+  installation, and an extension page can't redirect back to the native
+  new tab page. The only ways back are disabling the extension — which
+  is also exactly what Chrome's own post-install prompt does if the user
+  picks "Change it back", taking tab sync down with it (surfaced as a
+  warning in README.md and STORE_LISTING.md). Don't
+  "fix" this with an in-page "disabled" mode that renders a blank page —
+  that's worse than either, and still not the native page.
+- **`theme.js`'s brief flash of the OS-default theme** (see Popup vs.
+  options page) is more noticeable on the new tab page, which opens far
+  more often than popup/options. Accepted for now, same reasoning; a
+  synchronous localStorage cache in `theme.js` is the fix if it ever
+  bothers the user.

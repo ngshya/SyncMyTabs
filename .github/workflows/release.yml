@@ -103,11 +103,14 @@ jobs:
           node --check groups-core.js
           node --check archive-core.js
           node --check order-core.js
+          node --check newtab-core.js
           node --check popup.js
           node --check options.js
           node --check theme.js
           node --check lazy.js
           node --check link-leash-content.js
+          node --check newtab.js
+          node --check newtab-options.js
 
       - name: Run test suite
         run: node --test test/*.test.js
@@ -144,7 +147,7 @@ jobs:
           # at all). This exact omission (archive-core.js/options.html/
           # options.js/theme.css/theme.js missing from a release build)
           # shipped once already — see CLAUDE.md/git history.
-          COMMON="background.js sync-core.js groups-core.js archive-core.js order-core.js link-leash-content.js browser-polyfill.min.js popup.html popup.js options.html options.js theme.css theme.js lazy.html lazy.js icons"
+          COMMON="background.js sync-core.js groups-core.js archive-core.js order-core.js newtab-core.js link-leash-content.js browser-polyfill.min.js popup.html popup.js options.html options.js theme.css theme.js lazy.html lazy.js newtab.html newtab.js newtab-options.js icons"
           mkdir -p build/chrome build/firefox
           cp -r $COMMON build/chrome/ && cp manifest.chrome.json build/chrome/manifest.json
           cp -r $COMMON build/firefox/ && cp manifest.firefox.json build/firefox/manifest.json

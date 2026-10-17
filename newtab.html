@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>New Tab</title>
+  <link rel="stylesheet" href="theme.css" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    /* Keyboard focus scrolling a row into view must not park it under the
+       sticky search bar. --bar-h is measured by newtab.js. */
+    html { scroll-padding-top: calc(var(--bar-h, 66px) + 4px); }
+    body {
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    main {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 9vh 16px 64px;
+    }
+
+    .clock { text-align: center; margin-bottom: 18px; }
+    #time {
+      font-size: 72px;
+      font-weight: 200;
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+    #date { margin-top: 10px; font-size: 15px; color: var(--muted); }
+    #date::first-letter { text-transform: uppercase; }
+
+    /* Not the full width of a wide page — a long empty bar reads as a
+       form field, not a quick filter. */
+    #search {
+      display: block;
+      width: 100%;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 11px 14px;
+      font: inherit;
+      font-size: 15px;
+      color: var(--fg);
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      outline: none;
+    }
+    #search:focus { border-color: var(--accent); }
+    /* Stays put while the list scrolls under it. */
+    #searchBar {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      padding: 10px 0;
+      background: var(--bg);
+    }
+
+    section { margin-top: 18px; }
+
+    /* Two columns on a wide window: tabs fill them in reading order —
+       one on the left, the next on its right (see newtab.js's render) —
+       so numbers still run in sequence. Group headers and section titles
+       span the full width; one column below the threshold. */
+    .tab-grid { display: grid; grid-template-columns: minmax(0, 1fr); }
+    @media (min-width: 1000px) {
+      main { max-width: 1120px; }
+      .tab-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
+    }
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--section-title);
+      margin: 0 0 6px 10px;
+    }
+    #local .section-title:not(:first-child) { margin-top: 24px; }
+    .sub-title {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 14px 0 4px 10px;
+    }
+
+    .group-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 7px 10px;
+      margin-top: 4px;
+      font: inherit;
+      font-weight: 600;
+      color: var(--fg);
+      background: none;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: left;
+    }
+    .group-header:hover, .group-header:focus-visible { background: var(--card-bg); outline: none; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .group-header .count { font-weight: 400; color: var(--muted); }
+    .chevron { margin-left: auto; color: var(--muted); font-size: 11px; transition: transform 0.12s; }
+    .group.collapsed .chevron { transform: rotate(-90deg); }
+    .group.collapsed .group-tabs { display: none; }
+    /* Group membership is a thin bar in the group's colour on each of its
+       tabs, not an indent — so a group's tabs line up with the ungrouped
+       ones in both grid columns. */
+    .group-tabs .item { position: relative; }
+    .group-tabs .item::before {
+      content: "";
+      position: absolute;
+      left: 2px; top: 6px; bottom: 6px;
+      width: 2px;
+      border-radius: 1px;
+      background: var(--group-color, var(--hairline));
+    }
+
+    .item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 6px 10px;
+      font: inherit;
+      color: var(--fg);
+      background: none;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: left;
+      min-width: 0;
+    }
+    .item:hover, .item:focus-visible { background: var(--card-bg); outline: none; }
+    .item:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+    /* What Enter in the search box would open. */
+    body.searching .item.selected { background: var(--card-bg); box-shadow: inset 0 0 0 1px var(--accent); }
+    .num {
+      flex-shrink: 0;
+      min-width: var(--num-w, 2ch);
+      text-align: right;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+    }
+    /* Favicons are drawn for light backgrounds — a black one (GitHub's,
+       say) all but disappears on the dark theme, so in dark mode they sit
+       on a small light chip, the way Chrome's own dark new tab page does.
+       Defined here, not in the shared theme.css, to keep this page from
+       touching anything popup/options rely on. Same three-state pattern
+       as theme.css: OS dark mode unless "light" was chosen, or an
+       explicit "dark". */
+    :root { --favicon-chip: transparent; --favicon-pad: 0px; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) { --favicon-chip: #e8eaed; --favicon-pad: 2px; }
+    }
+    :root[data-theme="dark"] { --favicon-chip: #e8eaed; --favicon-pad: 2px; }
+
+    .icon {
+      width: calc(16px + 2 * var(--favicon-pad));
+      height: calc(16px + 2 * var(--favicon-pad));
+      flex-shrink: 0;
+      border-radius: 4px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 700;
+      color: var(--accent-fg); background: var(--muted);
+    }
+    img.icon { background: var(--favicon-chip); padding: var(--favicon-pad); }
+    .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meta { flex-shrink: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+    .item.current .title { font-weight: 600; }
+
+    .note { color: var(--muted); font-size: 13px; margin: 8px 10px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="clock">
+      <div id="time">--:--</div>
+      <div id="date"></div>
+    </div>
+
+    <div id="searchBar">
+      <input id="search" type="search" placeholder="Search, or type a tab number…" autocomplete="off" spellcheck="false" autofocus />
+    </div>
+
+    <section id="localSection">
+      <div id="local"></div>
+    </section>
+
+    <section id="remoteSection" hidden>
+      <div class="section-title">On your other devices</div>
+      <div id="remote"></div>
+    </section>
+
+    <div id="empty" class="note" hidden>No matching tabs.</div>
+  </main>
+
+  <script src="browser-polyfill.min.js"></script>
+  <script src="theme.js"></script>
+  <script src="newtab.js"></script>
+</body>
+</html>

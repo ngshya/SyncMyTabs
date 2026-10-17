@@ -1036,6 +1036,7 @@ function createSyncEngine(env) {
     getOrCreateProfileFolder,
     getActiveProfile,
     realUrlOfTab,
+    isHttpUrl,
     lazyUrlFor,
     snapshotOwnTabs,
     isSyncEnabled,

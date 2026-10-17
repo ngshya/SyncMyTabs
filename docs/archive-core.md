@@ -53,6 +53,12 @@ candidates, same exclusion `sync-core.js` applies everywhere else.
 - **Tracking runs unconditionally; only the destructive action is gated
   on `archiveEnabled`.** See the module header comment in
   `archive-core.js`.
+- **Only http(s) tabs are ever archived** — same rule `sync-core.js`'s
+  `snapshotOwnTabs` applies to what it syncs. A new tab page, an
+  extension page or `chrome://settings` would otherwise end up as a junk
+  bookmark in `_archive`; a lazy-restore placeholder still counts, via
+  `realUrlOfTab`, as the real page it stands for. See the comment above
+  `eligible` in `reconcileArchive`.
 - **A tab is never closed unless its bookmark was saved first** —
   `archiveTab` returns `false` on any write failure and `reconcileArchive`
   skips the close in that case.
