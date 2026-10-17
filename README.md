@@ -1,10 +1,10 @@
 # SyncMyTabs
 
-Sync your open browser tabs across devices — organized by profile, with no server, no account, and no cloud service of its own.
+Sync your open tabs across every device — no server, no account, no cloud.
 
-SyncMyTabs uses your bookmarks as the transport. It reads and writes a small, structured bookmark tree and reacts to changes in it — nothing more. The actual moving of data between devices is done by whatever bookmark-sync mechanism you already use: your browser's built-in sync, or a third-party tool like Floccus or xBrowserSync. If your bookmarks sync, your tabs sync.
+SyncMyTabs keeps your open tabs in sync everywhere, using the bookmark sync you already trust — your browser's built-in sync, Floccus, xBrowserSync, or anything else. No server of its own. No sign-up. If your bookmarks sync, your tabs sync.
 
-It also replaces the new tab page with one that lists every tab you have open — by window and tab group, searchable, each one a click or a number away. That makes it a natural fit for browsing in full screen, or with the tab bar hidden or kept narrow: every tab is always one new tab away.
+It also turns your new tab page into a list of every tab you have open — by window and tab group, searchable, one keystroke away. Perfect for browsing in full screen, or with the tab bar hidden or kept narrow.
 
 **Install:** [Chrome Web Store](https://chromewebstore.google.com/detail/syncmytabs/cmgailmjkngmopmalbdhnhngdeebinpf)
 (Chrome, Brave and other Chromium browsers) — or from source, see [Install from source](#install-from-source).

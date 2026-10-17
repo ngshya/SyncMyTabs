@@ -2,45 +2,45 @@
 
 Copy-paste ready text for the Chrome Web Store Developer Dashboard's "Store
 listing" tab — plain text only (the store shows no Markdown: no bold, no
-links), which is why the README's opening paragraphs are written the same
-way: they're the description's first three paragraphs, verbatim. Keep this in sync with `README.md` when the feature set
-changes — same spirit as `PERMISSIONS.md`/`PRIVACY.md`.
+links). The README opens with the description's first three paragraphs,
+verbatim, so the two stay the same. Keep this in sync with `README.md` when
+the feature set changes — same spirit as `PERMISSIONS.md`/`PRIVACY.md`.
 
 ## Summary (132 characters max)
 
-> Sync your open tabs across devices through your own bookmarks, plus a new tab page listing them all. No server, no account.
+> Sync your open tabs across every device through your own bookmarks, plus a new tab page listing them all. No server, no account.
 
-(123 characters)
+(128 characters)
 
 ## Description
 
+Same format as every earlier version (tagline, intro, HOW IT WORKS, FEATURES
+with "-" bullets, PRIVACY BY DESIGN) — keep it that way when updating, so
+the listing reads consistently across releases.
+
 ```
-Sync your open browser tabs across devices — organized by profile, with no server, no account, and no cloud service of its own.
+Sync your open tabs across every device — no server, no account, no cloud.
 
-SyncMyTabs uses your bookmarks as the transport. It reads and writes a small, structured bookmark tree and reacts to changes in it — nothing more. The actual moving of data between devices is done by whatever bookmark-sync mechanism you already use: your browser's built-in sync, or a third-party tool like Floccus or xBrowserSync. If your bookmarks sync, your tabs sync.
+SyncMyTabs keeps your open tabs in sync everywhere, using the bookmark sync you already trust — your browser's built-in sync, Floccus, xBrowserSync, or anything else. No server of its own. No sign-up. If your bookmarks sync, your tabs sync.
 
-It also replaces the new tab page with one that lists every tab you have open — by window and tab group, searchable, each one a click or a number away. That makes it a natural fit for browsing in full screen, or with the tab bar hidden or kept narrow: every tab is always one new tab away.
+It also turns your new tab page into a list of every tab you have open — by window and tab group, searchable, one keystroke away. Perfect for browsing in full screen, or with the tab bar hidden or kept narrow.
 
-KEY FEATURES
+HOW IT WORKS
+SyncMyTabs stores your tabs in a small, structured bookmark folder. Whatever already syncs your bookmarks carries the data between devices — nothing new to trust, nothing to configure.
 
-• Live two-way tab sync, organized by profile (e.g. "Home", "Work"), so different sets of tabs stay independent but always in sync with themselves across every device on that profile.
+FEATURES
+- Live two-way tab sync, organized by profile (Home, Work...) — each stays independent, always in sync with itself across devices.
+- Lazy restore — tabs from other devices open as placeholders and only load when you click them. No surprise autoplay on a restored YouTube tab.
+- Tab group sync (Chrome/Brave) — keep a group's pages and its rules consistent on every device.
+- Auto-archive idle tabs (on by default, easy to turn off) — old tabs get bookmarked and closed automatically, on a schedule you set. The last week's are on the new tab page, one click away.
+- Smart tab order (optional) — groups first, then by most recently used.
+- New tab page — every open tab by window and tab group, plus the recently archived ones. Type to filter, type a tab's number to jump to it, or search the web (your default engine, or Google, Maps, YouTube, Claude, Perplexity, Wikipedia with a one-letter shortcut). One per window, so they don't pile up. Optional bookmarks bar and Matrix rain.
+- Light, dark, black, or system theme.
 
-• Lazy restore — tabs mirrored in from another device open as lightweight placeholders and only load for real once you view them. By default, they wait for a click before loading, so a restored YouTube tab never autoplays just because you switched to it.
+Note: SyncMyTabs replaces your new tab page. When Chrome asks, choose "Keep it" — "Change it back" turns off the whole extension, sync included.
 
-• Tab groups (Chrome/Brave) — keep a titled tab group's key pages present on every device, and keep links clicked inside it from wandering outside the group. Group rules sync the same way tabs do.
-
-• Auto-archive idle tabs (on by default, adjustable or toggleable off) — tabs you haven't looked at in a while (you choose the threshold, down to the minute) are saved as a bookmark and closed automatically, so your tab bar doesn't grow forever. The ones archived in the last few days are listed on the new tab page, one click away from coming back.
-
-• Tab & group order (optional, off by default) — keep tab groups (Chrome/Brave) at the start of the window, alphabetically, followed by your other tabs sorted by how recently you used them. Only reorders once you've stepped away or been reading for a while, never while you're actively switching between tabs.
-
-• A minimal new tab page — the time, a search box, every tab you have open (by window and tab group), and the tabs auto-archived over the last 7 days (you choose how many), by day, so you can reopen one with a click. Start typing to filter, or type a tab's number and press Enter to jump straight there — no mouse needed. The same box searches the web (your default engine, or Google, Maps, YouTube, Claude, Perplexity, Wikipedia with a one-letter shortcut). Only one new tab page per window, so they don't pile up. Optional Matrix rain in dark mode. You choose which sections it shows, and can add a copy of your bookmarks bar at the top so the browser's own can stay hidden. Note: SyncMyTabs replaces your new tab page; on Chrome, choose "Keep it" when asked — "Change it back" turns off the whole extension, sync included.
-
-• Light, dark, pure black, or system theme.
-
-• Nothing leaves your device except through your own bookmark sync — no account, no sign-up, no analytics, no ads.
-
-PRIVACY
-SyncMyTabs has no server and collects nothing. Everything happens locally, inside your browser's own storage and bookmarks.
+PRIVACY BY DESIGN
+No server. No account. No analytics. No ads. Everything stays on your device — the only thing that leaves it is your own bookmark sync, and a web search you start from the new tab page, sent only to the service you picked.
 
 Free and open source.
 ```
