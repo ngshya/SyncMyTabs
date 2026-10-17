@@ -1,33 +1,23 @@
 # Chrome Web Store — Permission Justifications
 
 Copy-paste ready answers for the "Privacy practices" tab of the Chrome Web Store
-Developer Dashboard. SyncMyTabs requests the permissions below, including a
+Developer Dashboard. **Each answer must stay under 1,000 characters** (the
+store's limit) — `test/store-texts.test.js` checks it. SyncMyTabs requests the permissions below, including a
 broad host permission and a content script for its tab-group leashing module
 (see "Host permissions" and "Content scripts"), and no remotely hosted code.
 
 ## Single purpose
 
-> SyncMyTabs has a single purpose: to synchronize a user's open browser tabs
-> across their own devices, organized by profile, by reading and writing a
-> structured bookmark folder. It relies on the user's existing bookmark-sync
-> mechanism to move that data between devices and has no server or account of
-> its own. An optional, independent module (Chrome/Brave only) extends this to
-> the user's browser tab groups: it keeps a titled group's declared tabs
-> present (reopening one that's missing, closing accidental duplicates) and
-> keeps clicked links inside that group from wandering outside its declared
-> pages — the same bookmark-based sync mechanism carries this module's
-> configuration across devices too, scoped by the same profile. A second
-> optional, independent module tracks how recently each open tab was actually
-> looked at and, if enabled, saves a tab that's gone unused for too long as a
-> plain bookmark before closing it. A third optional, independent module
-> (off by default) keeps each window's tab strip laid out with browser tab
-> groups first (Chrome/Brave, alphabetical by title) and every other tab
-> most-recently-active first, only reordering once the browser has been idle
-> for a while. The extension also replaces the new tab page with a minimal
-> view of exactly that same data — a clock, the user's open tabs (and tab
-> groups) on this device, and the tabs auto-archive recently saved into the
-> same synced bookmark folder — so they can jump straight to any of them or
-> reopen an archived one.
+> SyncMyTabs has a single purpose: managing the user's open browser tabs
+> across their own devices. It synchronizes open tabs, organized by
+> profile, by reading and writing a structured bookmark folder that the
+> user's existing bookmark sync carries between devices — there is no
+> server or account. Everything else serves that same purpose: optional
+> tab-group rules (Chrome/Brave) that keep a group's pages present and its
+> links inside it, synced the same way; archiving tabs left unused for a
+> long time as bookmarks before closing them; optionally ordering tabs by
+> recent use; and a new tab page that shows those same open and recently
+> archived tabs, so the user can find, switch to or reopen any of them.
 
 ## Permission justifications
 

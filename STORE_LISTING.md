@@ -18,6 +18,11 @@ Same format as every earlier version (tagline, intro, HOW IT WORKS, FEATURES
 with "-" bullets, PRIVACY BY DESIGN) — keep it that way when updating, so
 the listing reads consistently across releases.
 
+**No lists of brand or product names.** Version 4.18.0 was rejected for
+"excessive keywords" over "Google, Maps, YouTube, Claude, Perplexity,
+Wikipedia" (the web-search services); describe features generically
+instead. `test/store-texts.test.js` checks it.
+
 ```
 Sync your open tabs across every device — no server, no account, no cloud.
 
@@ -30,11 +35,11 @@ SyncMyTabs stores your tabs in a small, structured bookmark folder. Whatever alr
 
 FEATURES
 - Live two-way tab sync, organized by profile (Home, Work...) — each stays independent, always in sync with itself across devices.
-- Lazy restore — tabs from other devices open as placeholders and only load when you click them. No surprise autoplay on a restored YouTube tab.
+- Lazy restore — tabs from other devices open as placeholders and only load when you click them. No surprise autoplay on a restored video.
 - Tab group sync (Chrome/Brave) — keep a group's pages and its rules consistent on every device.
 - Auto-archive idle tabs (on by default, easy to turn off) — old tabs get bookmarked and closed automatically, on a schedule you set. The last week's are on the new tab page, one click away.
 - Smart tab order (optional) — groups first, then by most recently used.
-- New tab page — every open tab by window and tab group, plus the recently archived ones. Type to filter, type a tab's number to jump to it, or search the web (your default engine, or Google, Maps, YouTube, Claude, Perplexity, Wikipedia with a one-letter shortcut). One per window, so they don't pile up. Optional bookmarks bar and Matrix rain.
+- New tab page — every open tab by window and tab group, plus the recently archived ones. Type to filter, type a tab's number to jump to it, or search the web with your default search engine — or another service you pick with a one-letter shortcut. One per window, so they don't pile up. Optional bookmarks bar and Matrix rain.
 - Light, dark, black, or system theme.
 
 Note: SyncMyTabs replaces your new tab page. When Chrome asks, choose "Keep it" — "Change it back" turns off the whole extension, sync included.
