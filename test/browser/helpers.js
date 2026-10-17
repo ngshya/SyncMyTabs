@@ -126,12 +126,14 @@ async function launch(options = {}) {
     return page;
   };
 
-  // Tests run with the search-box focus redirect off unless they ask for
-  // it: it reloads the page right after it opens, which would race every
-  // other test's first look at the page.
+  // Tests run with the two settings that close/replace new tab pages off
+  // unless they ask for them — the search-box focus redirect (replaces the
+  // page with a new tab right after it opens) and one-new-tab-page-per-
+  // window (closes older ones): both would race tests that keep a page
+  // around or open several.
   await sw.evaluate(
     (storage) => chrome.storage.local.set(storage),
-    { deviceName: "Laptop", newtabSections: { focusSearch: false }, ...(options.storage || {}) }
+    { deviceName: "Laptop", newtabSections: { focusSearch: false, singleNewTab: false }, ...(options.storage || {}) }
   );
 
   const b = {

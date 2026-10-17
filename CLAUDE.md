@@ -4,7 +4,9 @@ Guidance for Claude (and any AI agent) working in this repository. Kept
 short on purpose — it's loaded into every session. Details live in
 `docs/` (map below): read the doc for the area you're touching, not all
 of them. **Don't read `README.md` to learn the code** — it's the
-user-facing description (~33 KB); open it only to update it.
+user-facing description; open it only to update it. Its opening
+paragraphs are also the store description's (plain text, no Markdown —
+see `STORE_LISTING.md`).
 
 ## What this repository is
 
