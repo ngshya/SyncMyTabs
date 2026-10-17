@@ -3,7 +3,7 @@
 //
 // Shared dark/light theme handling for popup.html and options.html.
 // Reads `themePreference` from storage.local ("system" | "light" |
-// "dark", default "system" — same as before this existed, following the
+// "dark" | "black", default "system" — same as before this existed, following the
 // OS via prefers-color-scheme) and stamps it as a data-theme attribute
 // on <html> for theme.css's [data-theme] overrides to key off. Applied
 // asynchronously on load — there's a brief flash of the OS-default
@@ -28,7 +28,7 @@
   }
 
   function applyTheme(value) {
-    if (value === "light" || value === "dark") {
+    if (value === "light" || value === "dark" || value === "black") {
       document.documentElement.setAttribute("data-theme", value);
     } else {
       document.documentElement.removeAttribute("data-theme");

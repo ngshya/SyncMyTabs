@@ -483,8 +483,11 @@ defines CSS custom-property tokens on bare `:root` (light, the default),
 redefines them under `@media (prefers-color-scheme: dark)` guarded by
 `:root:not([data-theme="light"])`, then redefines them again under
 `:root[data-theme="dark"]` so an explicit choice always wins over the OS
-setting in both directions. `theme.js` reads `themePreference` from
-`storage.local` (`"system"` default / `"light"` / `"dark"`), stamps it as
+setting in both directions. A fourth choice, `"black"`, shares the dark
+block's selector and then overrides just the surfaces (pure black
+background) in a block of its own at the end. `theme.js` reads
+`themePreference` from `storage.local` (`"system"` default / `"light"` /
+`"dark"` / `"black"`), stamps it as
 a `data-theme` attribute on `<html>`, and listens for `storage.onChanged`
 so a change made in one page is reflected live in the other if both happen
 to be open at once. Applied asynchronously (a brief flash of the OS-default

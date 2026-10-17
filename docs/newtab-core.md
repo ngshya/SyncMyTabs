@@ -104,6 +104,14 @@ profile.
   `i18n.getUILanguage()`, not the page's default locale, falling back to
   the default only if Intl rejects the tag. The page's own labels stay
   English, like the rest of the extension's UI.
+- **This device's tabs can be closed from the list** — a ✕ at the end
+  of the row, shown on hover or keyboard focus, or Delete on the focused
+  row (`closeTab` in `newtab.js`). Each row is two sibling buttons (the
+  tab and its ✕), since HTML doesn't allow one inside the other. Other
+  devices' tabs get none: closing one there would mean writing to the
+  bookmark tree from the page, which only the background engine does. A
+  close here is an ordinary `tabs.remove`, so sync treats it like any
+  other close.
 - **A click switches, then closes the new tab page behind it** — the
   blank tab you came from would otherwise pile up after every jump. See
   `switchTo` in `newtab.js`.

@@ -5,6 +5,9 @@
      prefers-color-scheme, exactly as before this file existed.
    - "light" / "dark": explicit override, wins in both directions —
      stamped as data-theme="light"/"dark" on <html> by theme.js.
+   - "black": the dark theme on a pure black background (for OLED
+     screens, or just taste) — data-theme="black", which takes every dark
+     token below and then overrides the surfaces at the end of the file.
    Every token is defined on bare :root (light, the default), redefined
    under the dark media query (guarded so an explicit "light" choice
    isn't clobbered by the OS being in dark mode), then redefined again
@@ -99,7 +102,8 @@
   }
 }
 
-:root[data-theme="dark"] {
+:root[data-theme="dark"],
+:root[data-theme="black"] {
   --bg: #1e1f22;
   --fg: #e6e6e6;
   --muted: #9aa0a6;
@@ -135,6 +139,23 @@
   --warn-border: #6b4f24;
 
   --version-fg: #9aa0a6;
+}
+
+/* Pure black: the dark theme's tokens (above), with every surface pushed
+   to true black and the greys around it darkened to match. */
+:root[data-theme="black"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --input-bg: #0d0d0d;
+  --card-bg: #141414;
+  --border: #2e2e2e;
+  --hairline: #1f1f1f;
+  --secondary-bg: #262626;
+  --secondary-hover: #333333;
+  --switch-track: #3a3a3a;
+  --paused-bg: #1f1708;
+  --warn-bg: #1f1708;
+  --accent-disabled: #1c2747;
 }
 
 body {

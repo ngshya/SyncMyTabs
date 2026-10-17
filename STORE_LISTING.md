@@ -32,7 +32,7 @@ KEY FEATURES
 
 • A minimal new tab page — the time, a search box, and every tab you have open (by window and tab group) plus what's open on your other devices. Start typing to filter, or type a tab's number and press Enter to jump straight there — no mouse needed. You choose which sections it shows. Note: SyncMyTabs replaces your new tab page; on Chrome, choose "Keep it" when asked — "Change it back" turns off the whole extension, sync included.
 
-• Light, dark, or system theme.
+• Light, dark, pure black, or system theme.
 
 • Nothing leaves your device except through your own bookmark sync — no account, no sign-up, no analytics, no ads.
 
