@@ -215,3 +215,85 @@ test("remote is skipped while the master sync switch is off, leaving the bookmar
   assert.deepEqual(remote.devices, []);
   assert.equal(JSON.stringify(world.root), before, "no profile folder created, nothing self-healed");
 });
+
+// ---- bookmarks bar ----
+
+// Adds a top-level bookmarks-bar folder the way each browser has one.
+function addBar(world, { id = "1", folderType } = {}) {
+  const bar = { id, parentId: "0", title: "Bookmarks bar", children: [] };
+  if (folderType) bar.folderType = folderType;
+  world.root.children.unshift(bar);
+  return bar;
+}
+
+test("bookmarks bar: contents in order, folders nested, bookmarklets left out", async () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const nt = newtabEngineFor(a);
+  const bar = addBar(world);
+
+  await a.env.bookmarks.create({ parentId: bar.id, title: "Mail", url: "https://mail.example/" });
+  const folder = await a.env.bookmarks.create({ parentId: bar.id, title: "Work" });
+  await a.env.bookmarks.create({ parentId: folder.id, title: "Docs", url: "https://docs.example/" });
+  const inner = await a.env.bookmarks.create({ parentId: folder.id, title: "Deep" });
+  await a.env.bookmarks.create({ parentId: inner.id, title: "Wiki", url: "https://wiki.example/" });
+  await a.env.bookmarks.create({ parentId: bar.id, title: "Bookmarklet", url: "javascript:alert(1)" });
+  await a.env.bookmarks.create({ parentId: bar.id, title: "News", url: "https://news.example/" });
+
+  const shape = (n) => (n.kind === "folder" ? { [n.title]: n.children.map(shape) } : n.title);
+  const { bar: data } = await nt.getBookmarksBar();
+  assert.deepEqual(data.children.map(shape), ["Mail", { Work: ["Docs", { Deep: ["Wiki"] }] }, "News"]);
+});
+
+test("bookmarks bar is found by folderType, or by Firefox's id — and is null when there's none", async () => {
+  const chrome = new SimWorld();
+  const c = chrome.addDevice({ deviceName: "C" });
+  addBar(chrome, { id: "42", folderType: "bookmarks-bar" });
+  await c.env.bookmarks.create({ parentId: "42", title: "X", url: "https://x.example/" });
+  assert.deepEqual((await newtabEngineFor(c).getBookmarksBar()).bar.children.map((n) => n.title), ["X"]);
+
+  const firefox = new SimWorld();
+  const f = firefox.addDevice({ deviceName: "F" });
+  const toolbar = addBar(firefox, { id: "toolbar_____" });
+  toolbar.children.push({ id: "sep1", parentId: "toolbar_____", type: "separator", title: "" });
+  await f.env.bookmarks.create({ parentId: "toolbar_____", title: "Y", url: "https://y.example/" });
+  assert.deepEqual(
+    (await newtabEngineFor(f).getBookmarksBar()).bar.children.map((n) => n.kind),
+    ["separator", "bookmark"]
+  );
+
+  const none = new SimWorld();
+  const n = none.addDevice({ deviceName: "N" });
+  assert.equal((await newtabEngineFor(n).getBookmarksBar()).bar, null);
+});
+
+test("bookmarks bar icons: an open tab's own favicon for that page or site, nothing otherwise", async () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const nt = newtabEngineFor(a);
+  const bar = addBar(world);
+
+  const exact = await a.openTab("https://site.example/page");
+  await a.tabsApi.update(exact.id, { favIconUrl: "https://site.example/favicon.ico" });
+  await a.env.bookmarks.create({ parentId: bar.id, title: "Same page", url: "https://site.example/page" });
+  await a.env.bookmarks.create({ parentId: bar.id, title: "Same site", url: "https://site.example/other" });
+  await a.env.bookmarks.create({ parentId: bar.id, title: "Elsewhere", url: "https://elsewhere.example/" });
+
+  const icons = (await nt.getBookmarksBar()).bar.children.map((b) => [b.title, b.favIconUrl]);
+  assert.deepEqual(icons, [
+    ["Same page", "https://site.example/favicon.ico"],
+    ["Same site", "https://site.example/favicon.ico"],
+    ["Elsewhere", null],
+  ]);
+});
+
+test("NEWTAB_BOOKMARKS is answered; the bar is never written to", async () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const nt = newtabEngineFor(a);
+  addBar(world);
+  const before = JSON.stringify(world.root.children[0]);
+  const reply = await nt.handleMessage({ type: "NEWTAB_BOOKMARKS" });
+  assert.deepEqual(reply.bar.children, []);
+  assert.equal(JSON.stringify(world.root.children[0]), before);
+});

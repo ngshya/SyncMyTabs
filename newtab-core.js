@@ -31,6 +31,9 @@
 // knowledge of what a new tab page even is (isNewTabPageUrl) lives here
 // and nowhere else.
 //
+// Also reads the browser's own bookmarks bar (getBookmarksBar) for the
+// page's optional copy of it — read-only.
+//
 // CONTRACT with sync-core.js: this module reuses exactly
 // syncEngine.realUrlOfTab() / .isSyncEnabled() / .getActiveProfile() /
 // .getOrCreateProfileFolder() / .readProfileEntries() and nothing else.
@@ -229,6 +232,83 @@ function createNewtabEngine(env, syncEngine) {
     return { paused: false, profile, devices };
   }
 
+  // ---- bookmarks bar ----
+
+  // The browser's own bookmarks-bar folder, never a hardcoded id alone
+  // (same rule as sync-core.js's getRootParentId): Chrome/Brave 134+ mark
+  // it with folderType "bookmarks-bar"; before that it's always the
+  // top-level folder with id "1"; Firefox calls it "toolbar_____". Looked
+  // up once, then cached — the root folders never move.
+  const BOOKMARKS_BAR_IDS = ["toolbar_____", "1"];
+  let cachedBarId = null;
+
+  async function findBookmarksBarId() {
+    if (cachedBarId) return cachedBarId;
+    const tree = await env.bookmarks.getTree();
+    const topLevel = (tree && tree[0] && tree[0].children) || [];
+    const bar =
+      topLevel.find((c) => c.folderType === "bookmarks-bar") ||
+      topLevel.find((c) => BOOKMARKS_BAR_IDS.includes(c.id));
+    cachedBarId = bar ? bar.id : null;
+    return cachedBarId;
+  }
+
+  // The bookmarks bar's contents for the page's own copy of it
+  // (newtab-bookmarks.js) — read-only, the bar is never written to.
+  // Folders keep their nesting and order; Firefox's separators come
+  // through as { kind: "separator" }. Bookmarklets (javascript: URLs) are
+  // left out: an extension page can't run them. Icons follow the same
+  // rule as everything else here: a bookmark gets a favicon only if a tab
+  // on this device already has one for that exact page, or failing that
+  // for the same site — never fetched from anywhere; a letter otherwise.
+  async function getBookmarksBar() {
+    const barId = await findBookmarksBarId();
+    if (!barId) return { bar: null };
+    const [bar] = await env.bookmarks.getSubTree(barId);
+    if (!bar) return { bar: null };
+
+    const iconByUrl = new Map();
+    const iconByHost = new Map();
+    for (const t of await env.tabs.query({})) {
+      const icon = safeFaviconUrl(t.favIconUrl);
+      if (!icon) continue;
+      const u = syncEngine.realUrlOfTab(t);
+      if (!iconByUrl.has(u)) iconByUrl.set(u, icon);
+      const host = hostOf(u);
+      if (host && !iconByHost.has(host)) iconByHost.set(host, icon);
+    }
+
+    function view(node) {
+      if (node.type === "separator") return { kind: "separator", id: node.id };
+      if (node.url === undefined) {
+        return {
+          kind: "folder",
+          id: node.id,
+          title: node.title || "",
+          children: (node.children || []).map(view).filter(Boolean),
+        };
+      }
+      if (/^javascript:/i.test(node.url)) return null;
+      return {
+        kind: "bookmark",
+        id: node.id,
+        title: node.title || "",
+        url: node.url,
+        favIconUrl: iconByUrl.get(node.url) || iconByHost.get(hostOf(node.url)) || null,
+      };
+    }
+
+    return { bar: { id: bar.id, children: (bar.children || []).map(view).filter(Boolean) } };
+  }
+
+  function hostOf(url) {
+    try {
+      return new URL(url).host;
+    } catch (e) {
+      return "";
+    }
+  }
+
   // The single entry point background.js wires, in an onMessage listener
   // of its own (not a branch inside the existing one): returns a promise
   // for a message this module owns, or null for anything else, so the
@@ -242,6 +322,7 @@ function createNewtabEngine(env, syncEngine) {
   function handleMessage(message) {
     if (message && message.type === "NEWTAB_LOCAL") return getLocalData();
     if (message && message.type === "NEWTAB_REMOTE") return getRemoteData();
+    if (message && message.type === "NEWTAB_BOOKMARKS") return getBookmarksBar();
     return null;
   }
 
@@ -249,6 +330,7 @@ function createNewtabEngine(env, syncEngine) {
     isNewTabPage,
     getLocalData,
     getRemoteData,
+    getBookmarksBar,
     handleMessage,
   };
 }

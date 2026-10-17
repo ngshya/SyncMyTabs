@@ -36,7 +36,10 @@ broad host permission and a content script for its tab-group leashing module
 > dedicated bookmark folder tree ("SyncMyTabs/…"), and reads that tree back to
 > detect updates coming from the user's other devices. The bookmarks
 > permission is required to create, read, update, and de-duplicate these
-> folders and bookmarks.
+> folders and bookmarks. If the user turns on the new tab page's optional
+> bookmarks bar, the extension also READS the browser's own bookmarks-bar
+> folder to show a copy of it on that page — read-only, never modified,
+> never sent anywhere.
 
 ### `tabs`
 > The extension reads the URLs and titles of the user's open tabs in order to

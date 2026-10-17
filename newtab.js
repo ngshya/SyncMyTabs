@@ -23,6 +23,8 @@
 // Keyboard-only use: every listed tab has a number (see numberTabs);
 // typing digits narrows the list to that number and Enter opens it.
 // Any other text searches titles/URLs, Enter opens the first match.
+// A tab of this device can be closed from the list too: a ✕ at the end
+// of its row on hover, or Delete on the focused row (see closeTab).
 // ============================================================
 
 (function () {
@@ -139,7 +141,14 @@
     return entry.kind === "tab" ? [entry.tab] : entry.group.tabs;
   }
 
-  function itemButton(entry, key, num, meta, onActivate, isCurrent) {
+  // One listed tab: a row holding the tab's own button and — for a tab
+  // of THIS device (`closeTabId`) — a close button, shown on hover or
+  // keyboard focus (newtab.html). Two sibling buttons rather than one
+  // nested in the other, which HTML doesn't allow. Tabs on other devices
+  // get no close button: closing one there would mean writing to the
+  // bookmark tree from this page, which only the background engine does.
+  function itemRow(entry, key, num, meta, onActivate, isCurrent, closeTabId) {
+    const row = el("div", "row");
     const btn = el("button", "item" + (isCurrent ? " current" : ""));
     btn.type = "button";
     btn.dataset.key = key;
@@ -152,7 +161,22 @@
       el("span", "meta", meta)
     );
     btn.addEventListener("click", onActivate);
-    return btn;
+    row.append(btn);
+    if (closeTabId !== null && closeTabId !== undefined) {
+      row.classList.add("closable");
+      btn.dataset.tabId = String(closeTabId);
+      const close = el("button", "close", "✕");
+      close.type = "button";
+      close.tabIndex = -1; // reachable with Delete on the row instead (see the keydown handler)
+      close.title = "Close tab";
+      close.setAttribute("aria-label", "Close tab");
+      close.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeTab(closeTabId, btn);
+      });
+      row.append(close);
+    }
+    return row;
   }
 
   // ---- numbering + matching ----
@@ -232,6 +256,25 @@
     }
   }
 
+  // Closes one of this device's tabs from the list. Keyboard focus moves
+  // on to the next entry first, so closing several in a row with Delete
+  // keeps working; the tab-removed event then re-renders the list (and
+  // renumbers it). A close here is a normal close as far as sync is
+  // concerned — the same as closing the tab in the strip.
+  async function closeTab(tabId, button) {
+    if (document.activeElement === button) {
+      const nav = navigables();
+      const next = nav[nav.indexOf(button) + 1] || nav[nav.indexOf(button) - 1];
+      if (next) next.focus();
+      else searchEl.focus();
+    }
+    button.closest(".row").remove();
+    try {
+      await browser.tabs.remove(tabId);
+    } catch (e) {}
+    scheduleLocal(); // already gone, say — redraw from the real state either way
+  }
+
   function isFolded(group) {
     const o = foldOverrides.get(group.id);
     if (o && o.browserCollapsed === group.collapsed) return o.collapsed;
@@ -277,7 +320,7 @@
     const list = el("div", "group-tabs tab-grid");
     for (const t of tabs) {
       const num = numbers.local.get(t.id);
-      list.append(itemButton(t, `t:${t.id}`, num, hostOf(t.url), () => switchTo(t.id, t.windowId), t.active && !isMyWindow));
+      list.append(itemRow(t, `t:${t.id}`, num, hostOf(t.url), () => switchTo(t.id, t.windowId), t.active && !isMyWindow, t.id));
     }
     wrap.append(header, list);
     return wrap;
@@ -312,7 +355,7 @@
           if (!query.hit(num, t.title, t.url)) continue;
           const meta = hostOf(t.url) + (t.pinned ? " · pinned" : "");
           if (!run) block.append((run = el("div", "tab-grid")));
-          run.append(itemButton(t, `t:${t.id}`, num, meta, () => switchTo(t.id, t.windowId), t.active && !isMyWindow));
+          run.append(itemRow(t, `t:${t.id}`, num, meta, () => switchTo(t.id, t.windowId), t.active && !isMyWindow, t.id));
           count += 1;
         } else {
           const g = entry.group;
@@ -350,7 +393,7 @@
           const key = `${device.name}|${t.url}`;
           const isLocal = t.localTabId !== null && t.localTabId !== undefined;
           grid.append(
-            itemButton(
+            itemRow(
               t,
               `r:${key}`,
               numbers.remote.get(key),
@@ -459,6 +502,9 @@
       e.preventDefault();
       const next = nav[i + (e.key === "ArrowRight" ? 1 : -1)];
       if (next) next.focus();
+    } else if (i !== -1 && e.key === "Delete" && nav[i].dataset.tabId) {
+      e.preventDefault();
+      closeTab(Number(nav[i].dataset.tabId), nav[i]);
     } else if (e.key === "Escape") {
       searchEl.focus();
     } else if (e.key.length === 1 && e.key !== " " && !modified) {

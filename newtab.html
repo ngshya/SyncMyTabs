@@ -10,7 +10,7 @@
     html, body { margin: 0; min-height: 100%; }
     /* Keyboard focus scrolling a row into view must not park it under the
        sticky search bar. --bar-h is measured by newtab.js. */
-    html { scroll-padding-top: calc(var(--bar-h, 66px) + 4px); }
+    html { scroll-padding-top: calc(var(--bm-h, 0px) + var(--bar-h, 66px) + 4px); }
     body {
       font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
       font-size: 14px;
@@ -53,7 +53,7 @@
     /* Stays put while the list scrolls under it. */
     #searchBar {
       position: sticky;
-      top: 0;
+      top: var(--bm-h, 0px); /* right below the bookmarks bar, when shown */
       z-index: 2;
       padding: 10px 0;
       background: var(--bg);
@@ -76,9 +76,15 @@
       text-transform: uppercase;
       letter-spacing: 0.06em;
       color: var(--section-title);
-      margin: 0 0 6px 10px;
+      margin: 0 0 10px;
+      text-align: center;
     }
-    #local .section-title:not(:first-child) { margin-top: 24px; }
+    /* A new window (or the other-devices part) starts after a clear gap,
+       so its centred title reads as the start of a new section rather
+       than one more line of the list above. Margins collapse, so a group
+       right before it doesn't add its own gap on top. */
+    #local .section-title:not(:first-child) { margin-top: 44px; }
+    #remoteSection { margin-top: 44px; }
     .sub-title {
       font-size: 12px;
       color: var(--muted);
@@ -106,6 +112,12 @@
     .group-header .count { font-weight: 400; color: var(--muted); }
     .chevron { margin-left: auto; color: var(--muted); font-size: 11px; transition: transform 0.12s; }
     .group.collapsed .chevron { transform: rotate(-90deg); }
+    /* Breathing room above and below each group, so it reads as one block
+       apart from the ungrouped tabs around it (the colour bar on its tabs
+       already says which tabs belong to it). Vertical margins collapse, so
+       back-to-back groups get the same gap, not double. */
+    .group { margin: 16px 0; }
+    .group .group-header { margin-top: 0; }
     .group.collapsed .group-tabs { display: none; }
     /* Group membership is a thin bar in the group's colour on each of its
        tabs, not an indent — so a group's tabs line up with the ungrouped
@@ -136,6 +148,35 @@
       min-width: 0;
     }
     .item:hover, .item:focus-visible { background: var(--card-bg); outline: none; }
+
+    /* A row = the tab's button + (this device's tabs only) a close button
+       at its end, shown on hover or while the row has keyboard focus; the
+       row's text makes room for it rather than running under it. */
+    .row { position: relative; min-width: 0; }
+    .row:hover .item { background: var(--card-bg); }
+    .close {
+      position: absolute;
+      right: 6px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 22px;
+      height: 22px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      font: inherit;
+      font-size: 12px;
+      line-height: 1;
+      color: var(--muted);
+      background: none;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .row:hover .close, .row:focus-within .close { display: inline-flex; }
+    .row.closable:hover .item, .row.closable:focus-within .item { padding-right: 34px; }
+    .close:hover { color: var(--fg); background: var(--hairline); }
     .item:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
     /* What Enter in the search box would open. */
     body.searching .item.selected { background: var(--card-bg); box-shadow: inset 0 0 0 1px var(--accent); }
@@ -151,14 +192,14 @@
        say) all but disappears on the dark theme, so in dark mode they sit
        on a small light chip, the way Chrome's own dark new tab page does.
        Defined here, not in the shared theme.css, to keep this page from
-       touching anything popup/options rely on. Same three-state pattern
+       touching anything popup/options rely on. Same pattern
        as theme.css: OS dark mode unless "light" was chosen, or an
-       explicit "dark". */
+       explicit "dark"/"black". */
     :root { --favicon-chip: transparent; --favicon-pad: 0px; }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) { --favicon-chip: #e8eaed; --favicon-pad: 2px; }
     }
-    :root[data-theme="dark"] { --favicon-chip: #e8eaed; --favicon-pad: 2px; }
+    :root[data-theme="dark"], :root[data-theme="black"] { --favicon-chip: #e8eaed; --favicon-pad: 2px; }
 
     .icon {
       width: calc(16px + 2 * var(--favicon-pad));
@@ -175,10 +216,88 @@
     .item.current .title { font-weight: 600; }
 
     .note { color: var(--muted); font-size: 13px; margin: 8px 10px; }
+
+    /* The optional copy of the browser's bookmarks bar
+       (newtab-bookmarks.js): one line across the very top, staying there
+       while the page scrolls; folders open menus. */
+    #bookmarksBar {
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      padding: 4px 8px;
+      background: var(--bg);
+    }
+    .bm-items {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .bm-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      max-width: 180px;
+      padding: 4px 8px;
+      font: inherit;
+      font-size: 12.5px;
+      color: var(--fg);
+      background: none;
+      border: none;
+      border-radius: 6px;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .bm-item:hover, .bm-item:focus-visible, .bm-item.open { background: var(--card-bg); outline: none; }
+    .bm-item .bm-title { overflow: hidden; text-overflow: ellipsis; }
+    .bm-sep { width: 8px; flex-shrink: 0; }
+    .bm-more { margin-left: auto; color: var(--muted); }
+    .bm-folder-icon { width: 16px; height: 16px; flex-shrink: 0; fill: var(--muted); }
+
+    .bm-menu {
+      position: fixed;
+      z-index: 10;
+      min-width: 200px;
+      max-width: 320px;
+      max-height: calc(100vh - 16px);
+      overflow-y: auto;
+      padding: 4px;
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    }
+    .bm-entry {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 5px 8px;
+      font: inherit;
+      font-size: 13px;
+      color: var(--fg);
+      background: none;
+      border: none;
+      border-radius: 6px;
+      text-decoration: none;
+      text-align: left;
+      cursor: pointer;
+    }
+    .bm-entry:hover, .bm-entry:focus-visible, .bm-entry.open { background: var(--card-bg); outline: none; }
+    .bm-entry .bm-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bm-arrow { color: var(--muted); font-size: 10px; }
+    .bm-menu-gap { height: 6px; }
+    .bm-empty { color: var(--muted); font-size: 12px; padding: 5px 8px; }
+
     [hidden] { display: none !important; }
   </style>
 </head>
 <body>
+  <nav id="bookmarksBar" aria-label="Bookmarks bar" hidden><div class="bm-items"></div></nav>
+  <div id="bookmarkMenus"></div>
   <main>
     <div class="clock">
       <div id="time">--:--</div>
@@ -204,5 +323,6 @@
   <script src="browser-polyfill.min.js"></script>
   <script src="theme.js"></script>
   <script src="newtab.js"></script>
+  <script src="newtab-bookmarks.js"></script>
 </body>
 </html>

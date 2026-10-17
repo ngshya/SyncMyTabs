@@ -3,11 +3,12 @@
 //
 // The custom new tab page's own card on the options page: which tab
 // sections newtab.html shows (this window / other windows / other
-// devices). Kept out of options.js on purpose — like the rest of the new
-// tab page feature, nothing that existed before it knows it exists (see
-// test/newtab-isolation.test.js): options.html only loads this script,
-// and this script builds its card itself, with the page's existing card
-// styles, and appends it after the other cards.
+// devices), and whether it shows its copy of the bookmarks bar
+// (newtab-bookmarks.js). Kept out of options.js on purpose — like the
+// rest of the new tab page feature, nothing that existed before it knows
+// it exists (see test/newtab-isolation.test.js): options.html only loads
+// this script, and this script builds its card itself, with the page's
+// existing card styles, and appends it after the other cards.
 //
 // The card is DOM-built (textContent only), saved per checkbox on change
 // to storage.local like every other preference; newtab.js listens for
@@ -15,14 +16,16 @@
 // ============================================================
 
 (function () {
-  // Same key and defaults as newtab.js.
+  // Same key and defaults as newtab.js (and newtab-bookmarks.js, for
+  // `bookmarksBar`).
   const SECTIONS_KEY = "newtabSections";
-  const DEFAULT_SECTIONS = { thisWindow: true, otherWindows: true, otherDevices: true };
+  const DEFAULT_SECTIONS = { thisWindow: true, otherWindows: true, otherDevices: true, bookmarksBar: false };
 
   const OPTIONS = [
     ["thisWindow", "Tabs in the current window"],
     ["otherWindows", "Tabs in your other windows"],
     ["otherDevices", "Tabs on your other devices"],
+    ["bookmarksBar", "Bookmarks bar at the top (a copy of the browser's, so you can keep its own hidden)"],
   ];
 
   function el(tag, className, text) {
@@ -41,7 +44,7 @@
     el(
       "div",
       "card-desc",
-      "Choose which tabs the SyncMyTabs new tab page lists. The clock and the search box are always there."
+      "Choose what the SyncMyTabs new tab page shows. The clock and the search box are always there."
     ),
     body
   );

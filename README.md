@@ -254,10 +254,14 @@ own: the time and date, a search box, and everything you have open.
 - **Your open tabs, every window** — in the same order as your tab strip,
   browser tab groups (Chrome/Brave) right where they sit, folded if
   they're folded in the browser (click a group's name to fold/unfold it
-  on the page only). Pinned tabs are marked as such.
+  on the page only). Each group has some space above and below it, so it
+  stands apart from the tabs around it. Pinned tabs are marked as such.
 - **Your other devices' tabs** — what's open on each of your other devices
   on the same profile, read from the same synced bookmarks as everything
   else. Ones that are also open here are marked "open here".
+- **Close from the list** — hovering one of this device's tabs shows a
+  **✕** at the end of its row; **Delete** does the same for the tab the
+  keyboard is on. It's an ordinary close, so it syncs like any other.
 - **Click to jump** — clicking a tab switches to it (bringing its window to
   the front) and closes the new tab you came from, so blank tabs don't pile
   up. A tab that's only open on another device opens right there instead.
@@ -273,10 +277,18 @@ own: the time and date, a search box, and everything you have open.
 - **Choose what's listed** — the options page's *New tab page* card turns
   each section (this window, your other windows, your other devices) on or
   off.
+- **Optional bookmarks bar** (off by default, same card) — a copy of your
+  browser's bookmarks bar across the top of the page, so you can keep the
+  browser's own bar hidden. Folders open menus (nested ones to the side),
+  whatever doesn't fit goes under **»**. A click opens the bookmark in this
+  tab, Ctrl/Cmd-click or middle-click in a new tab, Shift-click in a new
+  window; the arrow keys work too. It's read-only: edit your bookmarks in
+  the browser as usual, the bar follows. Icons show for sites you have open;
+  the rest get a letter (no favicon is ever fetched from anywhere).
 - The date and time are in your browser's language.
 - Favicons are only ever the tab's own icon — no third-party favicon
   service, nothing leaves your device.
-- Follows the same light/dark/system theme as the rest of the extension.
+- Follows the same theme (system/light/dark/black) as the rest of the extension.
 
 There's no switch to turn this page off from SyncMyTabs' own settings —
 see Known limitations.
@@ -332,7 +344,7 @@ that opens automatically on first run) holds:
   device, and switch instantly. Removing one from the list only removes it
   from *this device's* picker — data already saved under that name, on this or
   any other device, is kept and stays restorable.
-- **Theme** — System (default, follows your OS), Light, or Dark.
+- **Theme** — System (default, follows your OS), Light, Dark, or Black (pure black background, e.g. for OLED screens).
 - **Check interval** (default 1 minute) — opens/closes sync immediately
   regardless; this only controls the background double-check cadence, shared
   by the tab-groups and auto-archive checks too.
@@ -491,7 +503,7 @@ SyncMyTabs' own initiative):
 | `link-leash-content.js` | Content script for the leashing module — intercepts link clicks on a tab it's confirmed is inside a configured group |
 | `popup.html` / `popup.js` | Compact toolbar popup — status, per-module on/off switches, Sync now, and a link to full settings |
 | `options.html` / `options.js` | Full settings page — device name, profiles, check interval, every module's detail settings, theme |
-| `theme.css` / `theme.js` | Shared dark/light/system theme, used by the popup, the settings page and the new tab page |
+| `theme.css` / `theme.js` | Shared system/light/dark/black theme, used by the popup, the settings page and the new tab page |
 | `newtab.html` / `newtab.js` | The custom new tab page |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page |
 | `browser-polyfill.min.js` | Mozilla's WebExtension polyfill (vendored) so `browser.*` works on Chrome too |

@@ -87,6 +87,14 @@ class SimBookmarksApi {
     return [this.world.root];
   }
 
+  // Like the real API: the node itself, children included, as a
+  // one-element array (empty for an unknown id rather than throwing —
+  // callers here only ever ask for ids they just found).
+  async getSubTree(id) {
+    const node = this._byId(id);
+    return node ? [node] : [];
+  }
+
   async create({ parentId, title, url }) {
     const parent = this._byId(parentId);
     if (!parent) throw new Error(`no such parent ${parentId}`);
