@@ -40,39 +40,7 @@
   let selfTabId = null;
   const menus = []; // open menus, outermost first: { el, anchor }
 
-  // ---- small DOM helpers ----
-
-  function el(tag, className, text) {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
-  }
-
-  function hostOf(url) {
-    try {
-      return new URL(url).host;
-    } catch (e) {
-      return "";
-    }
-  }
-
-  function letterIcon(node) {
-    const label = hostOf(node.url).replace(/^www\./, "") || node.title || "?";
-    return el("span", "icon", label.charAt(0).toUpperCase());
-  }
-
-  // Same favicon rule as the rest of the page: only an icon an open tab
-  // already has (newtab-core.js), a letter otherwise.
-  function iconFor(node) {
-    if (!node.favIconUrl) return letterIcon(node);
-    const img = el("img", "icon");
-    img.alt = "";
-    img.referrerPolicy = "no-referrer";
-    img.src = node.favIconUrl;
-    img.addEventListener("error", () => img.replaceWith(letterIcon(node)));
-    return img;
-  }
+  const { el, iconFor } = NewtabDom;
 
   function folderIcon() {
     const NS = "http://www.w3.org/2000/svg";

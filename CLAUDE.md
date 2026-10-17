@@ -1,600 +1,135 @@
 # CLAUDE.md
 
-Guidance for Claude (and any AI agent) working in this repository.
+Guidance for Claude (and any AI agent) working in this repository. Kept
+short on purpose — it's loaded into every session. Details live in
+`docs/` (map below): read the doc for the area you're touching, not all
+of them. **Don't read `README.md` to learn the code** — it's the
+user-facing description (~33 KB); open it only to update it.
 
 ## What this repository is
 
-**SyncMyTabs** is a browser extension (Manifest V3) that syncs a user's open
-tabs across devices, organized by profile, using **bookmarks as the transport**.
-It has no server, no account, and no cloud service of its own — it reads/writes a
-structured bookmark tree and reacts to changes, relying on the user's existing
-bookmark sync (native browser sync, Floccus, xBrowserSync, …) to actually move
-data between devices.
-
-See `README.md` for the full user-facing description. This file is about
-*working on the code*.
-
-## Cross-browser support (IMPORTANT)
-
-**The extension must work on both Chromium browsers (Chrome/Brave) and
-Firefox.** Keep this in mind in every change:
-
-- Prefer APIs available on both — this codebase currently uses no Chrome-only
-  API (pinned tabs and tab groups, the previous Chrome-only feature, were
-  dropped in the v3 redesign). If a future change needs one, it must be
-  **feature-detected and degrade gracefully**, never assumed to exist.
-- Bookmark-root ids differ (Chrome `"2"` vs Firefox `"unfiled_____"` etc.):
-  always resolve through `getRootParentId`, never hardcode.
-- Firefox uses `browser.*` (promise-based) and event-page backgrounds, not a
-  service worker. Cross-browser API access goes through the vendored
-  `webextension-polyfill` (or an equivalent shim) — don't reintroduce raw
-  `chrome.*` promise calls that only work on Chrome.
-- The manifest carries both backgrounds (`service_worker` for Chrome, `scripts`
-  for Firefox); `browser_specific_settings.gecko` pins the Firefox id / min
-  version. When you touch the manifest, keep both browsers loadable.
-- There is no automated cross-browser test here — verify manually in **both**
-  Chrome (`chrome://extensions` → Load unpacked) and Firefox
-  (`about:debugging` → Load Temporary Add-on).
+**SyncMyTabs** is a Manifest V3 browser extension that syncs a user's open
+tabs across devices, organized by profile, using **bookmarks as the
+transport** — no server, no account: it reads/writes a structured bookmark
+tree and relies on the user's existing bookmark sync (native browser sync,
+Floccus, xBrowserSync, …) to move it between devices. Around that: a
+tab-group "leashing" module, auto-archive of idle tabs, optional tab
+ordering, and a custom new tab page.
 
 ## Branch & push workflow (IMPORTANT)
 
-- **All development happens on the `claude/svil` branch.**
-- If you are **not** currently on `claude/svil`, switch to it before making any
-  change:
-  ```bash
-  git checkout claude/svil 2>/dev/null || git checkout -b claude/svil
-  ```
-- **Always push to `claude/svil`** (`git push -u origin claude/svil`). Never
-  push to `main`/`master` or to any other branch without the user's explicit
-  permission.
-- Open pull requests **from `claude/svil`** into the default branch.
+- **All development happens on `claude/svil`** — switch to it first:
+  `git checkout claude/svil 2>/dev/null || git checkout -b claude/svil`.
+  If its last PR was already merged, restart it from `main` (never stack
+  on merged history).
+- **Always push to `claude/svil`** (`git push -u origin claude/svil`).
+  Never push to `main`/`master` or any other branch without the user's
+  explicit permission. Open PRs **from `claude/svil`** into `main`.
+- Merging to `main` with a bumped `version` **publishes a release**
+  automatically (see `docs/release.md`).
+
+## Cross-browser support (IMPORTANT)
+
+**Everything must work on Chromium (Chrome/Brave) and Firefox.**
+
+- Use APIs both have; anything Chrome-only (e.g. `tabGroups`) must be
+  **feature-detected and degrade gracefully**.
+- Bookmark-root ids differ (Chrome `"2"`/`"1"` vs Firefox
+  `"unfiled_____"`/`"toolbar_____"`): always resolve them
+  (`getRootParentId`, `findBookmarksBarId`), never hardcode one.
+- Use `browser.*` (vendored `webextension-polyfill`), not raw promise
+  `chrome.*` calls.
+- The manifest carries both backgrounds (`service_worker` for Chrome,
+  `scripts` for Firefox) + `browser_specific_settings.gecko`; keep both
+  loadable. `scripts/build.js` tailors one manifest per store.
+- No automated Firefox test: verify by hand in `about:debugging` when a
+  change could differ there.
+
+## Commands
+
+```bash
+npm test                 # Node suite: sync/groups/archive/order/newtab logic + static checks
+npm run check            # node --check on every top-level .js
+npm run test:browser     # real headless Chromium + the BUILT extension (Playwright) — UI, pages
+npm run build            # build/chrome + build/firefox, exactly what ships
+npm run screenshots -- <dir>   # new tab page / popup / options screenshots for a visual check
+```
+
+(`node --test test/` with a bare directory misbehaves on some Node
+versions — the scripts pass explicit globs.)
 
 ## Project layout
 
-| File | Role |
+| Path | Role |
 |---|---|
-| `manifest.json` | Manifest V3, permissions, entry points, **version**; dual background (Chrome `service_worker` + Firefox `scripts`), `browser_specific_settings.gecko`, the tab-group leashing module's `<all_urls>` content script |
-| `sync-core.js` | **All the open-tab sync/reconcile logic**, factored out of `background.js` and parameterized over an `env` (bookmarks/tabs/windows/storage/runtime) instead of calling `browser.*` directly — see "Testing" below. Plain script, no import/export syntax (loaded via `importScripts`/`background.scripts` like the polyfill); `module.exports` at the bottom is a Node-only no-op elsewhere. |
-| `groups-core.js` | **The independent tab-group leashing module** (see its own "Tab-group leashing" section below, and [`docs/groups-core.md`](docs/groups-core.md) for the full invariants) — same `env`-parameterized style as `sync-core.js`, plus takes the already-created sync engine instance (`createGroupsEngine(env, syncEngine)`) to reuse `getActiveProfile`/`getOrCreateProfileFolder`/`mergeFolderInto`/`isSyncEnabled` rather than re-implementing them. Chrome/Brave only (feature-detects `env.tabGroups`, a silent no-op on Firefox). |
-| `archive-core.js` | **The independent auto-archive module** (see its own "Auto-archive idle tabs" section below, and [`docs/archive-core.md`](docs/archive-core.md) for the full invariants) — same `env`-parameterized style, takes the sync engine instance (`createArchiveEngine(env, syncEngine)`) for the same reuse reasons as `groups-core.js`. Tracks each tab's last-focused time and, on by default, saves+closes one that's been idle past a threshold. |
-| `order-core.js` | **The independent tab & group order module** (see its own "Tab & group order" section below, and [`docs/order-core.md`](docs/order-core.md) for the full invariants) — same `env`-parameterized style, takes BOTH the sync engine (`isSyncEnabled`) and the archive engine (`getActivityMap`, reused rather than duplicated) instances: `createOrderEngine(env, syncEngine, archiveEngine)`. Off by default; lays out each window with groups first (alphabetical) then tabs by recency, only once idle, pausing after a detected manual move. |
-| `newtab-core.js` | **The data side of the custom new tab page** (see its own "Custom new tab page" section below, and [`docs/newtab-core.md`](docs/newtab-core.md) for the full invariants) — same `env`-parameterized style, takes the sync engine instance (`createNewtabEngine(env, syncEngine)`). Assembles this device's tabs by window in tab-strip order (groups in place, with the browser's fold state) and the other devices' open tabs for `newtab.html`, served through background.js messages so the background engine stays the only bookmark writer. |
-| `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s / `groups-core.js`'s / `archive-core.js`'s / `order-core.js`'s / `newtab-core.js`'s engine functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
-| `link-leash-content.js` | Content script for the leashing module — see its section below |
-| `popup.html` / `popup.js` | The **compact** toolbar popup — status, an on/off switch per feature module (open-tab sync, tab groups, auto-archive, tab & group order), a "Sync now" quick action, and a button to open `options.html`. Deliberately minimal; see "Popup vs. options page" below for why. |
-| `options.html` / `options.js` | The **full settings page**, opened as a plain tab (from the popup's "Open full settings" button, or by `browser.runtime.onInstalled` for first-run setup, since popups can't be opened programmatically) — device name, profiles, the shared check interval, and every module's detail settings (grouped into four cards: Open tabs sync, Tab groups, Auto-archive, Tab & group order — plus a fifth, New tab page, built by `newtab-options.js`, not `options.js`), plus the theme selector. Mostly the same DOM-building code the old all-in-one popup used to have. |
-| `theme.css` / `theme.js` | Shared dark/light/system theme system, loaded by both `popup.html` and `options.html` — see "Popup vs. options page" below |
-| `newtab.html` / `newtab.js` | The **custom new tab page** (`chrome_url_overrides.newtab` in the manifest) — clock/date, a sticky type-to-search box, this device's tabs by window in tab-strip order, and the tabs open on other devices; tabs flow in two columns (reading order) on wide windows; every tab is numbered for keyboard-only jumps; clicking one switches to it and closes the new tab page. DOM-only — all data comes from `newtab-core.js` via the `NEWTAB_LOCAL`/`NEWTAB_REMOTE` messages. |
-| `newtab-options.js` | The new tab page's own card on the options page (which tab sections it shows, `newtabSections` in storage) — loaded by `options.html` after `options.js` and builds its card itself, so `options.js` knows nothing about the new tab page. |
-| `newtab-settings.js` | The new tab page's settings in ONE place — storage key (`newtabSections`), every default, the options card's labels — as the global `NewtabSettings`; loaded by both `newtab.html` and `options.html`. Add a setting = one line in its `OPTIONS`. |
-| `newtab-search.js` | Pure helpers for the new tab page's web search: the services and their one-letter prefixes, service URLs, address-vs-search detection. Node-tested (`test/newtab-search.test.js`). |
-| `newtab-matrix.js` | Optional Matrix-rain canvas behind the new tab page (`matrixRain`, off by default; dark/black backgrounds only, never with reduced motion). |
-| `newtab-bookmarks.js` | The new tab page's optional copy of the browser's bookmarks bar (off by default, `newtabSections.bookmarksBar`) — its own file, data (`NEWTAB_BOOKMARKS` → `newtab-core.js`'s read-only `getBookmarksBar`) and listeners; shares only the `--bm-h` CSS variable with the page. |
-| `lazy.html` / `lazy.js` | Lazy-restore placeholder page — by default loads the real URL only on an explicit click (not just on becoming visible), so autoplay media (YouTube, etc.) never starts just from switching tabs; `lazyRequireClick: false` in storage restores the old load-on-visible behavior |
-| `browser-polyfill.min.js` | Vendored Mozilla WebExtension polyfill so `browser.*` is promise-based on Chrome too |
-| `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
-| `test/` | The test suite for `sync-core.js`, `groups-core.js`, `archive-core.js`, `order-core.js`, and `newtab-core.js` — see "Testing" below |
+| `manifest.json` | MV3 manifest, permissions, **version**, dual background |
+| `sync-core.js` | All open-tab sync/reconcile logic, `createSyncEngine(env)` — never calls `browser.*` directly, everything through `env` (testable in Node). → `docs/sync-core.md` |
+| `groups-core.js` + `link-leash-content.js` | Tab-group leashing (Chrome/Brave only). → `docs/groups-core.md` |
+| `archive-core.js` | Auto-archive idle tabs (on by default). → `docs/archive-core.md` |
+| `order-core.js` | Tab & group order (off by default). → `docs/order-core.md` |
+| `newtab-core.js` | Data side of the new tab page, served via background messages. → `docs/newtab-core.md` |
+| `newtab.html` + `newtab*.js` | The new tab page: `newtab.js` (list, search, keyboard), `newtab-settings.js` (all its settings: key, defaults, labels), `newtab-dom.js` (shared DOM helpers), `newtab-clock.js`, `newtab-search.js` (web-search helpers), `newtab-bookmarks.js` (optional bookmarks bar), `newtab-matrix.js` (optional rain), `newtab-options.js` (its card on the options page). → `docs/newtab-core.md` |
+| `background.js` | Thin wiring: real `browser.*` listeners → engine `handle*()` functions; toolbar icon, alarms |
+| `popup.html/.js`, `options.html/.js`, `theme.css/.js` | Compact popup, full settings page, shared light/dark/black theme. → `docs/ui.md` |
+| `lazy.html/.js` | Lazy-restore placeholder page (loads the real URL on click) |
+| `browser-polyfill.min.js`, `icons/` | Vendored polyfill; icons (`*-off` = paused) |
+| `scripts/build.js` | **The list of files that ship** + per-store manifests. → `docs/release.md` |
+| `scripts/screenshots.js` | `npm run screenshots` |
+| `test/*.test.js` | Node suite; `test/sim-env.js` simulates several devices sharing one bookmark tree. → `docs/testing.md` |
+| `test/browser/` | Browser tests + `helpers.js` (build, launch, fake web). → `docs/testing.md` |
 
-There is **no build step** — the repository *is* the unpacked extension (the
-polyfill is vendored, not built; `package.json` exists only for `npm test`, no
-runtime dependencies). The only CI is a **release workflow**
-(`.github/workflows/release.yml`), which **fires automatically on every push
-to `main`** — i.e. every PR merge — and checks whether `manifest.json`'s
-`version` is already released; if it's new, it syntax-checks the JS, **runs
-the test suite**, builds **two** store-ready zips from the dual dev manifest —
-a Chrome one (`service_worker` only) and a Firefox one (`scripts` only) — runs
-`web-ext lint` on the Firefox build, and publishes both as a GitHub Release.
-A merge that doesn't bump the version is a no-op for this workflow (skipped,
-not failed). It can also be triggered by pushing a matching `v*` tag, or
-manually from the Actions tab — both fail loudly instead of skipping if that
-version was already released. Store-listing docs live in `PRIVACY.md`,
-`PERMISSIONS.md`, and `STORE_LISTING.md` (the store's summary/description
-copy); listing screenshots live in `store-assets/`.
+## Docs map
 
-**When you add a new top-level file** — a new module loaded via
-`importScripts`/`background.scripts` (like `archive-core.js`), or a new file
-an HTML page loads via its own `<script src>`/`<link href>` (like
-`options.js`/`theme.css`) — **add it to `release.yml`'s `COMMON` file list
-too** (and the syntax-check step, if it's JS) — `test/release-files.test.js`
-fails if you don't (it checks the list against every file the manifest
-and the packaged HTML pages load). This isn't automatic: the
-dev tree (what `git clone` + "Load unpacked" gives you) and the store zips
-are built from two different file lists that only the workflow keeps in
-sync, and nothing here checks that they match. Missing this once already
-shipped a real regression: `archive-core.js` missing broke the WHOLE
-background service worker (a failed `importScripts` call throws, so
-**no** listener ever registers — sync and groups included, not just
-archive), `options.html` missing made "Open full settings" fail with
-`ERR_FILE_NOT_FOUND`, and `theme.css` missing left every CSS custom
-property undefined, rendering buttons with no background at all ("the
-theme looks all white, I can't see the buttons"). All invisible from
-`test/` (Node tests) and from testing via "Load unpacked" on the raw repo
-folder (always complete) — only a build from the actual `release.yml`
-file list would have caught it. Verify by actually building the zip
-locally (mirror the workflow's `COMMON` + packaging steps) and loading
-*that* folder via "Load unpacked" when you're unsure, not just the repo
-root.
+| Read this | when you touch |
+|---|---|
+| `docs/sync-core.md` | sync/reconcile logic: bookmark tree shape, the "own bookmark only" rule, contagious close/reopen, debounce, TTL, safety rules |
+| `docs/groups-core.md`, `docs/archive-core.md`, `docs/order-core.md`, `docs/newtab-core.md` | that module |
+| `docs/testing.md` | tests: the multi-device simulator, its fakes and gotchas, browser tests |
+| `docs/release.md` | the file list, the manifest, releasing |
+| `docs/ui.md` | popup, options page, theme |
+| `docs/known-limitations.md` | **before "fixing" anything that looks like a design flaw** — most are deliberate, agreed trade-offs |
 
-## Testing
+**Documentation convention:** each invariant is documented ONCE, in full,
+in the code comment nearest the function that implements it; docs give a
+short summary + pointer. Enrich the code comment rather than duplicating
+an essay into a doc.
 
-`sync-core.js` holds all the sync logic as a factory, `createSyncEngine(env)`,
-that never touches `browser.*` directly — every bookmark/tab/window/storage/
-runtime call goes through the `env` object passed in. In the real extension
-`background.js` calls `createSyncEngine(browser)`; the test suite instead
-builds a **simulated multi-device environment** (`test/sim-env.js`) and calls
-`createSyncEngine(fakeEnv)` for each simulated device — so the exact same
-reconcile code runs in both places, not a re-implementation of it.
+## Rules that are easy to break
 
-`sync-core.js` also exports the **event-wiring decisions** as
-`engine.handle*()` functions (`handleTabRemoved`, `handleTabUpdated`,
-`handleBookmarkEvent`, `handleAlarm`, `handleStartup`, `handleSyncNow`,
-`handleSwitchProfileAndSave`) — e.g. "an `isWindowClosing` removal is
-ignored", "only `status === 'complete'` counts as a finished navigation".
-`background.js`'s real listeners are one-line calls into these; `sim-env.js`'s
-`SimDevice` methods (`openTab`, `closeTab`, `navigateTab`, `tick`, `startup`,
-`switchProfile`, `updateTabs`, …) call the **same** functions when simulating
-a browser event. This means a test exercises the real wiring, not just the
-reconcile internals — e.g. the simulator's `tabs.remove()` fires `onRemoved`
-even for a removal `reconcileMirror` itself triggered, exactly like a real
-browser, which is what makes a mirror-driven close correctly flip the closing
-device's own bookmark entry too.
+- **Sync logic goes in `sync-core.js`** (env-parameterized), not
+  `background.js`; same pattern for every `*-core.js`. Tests drive the
+  same `handle*()` functions the real listeners call.
+- **Each device only ever writes its own status bookmark** (three
+  sanctioned exceptions, see `docs/sync-core.md`).
+- **Closes are only inferred from a live tab event** (`tabs.onRemoved`/
+  navigation complete), never from the alarm, startup or a bookmark
+  reaction.
+- **The new tab page is self-contained**: nothing outside the `newtab*`
+  files (and its own listener in `background.js`, its two script tags in
+  `options.html`) knows it exists — `test/newtab-isolation.test.js`
+  enforces it. Its data goes through background messages: the background
+  engine is the only bookmark writer.
+- **Defaults that are deliberate**: order-core off, new-tab bookmarks bar
+  and Matrix rain off, auto-archive on, `closeDuplicateTabs` off. Don't
+  flip one without the user asking.
+- Pages build DOM with `textContent`, never `innerHTML` (titles are
+  page-controlled). Favicons only from the browser's own loaded icons —
+  never a third-party favicon service (PRIVACY.md promises nothing leaves
+  the device).
 
-`test/sim-env.js`'s `SimWorld` holds one **shared, in-memory bookmark tree**
-that every simulated device's `env.bookmarks` reads/writes — i.e. bookmark
-sync is simulated as instantaneous. That's the right simplification for
-testing whether the reconcile logic itself converges to the correct
-open/closed state (which is most of what there is to test); it does NOT model
-sync propagation delay, so it can't catch a timing-dependent race on its own
-— those stay a documented, accepted architectural trade-off (see Known
-limitations). `world.disconnectDevice(device)` simulates a device going
-permanently offline (uninstalled, or just never coming back) for TTL tests,
-since otherwise every registered device reacts to every change. TTL tests
-also monkey-patch `Date.now()` (see `withFakeClock` in
-`test/ttl-cleanup.test.js`) rather than waiting in real time — always restore
-it in a `finally`.
+## New feature checklist
 
-`test/sim-env.js` also fakes `env.tabGroups` per device (`SimTabGroupsApi`:
-`query`/`get`/`update`) plus `env.tabs.group()`/`.ungroup()`/`.update()`, for
-`groups-core.js` tests. Tab groups are per-device local state (a `Map`, not
-routed through `SimWorld`'s shared tree) — exactly like the real
-`chrome.tabGroups` API, only the group's RULES sync via the shared bookmark
-tree. Group ids from these fakes are deliberately kept **numeric**
-(`nextGroupId()`, distinct from every other id in the simulator, which are
-opaque strings) because `isInTabGroup`/`groups-core.js`'s `isGrouped` both
-type-check `typeof tab.groupId === "number"` to match the real API — use
-`SimDevice.ensureOpenGroup(title)` / `openGroupedTab(url, title, groupTitle)`
-in a test, never a raw `nextId()`-derived id, or the "grouped" check will
-silently read as false. `groups-core.js` tests build their own engine
-directly — `createGroupsEngine(device.env, device.engine)` — rather than
-going through a `SimDevice` helper, since it's a separate module from
-`sync-core.js`'s own engine; `test/groups-test-helpers.js`'s
-`groupsEngineFor(device)` is the shared one-liner for that, used by every
-`groups-*.test.js` file instead of each redeclaring it.
-
-`archive-core.js` tests follow the same "separate module, own helper"
-pattern as `groups-core.js` — `test/archive-test-helpers.js`'s
-`archiveEngineFor(device)` builds `createArchiveEngine(device.env,
-device.engine)` and wires it to the SAME `tabsApi`/`windowsApi` event
-hooks the real `background.js` registers (`onCreated`, `onActivated`,
-`onRemoved` — chained onto SimDevice's own existing `onRemoved` handler
-rather than replacing it, `onFocusChanged`), each queued onto
-`world.pending` exactly like `sim-env.js`'s own `onRemoved` wiring, so
-`world.flush()` waits for archive-core.js's reaction too. Calling
-`archiveEngine.reconcileArchive()` directly (there's no `SimDevice`
-helper for it — same reasoning as `groups-core.js`'s own engine) does
-**not** auto-flush afterward the way every `SimDevice` action method
-does; a test must `await device.world.flush()` itself if the reconcile
-closed a tab whose downstream reaction (e.g. propagating that close to
-another device) matters to the assertion —
-`test/archive-core.test.js`'s own `runReconcile()` helper wraps both
-calls together for this reason. `test/archive-test-helpers.js`'s
-`activateTab(device, url)` simulates the user switching to an
-already-open tab (deactivates every other tab in the same window, fires
-`tabs.onActivated` — see `SimTabsApi._setActiveTab`).
-`SimTabsApi.query(queryInfo)` filters for real (by `windowId`/`active`/
-`groupId`/`pinned`) — an earlier version silently ignored `queryInfo`
-entirely and always returned every tab, undetected until archive-core.js
-needed a real `windowId`+`active` lookup to mean something. A tab's
-`windowId` also now defaults to `windowsApi.defaultWindowId` (not a
-hardcoded `"1"`) for the same reason.
-
-`order-core.js` tests follow the same "separate module, own helper"
-pattern again — `test/order-test-helpers.js`'s `orderEngineFor(device,
-archiveEngine)` builds `createOrderEngine(device.env, device.engine,
-archiveEngine)` (an already-built `archiveEngineFor(device)` instance
-must be passed in — order-core.js reuses its activity map, see its own
-CONTRACT comment) and wires `tabs.onMoved`/`tabGroups.onMoved`.
-Deliberately **not** queued onto `world.pending` like every other hook
-here — this one backs order-core.js's own synchronous "was this move
-mine" guard (`reorderInProgress`), which only means anything if it runs
-at the moment the move happens, not on a later `flush()`; `SimTabsApi
-.move()`/`SimTabGroupsApi.move()` `await` this hook directly before
-their own promise resolves, for the same reason. This is also where
-`SimTabsApi` gained REAL strip-order tracking (`tab.index`, a per-window
-`orderByWindow` array) — previously every tab's `.index` was simply
-`undefined`, which had already been silently making
-`groups-core.js`'s own `matchingTabs.sort((a,b) => a.index - b.index)`
-a no-op for every existing test scenario before order-core.js needed
-real ordering to test anything meaningful.
-
-Run the suite:
-```bash
-npm test                    # same as: node --test test/*.test.js
-```
-(`node --test test/` — a bare directory path, no glob — misbehaves on at
-least some Node versions; always pass the explicit glob.)
-
-`newtab-core.js` tests (`test/newtab-core.test.js`) build
-`createNewtabEngine(device.env, device.engine)` inline — no event wiring
-to set up, it only ever reads on request. `test/newtab-isolation.test.js`
-statically checks the module stays self-contained (see its section
-below).
-
-When you change reconcile behavior in `sync-core.js`, `groups-core.js`,
-`archive-core.js`, `order-core.js`, or `newtab-core.js`, add/update a test in `test/`
-alongside it — this is the actual regression net for the safety rules
-documented below (the phantom-duplicate-entry guard, the "closes are only
-detected from a live tab event" rule, and the mirror-open debounce all
-have regression tests; a change that violates any of them should make one
-fail).
-
-`popup.js`/`options.js`/`theme.js` (and `lazy.js`, `newtab.js`,
-`link-leash-content.js`) are DOM/browser-API-only and stay outside the Node
-suite's scope, same as before — verify those live in a real (or headless,
-via Playwright) browser. Playwright + Chromium are available in the cloud
-environment: `chromium.launchPersistentContext(dir, { channel: "chromium",
-headless: true, args: ["--disable-extensions-except=<repo>",
-"--load-extension=<repo>"] })` loads the real unpacked extension
-(`channel: "chromium"` matters — the default headless shell can't load
-extensions), and `context.serviceWorkers()[0].evaluate(...)` runs
-`chrome.*` calls in the background script to set up tabs/groups/storage.
-
-## How to work on it
-
-1. **Switch to `claude/svil`** (see above) before editing.
-2. Edit the plain JS/HTML files directly. Sync/reconcile logic changes go in
-   `sync-core.js`, not `background.js` — see "Testing" above.
-3. **Syntax-check** any JS you touched:
-   ```bash
-   npm run check               # node --check on every top-level .js
-   ```
-4. **Run the test suite** (`npm test`) — see "Testing" above. Add/update
-   tests for any reconcile-logic change.
-5. **Manually verify** in the browser when behavior changes: load the folder via
-   `chrome://extensions` → *Load unpacked*, then hit **Reload** on the extension
-   after each change. The test suite covers the reconcile logic; it can't
-   exercise the real `browser.*` APIs, the popup UI, or the manifest.
-6. If behavior or the public surface changed, **bump `version` in
-   `manifest.json`** (semver) and update `README.md`.
-7. Commit with a clear message, then **push to `claude/svil`**.
-
-## Architecture notes & conventions (v4 — per-URL folders)
-
-Understanding these will keep changes safe. This is a from-scratch redesign of
-the bookmark schema (v3.x used one flat bookmark per `(device, url)` pair
-directly under the profile folder, with cross-device timestamp-precedence
-voting deciding open-vs-closed; that's gone — no migration, see Known
-limitations).
-
-> **Documentation convention:** each invariant below is documented ONCE, in
-> full, in the code comment nearest the function that implements it. Here you
-> get a 1-2 line summary plus a pointer — read the pointed-to comment for the
-> why/trade-offs/edge-cases before changing that code. Don't re-expand the
-> summary back into a duplicate essay here; enrich the code comment instead.
-
-- **Bookmark tree shape** (created under "Other Bookmarks"):
-  ```
-  SyncMyTabs/<profile>/<one folder per open URL>/{_url, <device1>, <device2>, …}
-  ```
-  Every open URL gets its own folder; matching is always by the folder's
-  `_url` child (`URL_MARKER_TITLE`), never by folder title. Each device that
-  has weighed in gets **one status bookmark of its own** (`s`/`t`/`h` packed
-  into its `url`) and **only ever writes its own** — never another device's,
-  except the three sanctioned exceptions. Full encoding, the "own bookmark
-  only" invariant, and the three exceptions: see the comment above
-  `STATUS_URL_BASE` in `sync-core.js`.
-- **Closing is CONTAGIOUS, not per-device-final** — one device's status
-  reading `closed` makes `reconcileMirror` close it on every other device
-  too, cascading until the folder is deleted. This is a REMOTE-DRIVEN close
-  (an explicit bookmark signal), unlike `closeMyGoneTabs` below — see the
-  comment above `reconcileMirror` in `sync-core.js`.
-- **Reopening propagates too — `resetClosedPeers`** — a fresh/genuine local
-  open deletes every OTHER device's stale `closed` entry in that folder, so
-  it naturally re-mirrors back in. Known, accepted trade-off: can't tell a
-  peer's stale closed entry from its current independent close. See the
-  comment above `resetClosedPeers` in `sync-core.js` and
-  `test/reopen-propagation.test.js`.
-- **A brand-new mirror-open is debounced — `MIRROR_OPEN_DEBOUNCE_MS`** (20s)
-  — guards against resurrecting a URL that was actually already closed and
-  deleted elsewhere but hasn't finished syncing that away yet. A fixed
-  heuristic delay, not a real happens-before guarantee (see Known
-  limitations). Full mechanism: see the comment above the
-  `MIRROR_OPEN_DEBOUNCE_MS` constant in `sync-core.js`.
-- **`t` vs `h` — do not conflate them.** `t` moves only on a genuine local
-  open/close transition; `h` is a liveness heartbeat used purely for
-  per-device TTL staleness. Conflating them reintroduces the race fixed in
-  2.6.2. See the comment above `STATUS_URL_BASE` in `sync-core.js`.
-- **SAFETY RULE: closes are only ever detected from a live, specific-tab
-  event.** `closeMyGoneTabs` is called only from `tabs.onRemoved`/
-  `tabs.onUpdated`(navigation complete) — never from the alarm, `onStartup`,
-  or a bookmark-change reaction, none of which are tied to one tab's event or
-  guaranteed to see a complete `tabs.query()` snapshot. Does NOT apply to
-  `reconcileMirror`'s contagious close (an explicit remote signal, not an
-  inference) — safe from every trigger. Full rule: see the comment above
-  `closeMyGoneTabs` in `sync-core.js`.
-- **`snapshotOwnTabs` skips tabs still loading** (`status !== "complete"`) to
-  avoid registering a transient mid-navigation URL as a permanent phantom
-  entry. See the comment above `snapshotOwnTabs` in `sync-core.js`.
-- **`readProfileEntries`** is the single place that reads a whole profile
-  folder's tree, and self-heals duplicate URL-folders from sync-tool races.
-  Every reconcile function goes through it — don't re-implement folder
-  traversal elsewhere. See its own comment in `sync-core.js`.
-- **The extension checks the SyncMyTabs folder on every change to it, never
-  on a timer** — bookmark events trigger a reconcile immediately; the alarm
-  is only a backstop plus the TTL sweep. See the comment above `runReconcile`
-  in `sync-core.js`.
-- **The reconcile pipeline** (`runReconcile`, always via `scheduleReconcile`
-  — never call `runReconcile` directly): `closeMyGoneTabs` (if `checkClosed`)
-  → `reconcileMyOpenEntries` → `reconcileMirror` → `reconcileMyOpenEntries`
-  again. Full trigger list and ordering rationale: see the comment above
-  `runReconcile` in `sync-core.js`.
-- **A close always propagates, but folder deletion still needs everyone
-  actually closed first** — safe for any device to delete once nobody's
-  writing to those bookmarks anymore. See the comment above `reconcileMirror`
-  in `sync-core.js`.
-- **TTL cleanup** (`ttlEnabled`/`ttlDays` in storage, default on/**14 days**)
-  is evaluated **per device entry, not per folder** — a folder-level check
-  would let one abandoned device's stale entry hide behind another's fresh
-  heartbeat. See `cleanupProfileFolder` in `sync-core.js`.
-- **`closeMyDuplicateTabs`** (`closeDuplicateTabs` in storage, default
-  **OFF**) is a periodic backstop closing this device's own extra local tabs
-  sharing a URL, keeping the leftmost. Wired into the alarm and
-  `handleSyncNow`, deliberately not `handleStartup`. See its own comment in
-  `sync-core.js`.
-- **Parent folder id** is resolved at runtime (`getRootParentId`), cached,
-  with a fallback to Chrome/Brave's `"2"`. Never hardcode `"2"` — go through
-  the resolver so Firefox stays reachable.
-- **Unopened placeholders still count as "open".** `snapshotOwnTabs` resolves
-  a lazy placeholder to its real URL (`realUrlOfTab`) and treats it like any
-  other open tab. See the comment above `realUrlOfTab` in `sync-core.js`.
-- **Master on/off switch.** `syncEnabled` (storage, default true) is checked
-  at the top of `runReconcile`/`cleanupProfileFolder`; the toolbar icon
-  reacts via `chrome.storage.onChanged` so the popup toggle is the single
-  source of truth. See the comment above `runReconcile` in `sync-core.js` and
-  the `storage.onChanged` listener in `background.js`.
-- **Pinned tabs and tabs inside a browser tab group are both excluded from
-  sync entirely.** `snapshotOwnTabs` splits its result into `urls`
-  (pinned/grouped excluded — feeds the folder-entry logic) and `allUrls`
-  (pinned/grouped included — feeds dedup checks, so a remote open never
-  duplicates a pinned/grouped tab). See the comment above `snapshotOwnTabs`
-  in `sync-core.js` and `test/grouped-tabs-excluded.test.js`. Don't
-  reintroduce pin or tab-group syncing without discussion.
-- **Self-healing.** `mergeFolderInto` merges same-named duplicate root/
-  profile folders (sync-tool races); `readProfileEntries` does the
-  URL-folder-level equivalent, keyed by `_url` instead of title. See their
-  own comments in `sync-core.js`.
-- **Legacy root names.** The extension was formerly `OpenTabSync` / `Live
-  Tabs Sync` and migrates such a root folder in place (`LEGACY_ROOT_NAMES`).
-  Add to that list rather than breaking migration if the name ever changes
-  again. This is unrelated to (and unaffected by) the v3→v4 schema change.
-
-## Tab-group leashing module (`groups-core.js`)
-
-A separate, independent module ported from the standalone TabGroupsLeash
-extension: link "leashing" for a browser tab group (a clicked link either
-navigates in place / opens alongside in the SAME group if it matches that
-tab's configured pattern, or always opens in a fresh UNGROUPED tab
-otherwise) plus a reconcile pass (reopen a group's missing "essential"
-tabs, close duplicates, optionally detach undeclared ones from the group).
-Chrome/Brave only — Firefox has no `tabGroups` API, so every function here
-feature-detects `env.tabGroups` and no-ops without it (same cross-browser
-rule as the rest of the codebase — see Cross-browser support above).
-
-**Full invariants (bookmark tree shape, the config-vs-tab-state sync
-model, link-leashing mechanics, reconcile cadence, …) are in
-[`docs/groups-core.md`](docs/groups-core.md) — read it before touching
-`groups-core.js` or `link-leash-content.js`.** Kept out of this file to
-keep every session's base context small; not needed unless you're
-actually working on this module.
-
-## Auto-archive idle tabs (`archive-core.js`)
-
-A third independent module: tracks the last time each of this device's own
-tabs was actually looked at, and — on by default, despite being
-destructive — once a tab has gone unlooked-at for longer than a
-configurable threshold (default 4 days), saves it as a plain bookmark and
-closes it. Pinned tabs and tabs inside a browser tab group are never
-candidates, same exclusion `sync-core.js` applies everywhere else.
-
-**Full invariants (the day/hour/minute threshold fields, bookmark tree
-shape, activity-tracking persistence, the never-close-without-saving
-rule, …) are in [`docs/archive-core.md`](docs/archive-core.md) — read it
-before touching `archive-core.js`.** Kept out of this file for the same
-reason as the groups-core.js doc above.
-
-## Tab & group order module (`order-core.js`)
-
-A fourth independent module, **off by default**: lays out each window with
-browser tab groups first (Chrome/Brave, alphabetical by title) then every
-other non-pinned tab most-recently-active first — reusing `archive-core.js`'s
-own per-tab activity tracking rather than duplicating it. Only reorders once
-no tab anywhere has been activated for a while (idle-gated, a proxy for
-"away, or reading something long"), and pauses itself for a while after
-detecting a real manual move — neither the browser nor
-`tabs.onMoved`/`tabGroups.onMoved` tells an extension "was this move
-programmatic", so this module guards its own moves with an in-memory flag
-for the duration of its own reconcile pass.
-
-**Full invariants (the idle-before-reordering trigger, the manual-move
-pause and its own-move guard, the `groupsPinToStart` hand-off, …) are in
-[`docs/order-core.md`](docs/order-core.md) — read it before touching
-`order-core.js`.** Kept out of this file for the same reason as the
-groups-core.js/archive-core.js docs above.
-
-## Custom new tab page (`newtab-core.js` + `newtab.html`)
-
-Replaces the browser's new tab page (`chrome_url_overrides.newtab`, on
-both Chrome/Brave and Firefox): a clock and date, a search box, this
-device's open tabs by window in the browser's own tab-strip order (tab
-groups where they sit, folded when folded in the browser), and the tabs
-open on the user's other devices on the same profile, under a search
-bar that stays pinned while the list scrolls; on a wide window tabs
-flow in two columns, left then right. Which of those three tab sections
-show is a setting (a "New tab page" card on the options page), as is an
-optional copy of the browser's bookmarks bar along the top
-(`newtab-bookmarks.js`, off by default). The date
-and time follow the browser's UI language (bold, seconds optional).
-Every tab is numbered: typing a number narrows to it, Enter opens it, no
-mouse needed. The same box searches the web: Shift+Enter (or Enter with
-no tab match) uses the browser's default engine, a one-letter prefix or
-Tab picks another service (`newtab-search.js`). By default the page
-re-opens itself under its own address so the cursor lands in its search
-box, not the address bar (`focusSearch`). Optional Matrix rain behind
-dark themes (`newtab-matrix.js`). A click switches to the tab — focusing
-its window — then closes the new tab page behind it; a tab only open on
-another device opens in place.
-
-**Unlike every other module, this one has no on/off switch**:
-`chrome_url_overrides` is declarative, the browser either applies it for
-the whole installation or not at all, and an extension page can't hand
-control back to the native new tab page (navigating to `chrome://newtab`
-from one is blocked). See Known limitations.
-
-**Self-contained by design**: no other module, nor the popup/options
-UI, references it; `background.js` wires it through an `onMessage`
-listener of its own, separate from the one every other module shares,
-and `options.html` only loads `newtab-settings.js` + `newtab-options.js`,
-which builds the settings card itself. `test/newtab-isolation.test.js` enforces this —
-keep new-tab-page knowledge inside the `newtab*` files.
-
-**Full invariants (why the data side goes through background messages,
-the paused-sync rule for the remote half, favicon privacy, how to remove
-the feature cleanly, …) are in
-[`docs/newtab-core.md`](docs/newtab-core.md) — read it before touching
-`newtab-core.js`/`newtab.js`.**
-
-## Popup vs. options page
-
-Split in the same change auto-archive was added, once the popup had grown
-enough settings that keeping everything in one place stopped being the
-better trade-off. `popup.html`/`popup.js` is now deliberately minimal:
-status, one on/off switch per feature module (open-tab sync — also the
-master `syncEnabled` switch — tab groups, auto-archive), a "Sync now"
-quick action, and a button that opens `options.html` as a plain tab (same
-`browser.tabs.create({url: browser.runtime.getURL(...)})` mechanism the
-first-run prompt already used). `options.html`/`options.js` holds
-everything else: device name, profiles, the shared check interval (right
-after profiles), and every module's detail settings grouped into three
-cards in that same order (Open tabs sync / Tab groups / Auto-archive),
-plus the theme selector. `browser.runtime.onInstalled` now opens
-`options.html` (not `popup.html`) for first-run setup, since that's where
-device name + profile setup live now.
-
-`theme.css`/`theme.js` are shared between the two pages (and the custom
-new tab page, `newtab.html`): `theme.css`
-defines CSS custom-property tokens on bare `:root` (light, the default),
-redefines them under `@media (prefers-color-scheme: dark)` guarded by
-`:root:not([data-theme="light"])`, then redefines them again under
-`:root[data-theme="dark"]` so an explicit choice always wins over the OS
-setting in both directions. A fourth choice, `"black"`, shares the dark
-block's selector and then overrides just the surfaces (pure black
-background) in a block of its own at the end. `theme.js` reads
-`themePreference` from `storage.local` (`"system"` default / `"light"` /
-`"dark"` / `"black"`), stamps it as
-a `data-theme` attribute on `<html>`, and listens for `storage.onChanged`
-so a change made in one page is reflected live in the other if both happen
-to be open at once. Applied asynchronously (a brief flash of the OS-default
-theme before an explicit override applies is accepted — not worth a
-synchronous-localStorage-cache workaround for a page this short-lived).
-
-## Known limitations (don't "fix" without discussion)
-
-- Chrome/Brave and Firefox are both supported targets (see **Cross-browser
-  support** above).
-- **Closing (and reopening) is contagious, not per-device-final** (see the
-  Architecture section above) — there is no shared clock and no cross-device
-  "who's newer" comparison; a close anywhere closes everywhere, and a reopen
-  anywhere resets any peer that's currently closed so it re-mirrors back in
-  too. This is architectural and deliberate, confirmed explicitly with the
-  user after an earlier "sticky" iteration (a device's own close was final,
-  never overridden by another's state) was found to not match what was
-  actually wanted. Known, accepted trade-off: `resetClosedPeers` can't tell
-  a peer's STALE closed entry (left over from an earlier close that's since
-  been undone) apart from that same peer's own CURRENT, independent close —
-  so a reopen anywhere forces a reopen on every currently-closed peer,
-  regardless of why each one is closed. Don't "fix" this into a
-  per-device-final model without discussion.
-- **Mirror-open debounce shrinks, but doesn't eliminate, the "orphan
-  resurrection" race** (see the Architecture section above,
-  `MIRROR_OPEN_DEBOUNCE_MS`). It's a fixed heuristic delay, not a real
-  happens-before guarantee against an out-of-order/partial bookmark sync
-  batch — a device that's offline, asleep, or simply behind by longer
-  than the debounce window when it finally catches up can still open a
-  tab for a URL that, in reality, was fully closed and deleted elsewhere
-  moments before. This is the same class of trade-off as the two bullets
-  above (no shared clock, no central authority) — increasing the window
-  narrows the risk further at the cost of extra latency on every
-  legitimate remote open; don't "fix" this into a stronger guarantee (a
-  real ack/confirmation protocol between devices) without discussion —
-  there is no channel for that beyond the bookmarks themselves.
-- No migration from pre-4.0 versions. An upgrading user's old
-  `SyncMyTabs/<profile>/…` (v3, flat per-(device,url) bookmarks) or
-  `SyncMyTabs/<device>/…` (pre-3.0) tree is left in place, unused. Don't add
-  migration code for it without the user asking — this was a deliberate
-  decision.
-- The tab-group leashing module (`groups-core.js`) is Chrome/Brave only
-  (Firefox has no `tabGroups` API) and doesn't support untitled groups (no
-  stable cross-device key) — see its own section above. Group RULES are
-  last-write-wins on concurrent cross-device edits (config data, not tab
-  state — see that section for why this is a different, and accepted,
-  trade-off from the tab-close model). A tab dragged into a group
-  after its page already loaded doesn't get leashing until reloaded, by
-  design (see that section's content-script note) — don't "fix" this by
-  reverting to intercepting every click on every page.
-- **The browser's own tab-group sync (where the browser account itself,
-  not this extension, syncs tab-group membership across devices) should be
-  turned off for any profile this module manages.** Both mechanisms
-  reconciling group membership independently — this module's rule-based
-  reconcile pass and the browser's own — can fight each other. This is
-  surfaced as a warning in `options.html`'s Tab groups card and in
-  `README.md`, not something the extension can detect or disable on the
-  user's behalf (it's a browser-level setting, outside any WebExtension
-  API this codebase has access to).
-- **Archived tabs are a one-way export, not a restore feature.**
-  `archive-core.js` only ever writes to the `_archive` bookmark folder; it
-  never reads it back. Restoring an archived tab is just opening its
-  bookmark like any other, through the browser's own bookmark manager —
-  there's no in-extension "browse/restore archived tabs" UI. Don't add one
-  without the user asking; it wasn't requested and duplicates what the
-  browser's bookmark manager already does.
-- **`order-core.js`'s own-move guard (`reorderInProgress`) is a
-  heuristic time window, not a real acknowledgment** — same class of
-  trade-off as `MIRROR_OPEN_DEBOUNCE_MS` above: neither `tabs.onMoved`
-  nor `tabGroups.onMoved` tells an extension whether a move was
-  programmatic, so there's no exact signal available. A move that
-  somehow lands outside the guarded window (a very slow/suspended
-  service worker mid-reconcile, say) could be misread as manual and
-  trigger an unnecessary pause — self-correcting on its own once the
-  pause expires, never a correctness problem, just an extra delay. Don't
-  "fix" this into a stronger guarantee without discussion; there's no
-  channel to do so beyond this heuristic.
-- **`order-core.js` is opt-in and off by default, unlike every other
-  module here.** Deliberate: reordering the tab strip is more visibly
-  disruptive than anything else in this codebase (closing/archiving a
-  tab happens to ONE tab a user hasn't touched in a while; this can
-  rearrange an entire window at once). Don't flip its default without
-  the user asking.
-- **The custom new tab page can't be switched off from inside the
-  extension.** `chrome_url_overrides.newtab` is all-or-nothing per
-  installation, and an extension page can't redirect back to the native
-  new tab page. The only ways back are disabling the extension — which
-  is also exactly what Chrome's own post-install prompt does if the user
-  picks "Change it back", taking tab sync down with it (surfaced as a
-  warning in README.md and STORE_LISTING.md). Don't
-  "fix" this with an in-page "disabled" mode that renders a blank page —
-  that's worse than either, and still not the native page.
-- **`theme.js`'s brief flash of the OS-default theme** (see Popup vs.
-  options page) is more noticeable on the new tab page, which opens far
-  more often than popup/options. Accepted for now, same reasoning; a
-  synchronous localStorage cache in `theme.js` is the fix if it ever
-  bothers the user.
+1. Code in the right module (env-parameterized `*-core.js` for logic);
+   a **test** next to it (`test/*.test.js` for logic,
+   `test/browser/*.browser.js` for pages/UI).
+2. A new top-level file → add it to `FILES` in `scripts/build.js`
+   (`npm test` fails until you do) and, for a page script, its `<script>`
+   tag.
+3. A new permission → its justification in `PERMISSIONS.md`; anything
+   that reads/sends new data → `PRIVACY.md` (+ its "Last updated").
+4. User-visible → `README.md`; store-worthy → `STORE_LISTING.md`.
+5. A new invariant → code comment + one line in the module's doc.
+6. Behavior changed → **bump `version`** in `manifest.json` (semver).
+7. `npm run check && npm test && npm run test:browser`; for UI,
+   `npm run screenshots` and look.
+8. Commit, push to `claude/svil`, PR into `main` (merging it releases).

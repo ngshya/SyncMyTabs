@@ -2,7 +2,7 @@
 
 > Split out of `CLAUDE.md` to keep the base file small — read this when
 > you're actually working on `order-core.js`. Same 1-invariant-1-place
-> documentation convention as `CLAUDE.md`'s Architecture section: summary
+> documentation convention as `docs/sync-core.md`: summary
 > + pointer here, full detail in the code.
 
 A fourth independent module, **off by default**: lays out each window with

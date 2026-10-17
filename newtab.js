@@ -1,7 +1,7 @@
 // ============================================================
 // SyncMyTabs - newtab.js
 //
-// DOM layer of the custom new tab page (newtab.html, wired via
+// Main DOM layer of the custom new tab page (newtab.html, wired via
 // manifest.json's chrome_url_overrides.newtab): a clock, a search box,
 // this device's open tabs by window in the browser's own tab-strip order
 // (tab groups where they sit, folded when they're folded in the
@@ -30,6 +30,11 @@
 // Shift+Enter — or plain Enter when no tab matches — runs the browser's
 // own default search; a one-letter prefix ("y lofi") or Tab after typing
 // picks another service (newtab-search.js) instead.
+//
+// Siblings (each loaded by newtab.html, each independent): the settings
+// (newtab-settings.js), shared DOM helpers (newtab-dom.js), the clock
+// (newtab-clock.js), web-search helpers (newtab-search.js), the bookmarks
+// bar (newtab-bookmarks.js) and the background rain (newtab-matrix.js).
 // ============================================================
 
 (function () {
@@ -46,8 +51,6 @@
     orange: "#fa903e",
   };
 
-  const timeEl = document.getElementById("time");
-  const dateEl = document.getElementById("date");
   const searchBarEl = document.getElementById("searchBar");
   const searchEl = document.getElementById("search");
   const chipEl = document.getElementById("searchChip");
@@ -81,75 +84,8 @@
   // in the browser afterwards wins again (see isFolded).
   const foldOverrides = new Map();
 
-  // ---- clock ----
-
-  // The browser's own display language, not whatever the page happens to
-  // default to: i18n.getUILanguage() is exactly that on both Chrome and
-  // Firefox. Falls back to the default locale if it's somehow not a tag
-  // Intl accepts.
-  function uiLocale() {
-    try {
-      const lang = browser.i18n.getUILanguage();
-      Intl.DateTimeFormat.supportedLocalesOf([lang]); // throws on a malformed tag
-      return lang;
-    } catch (e) {
-      return undefined;
-    }
-  }
-  const locale = uiLocale();
-  // With or without seconds — the `clockSeconds` setting (on by default).
-  const timeFmt = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" });
-  const timeFmtSeconds = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit", second: "2-digit" });
-  const dateFmt = new Intl.DateTimeFormat(locale, {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-  if (locale) dateEl.lang = locale; // so ::first-letter capitalizes by that language's rules
-
-  function tick() {
-    const now = new Date();
-    timeEl.textContent = (sections.clockSeconds ? timeFmtSeconds : timeFmt).format(now);
-    dateEl.textContent = dateFmt.format(now);
-  }
-
-  // ---- small DOM helpers ----
-
-  function el(tag, className, text) {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
-  }
-
-  function hostOf(url) {
-    try {
-      const u = new URL(url);
-      return u.host || u.protocol.replace(":", "");
-    } catch (e) {
-      return "";
-    }
-  }
-
-  function letterIcon(entry) {
-    const label = hostOf(entry.url).replace(/^www\./, "") || entry.title || "?";
-    return el("span", "icon", label.charAt(0).toUpperCase());
-  }
-
-  // `favIconUrl` is only ever set by newtab-core.js to the tab's OWN
-  // icon (never a third-party favicon service — see safeFaviconUrl
-  // there). no-referrer so even that one request doesn't announce which
-  // extension page asked for it.
-  function iconFor(entry) {
-    if (!entry.favIconUrl) return letterIcon(entry);
-    const img = el("img", "icon");
-    img.alt = "";
-    img.referrerPolicy = "no-referrer";
-    img.src = entry.favIconUrl;
-    img.addEventListener("error", () => img.replaceWith(letterIcon(entry)));
-    return img;
-  }
+  const { el, hostOf, iconFor } = NewtabDom;
+  const locale = NewtabDom.uiLocale(); // for services whose results depend on it (Wikipedia)
 
   function entryTabs(entry) {
     return entry.kind === "tab" ? [entry.tab] : entry.group.tabs;
@@ -744,7 +680,6 @@
   // Settings changed on the options page: applied live.
   NewtabSettings.onChange((settings) => {
     sections = settings;
-    tick();
     render();
     loadRemote();
   });
@@ -758,8 +693,6 @@
 
   // ---- start ----
 
-  tick();
-  setInterval(tick, 1000);
   measureBar();
 
   (async () => {
@@ -767,7 +700,6 @@
       selfTab = await browser.tabs.getCurrent();
     } catch (e) {}
     await loadSections();
-    tick();
     if (sections.focusSearch && selfTab && !/[?&]focus\b/.test(location.search)) {
       // A browser opens its new tab page with the cursor in the address
       // bar, and a page can't take it from there. Reloading this same

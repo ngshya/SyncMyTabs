@@ -86,7 +86,7 @@ function folderTitleFor(title, url) {
 // avoids reintroducing that class of bug, and `h` (not `t`) is what
 // per-device TTL staleness checks (see cleanupProfileFolder) — neither
 // feeds any cross-device open/closed precedence decision (that's what
-// the v3->v4 redesign removed; see CLAUDE.md's Known limitations).
+// the v3->v4 redesign removed; see docs/known-limitations.md).
 //
 // A DEVICE ONLY EVER WRITES ITS OWN STATUS BOOKMARK — never another
 // device's — so there is never a concurrent write to the same bookmark.

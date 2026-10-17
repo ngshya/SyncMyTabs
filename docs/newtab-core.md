@@ -2,7 +2,7 @@
 
 > Split out of `CLAUDE.md` to keep the base file small — read this when
 > you're actually working on the new tab page. Same 1-invariant-1-place
-> documentation convention as `CLAUDE.md`'s Architecture section: summary
+> documentation convention as `docs/sync-core.md`: summary
 > + pointer here, full detail in the code.
 
 Replaces the browser's new tab page (`chrome_url_overrides.newtab` in
@@ -167,7 +167,7 @@ profile.
   titles and URLs are arbitrary page-controlled text.
 - **No on/off switch** — `chrome_url_overrides` is all-or-nothing per
   installation, and an extension page can't redirect back to the native
-  new tab page. See `CLAUDE.md`'s Known limitations.
+  new tab page. See `docs/known-limitations.md`.
 - **Live refresh, only while visible**: tab/tab-group events re-fetch the
   local half (150 ms debounce); bookmark events — every device heartbeat
   is one — re-fetch the remote half (1 s debounce). A hidden new tab page

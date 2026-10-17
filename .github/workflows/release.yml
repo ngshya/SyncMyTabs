@@ -97,64 +97,19 @@ jobs:
           fetch-depth: 0
 
       - name: Syntax-check JavaScript
-        run: |
-          node --check background.js
-          node --check sync-core.js
-          node --check groups-core.js
-          node --check archive-core.js
-          node --check order-core.js
-          node --check newtab-core.js
-          node --check popup.js
-          node --check options.js
-          node --check theme.js
-          node --check lazy.js
-          node --check link-leash-content.js
-          node --check newtab.js
-          node --check newtab-options.js
-          node --check newtab-bookmarks.js
-          node --check newtab-search.js
-          node --check newtab-settings.js
-          node --check newtab-matrix.js
+        run: npm run check
 
       - name: Run test suite
         run: node --test test/*.test.js
 
       - name: Build store-specific zips (Chrome + Firefox)
         run: |
-          # The repo manifest is "dual" (loads on both for dev). Here we
-          # emit a tailored manifest per store so neither shows warnings:
-          #  - Chrome: service worker only, no gecko settings.
-          #  - Firefox: background scripts only.
-          node -e '
-            const fs = require("fs");
-            const m = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
-            const chrome = JSON.parse(JSON.stringify(m));
-            delete chrome.background.scripts;
-            delete chrome.browser_specific_settings;
-            fs.writeFileSync("manifest.chrome.json", JSON.stringify(chrome, null, 2));
-            const firefox = JSON.parse(JSON.stringify(m));
-            delete firefox.background.service_worker;
-            fs.writeFileSync("manifest.firefox.json", JSON.stringify(firefox, null, 2));
-          '
-
-          # Keep this list in sync with every top-level source file the
-          # manifest references (background scripts + content scripts)
-          # AND every file an HTML page loads via its own <script>/<link>
-          # tags (options.html/popup.html -> theme.css/theme.js, in
-          # particular) — a file missing here either ships a manifest
-          # that points at something the zip doesn't contain (fails to
-          # load entirely — importScripts throws, no listeners ever
-          # register) or a page with a broken script/stylesheet link
-          # (e.g. options.html 404s -> "Open full settings" fails with
-          # ERR_FILE_NOT_FOUND; theme.css 404s -> every CSS custom
-          # property is undefined, so buttons render with no background
-          # at all). This exact omission (archive-core.js/options.html/
-          # options.js/theme.css/theme.js missing from a release build)
-          # shipped once already — see CLAUDE.md/git history.
-          COMMON="background.js sync-core.js groups-core.js archive-core.js order-core.js newtab-core.js link-leash-content.js browser-polyfill.min.js popup.html popup.js options.html options.js theme.css theme.js lazy.html lazy.js newtab.html newtab.js newtab-options.js newtab-bookmarks.js newtab-search.js newtab-settings.js newtab-matrix.js icons"
-          mkdir -p build/chrome build/firefox
-          cp -r $COMMON build/chrome/ && cp manifest.chrome.json build/chrome/manifest.json
-          cp -r $COMMON build/firefox/ && cp manifest.firefox.json build/firefox/manifest.json
+          # scripts/build.js is the one place that knows which files ship
+          # and how each store's manifest is tailored (Chrome: service
+          # worker only; Firefox: background scripts only) — see its own
+          # header. test/release-files.test.js checks its file list
+          # against everything the manifest and the pages load.
+          node scripts/build.js build
 
           CHROME_ZIP="syncmytabs-${VERSION}-chrome.zip"
           FIREFOX_ZIP="syncmytabs-${VERSION}-firefox.zip"

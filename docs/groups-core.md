@@ -2,8 +2,8 @@
 
 > Split out of `CLAUDE.md` to keep the base file small — read this when
 > you're actually working on `groups-core.js` or `link-leash-content.js`.
-> Same 1-invariant-1-place documentation convention as `CLAUDE.md`'s
-> Architecture section: summary + pointer here, full detail in the code.
+> Same 1-invariant-1-place documentation convention as `CLAUDE.md`:
+> summary + pointer here, full detail in the code.
 
 A separate, independent module ported from the standalone TabGroupsLeash
 extension: link "leashing" for a browser tab group (a clicked link either
@@ -48,7 +48,7 @@ section).
 - **The content script (`link-leash-content.js`) doesn't intercept every
   click on every page** — it only attaches listeners on a tab confirmed
   grouped at load time (trade-off: a tab grouped AFTER load won't get
-  leashing until reloaded — see `CLAUDE.md`'s Known limitations). **A
+  leashing until reloaded — see `docs/known-limitations.md`). **A
   plain click on an already-matching link is left COMPLETELY alone** — a
   correctness fix, not an optimization, for client-side-routed pages
   (SPAs). Full mechanism (the cached, synchronously-rechecked

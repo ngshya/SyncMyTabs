@@ -1,9 +1,12 @@
 {
   "name": "syncmytabs",
   "private": true,
-  "description": "Test-only package.json for SyncMyTabs \u2014 the extension itself has no build step and no runtime dependencies. See CLAUDE.md.",
+  "description": "Dev-only package.json for SyncMyTabs — the extension itself has no build step and no runtime dependencies. Scripts: test, check, build, test:browser, screenshots (see CLAUDE.md).",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "check": "for f in *.js; do node --check \"$f\" || exit 1; done"
+    "check": "for f in *.js; do node --check \"$f\" || exit 1; done",
+    "test:browser": "node --test --test-concurrency=1 test/browser/*.browser.js",
+    "build": "node scripts/build.js",
+    "screenshots": "node scripts/screenshots.js"
   }
 }

@@ -2,7 +2,7 @@
 
 > Split out of `CLAUDE.md` to keep the base file small — read this when
 > you're actually working on `archive-core.js`. Same 1-invariant-1-place
-> documentation convention as `CLAUDE.md`'s Architecture section: summary
+> documentation convention as `docs/sync-core.md`: summary
 > + pointer here, full detail in the code (this module's header comment
 > and per-function comments already carry most of it near-verbatim).
 
