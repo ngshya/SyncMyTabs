@@ -204,41 +204,6 @@ async function launch(options = {}) {
         { profileId, title, url, daysAgo }
       );
     },
-    // Writes a fake OTHER device's open tab into the synced tree, exactly
-    // the way sync-core.js writes one: <profile>/<url folder>/{_url, <device>}.
-    // Retried: sync's own reconcile may be reorganizing that same folder
-    // at that moment (a folder vanishing under us reads as "Can't find
-    // bookmark for id").
-    async addRemoteTab(device, title, url, ageMinutes = 0) {
-      for (let attempt = 1; ; attempt++) {
-        try {
-          return await b._addRemoteTab(device, title, url, ageMinutes);
-        } catch (e) {
-          if (attempt >= 5) throw e;
-          await sleep(300);
-        }
-      }
-    },
-    async _addRemoteTab(device, title, url, ageMinutes) {
-      const profileId = await b.profileFolderId();
-      await sw.evaluate(
-        async ({ profileId, device, title, url, ageMinutes }) => {
-          let folder = null;
-          for (const k of await chrome.bookmarks.getChildren(profileId)) {
-            if (k.url) continue;
-            const inner = await chrome.bookmarks.getChildren(k.id);
-            if (inner.some((x) => x.title === "_url" && x.url === url)) folder = k;
-          }
-          if (!folder) {
-            folder = await chrome.bookmarks.create({ parentId: profileId, title });
-            await chrome.bookmarks.create({ parentId: folder.id, title: "_url", url });
-          }
-          const t = Date.now() - ageMinutes * 60000;
-          await chrome.bookmarks.create({ parentId: folder.id, title: device, url: `https://syncmytabs.local/status?s=open&t=${t}&h=${t}` });
-        },
-        { profileId, device, title, url, ageMinutes }
-      );
-    },
     async bookmarksBarId() {
       return sw.evaluate(async () => {
         const [root] = await chrome.bookmarks.getTree();

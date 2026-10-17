@@ -5,18 +5,18 @@
 // (newtab.html/newtab.js, wired via manifest.json's
 // chrome_url_overrides.newtab). Assembles what the page shows — this
 // device's open tabs across every window, grouped by browser tab group
-// (Chrome/Brave), plus the tabs open on the user's OTHER devices on the
-// same active profile, read from the same synced bookmark tree
-// sync-core.js maintains. The page itself stays a thin DOM layer that
+// (Chrome/Brave), plus the tabs auto-archived over the last few days,
+// read from the same synced bookmark tree sync-core.js and
+// archive-core.js maintain. The page itself stays a thin DOM layer that
 // only renders this and calls tabs.update/windows.update on click.
 //
-// Routed through background.js messages (NEWTAB_LOCAL/NEWTAB_REMOTE/…)
-// rather than the page building its own engine: the remote half goes
-// through readProfileEntries, which self-heals duplicate folders with
-// real bookmark writes — a second sync-core.js engine instance living
-// in every open new tab page would mean concurrent, un-serialized
-// writers on the same tree. One engine, in the background, is the only
-// one that ever writes.
+// Routed through background.js messages (NEWTAB_LOCAL/NEWTAB_ARCHIVED/…)
+// rather than the page building its own engine: the archived half goes
+// through getOrCreateProfileFolder, which can create the profile folder
+// and self-heals duplicate ones with real bookmark writes — a second
+// sync-core.js engine instance living in every open new tab page would
+// mean concurrent, un-serialized writers on the same tree. One engine,
+// in the background, is the only one that ever writes.
 //
 // Parameterized the same way as the other modules: takes `env` PLUS the
 // already-created sync engine instance (`syncEngine`). Plain script, no
@@ -37,9 +37,9 @@
 //
 // CONTRACT with sync-core.js: this module reuses exactly
 // syncEngine.realUrlOfTab() / .isSyncEnabled() / .getActiveProfile() /
-// .getOrCreateProfileFolder() / .readProfileEntries() and nothing else.
+// .getOrCreateProfileFolder() and nothing else.
 //
-// See docs/newtab-core.md for the full invariants (why remote data is
+// See docs/newtab-core.md for the full invariants (why archived tabs are
 // skipped while sync is paused, favicon handling, …) — this file's own
 // comments carry the same detail near the relevant function; the doc is
 // the compact index into it.
@@ -174,65 +174,6 @@ function createNewtabEngine(env, syncEngine) {
     return { windows };
   }
 
-  // Tabs open on the user's OTHER devices, same active profile, read
-  // from the synced bookmark tree — one list per device (alphabetical),
-  // most recently opened first. Each entry carries `localTabId`/
-  // `localWindowId` when the same URL is also open on THIS device, so a
-  // click can switch to it rather than opening a duplicate — which, with
-  // sync running normally, is most of them: sync-core.js mirrors every
-  // remote open in here anyway, so this section is mainly a "what's open
-  // on which device" view, and the not-yet-mirrored cases (still inside
-  // MIRROR_OPEN_DEBOUNCE_MS, say) are the ones a click actually opens.
-  //
-  // Skipped entirely while the master sync switch is off: going through
-  // readProfileEntries/getOrCreateProfileFolder can write to the
-  // bookmark tree (self-healing a duplicate folder, creating a missing
-  // profile folder), and "while paused, nothing touches bookmarks in
-  // either direction" is the master switch's whole contract — see
-  // runReconcile's own comment in sync-core.js.
-  async function getRemoteData() {
-    if (!(await syncEngine.isSyncEnabled())) return { paused: true, profile: null, devices: [] };
-
-    const { deviceName } = await env.storage.local.get("deviceName");
-    const profile = await syncEngine.getActiveProfile();
-    const profileFolder = await syncEngine.getOrCreateProfileFolder(profile);
-    const entries = await syncEngine.readProfileEntries(profileFolder.id);
-
-    const localByUrl = new Map();
-    for (const t of await env.tabs.query({})) {
-      if (isNewTabPage(t)) continue;
-      const u = syncEngine.realUrlOfTab(t);
-      if (!localByUrl.has(u)) localByUrl.set(u, t);
-    }
-
-    const byDevice = new Map();
-    for (const [url, folder] of entries) {
-      for (const [name, list] of folder.devices) {
-        if (name === deviceName) continue;
-        const open = list.find((e) => e.state === "open");
-        if (!open) continue;
-        const local = localByUrl.get(url);
-        if (!byDevice.has(name)) byDevice.set(name, []);
-        byDevice.get(name).push({
-          url,
-          title: folder.folderTitle || url,
-          t: open.t,
-          localTabId: local ? local.id : null,
-          localWindowId: local ? local.windowId : null,
-          // Only when the same page is also open HERE: that tab's own,
-          // already-loaded icon (same safeFaviconUrl rule). Never fetched
-          // for a remote-only tab — the page shows a letter instead.
-          favIconUrl: local ? safeFaviconUrl(local.favIconUrl) : null,
-        });
-      }
-    }
-
-    const devices = Array.from(byDevice.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([name, tabs]) => ({ name, tabs: tabs.sort((a, b) => b.t - a.t) }));
-    return { paused: false, profile, devices };
-  }
-
   // ---- recently auto-archived tabs ----
 
   // archive-core.js's ARCHIVE_ROOT_TITLE, repeated here rather than read
@@ -268,7 +209,10 @@ function createNewtabEngine(env, syncEngine) {
   // are simply all read. A URL archived more than once appears once, on
   // its latest day; one that's open again on this device is left out (it
   // has been recovered already). Skipped while sync is paused, for the
-  // same reason as getRemoteData (getOrCreateProfileFolder can write).
+  // master switch's contract: "while paused, nothing touches bookmarks in
+  // either direction" (see runReconcile's own comment in sync-core.js),
+  // and getOrCreateProfileFolder can write (creating a missing profile
+  // folder, self-healing a duplicate one).
   async function getArchivedData(days) {
     if (!(await syncEngine.isSyncEnabled())) return { paused: true, days: [] };
     let n = Math.floor(Number(days));
@@ -422,14 +366,12 @@ function createNewtabEngine(env, syncEngine) {
   // for a message this module owns, or null for anything else, so the
   // other modules' message handling never even sees these.
   //
-  // Two messages rather than one on purpose: the local half is just one
-  // tabs.query and renders instantly; the remote half walks the whole
-  // profile's bookmark tree (readProfileEntries), so the page renders
-  // local tabs first and fills the "other devices" section in when this
-  // one answers, instead of the whole page waiting on the slower one.
+  // Separate messages on purpose: the local half is just one tabs.query
+  // and renders instantly; the archived half walks bookmark folders, so
+  // the page renders local tabs first and fills the archived section in
+  // when that one answers, instead of the whole page waiting on it.
   function handleMessage(message) {
     if (message && message.type === "NEWTAB_LOCAL") return getLocalData();
-    if (message && message.type === "NEWTAB_REMOTE") return getRemoteData();
     if (message && message.type === "NEWTAB_BOOKMARKS") return getBookmarksBar();
     if (message && message.type === "NEWTAB_ARCHIVED") return getArchivedData(message.days);
     return null;
@@ -439,7 +381,6 @@ function createNewtabEngine(env, syncEngine) {
     ARCHIVE_FOLDER_TITLE,
     isNewTabPage,
     getLocalData,
-    getRemoteData,
     getArchivedData,
     getBookmarksBar,
     handleMessage,

@@ -21,7 +21,6 @@ const NewtabSettings = (function () {
   const OPTIONS = [
     ["thisWindow", true, "Tabs in the current window", "Show"],
     ["otherWindows", true, "Tabs in your other windows", "Show"],
-    ["otherDevices", true, "Tabs on your other devices", "Show"],
     ["archived", true, "Tabs auto-archived recently, to get them back with a click", "Show"],
     ["archivedDays", 7, "Auto-archived tabs: how many days back (1 = today only)", "Show"],
     ["bookmarksBar", false, "Bookmarks bar at the top (a copy of the browser's, so you can keep its own hidden)", "Show"],

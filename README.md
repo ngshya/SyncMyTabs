@@ -11,6 +11,12 @@ like [Floccus](https://floccus.org/) or
 [xBrowserSync](https://www.xbrowsersync.org/). If your bookmarks sync, your
 tabs sync.
 
+**Install:** [Chrome Web Store](https://chromewebstore.google.com/detail/syncmytabs/cmgailmjkngmopmalbdhnhngdeebinpf)
+(Chrome, Brave and other Chromium browsers) — or from source, see
+[Install (developer mode)](#install-developer-mode).
+
+![The SyncMyTabs new tab page: open tabs by window and tab group, and the tabs auto-archived over the last days](store-assets/screenshot-2-newtab-dark-1280x800.jpg)
+
 ---
 
 ## About this project
@@ -196,9 +202,10 @@ unlooked-at for too long instead of letting it sit open forever.
   tab is never closed unless its bookmark was saved first. Since it's an
   ordinary bookmark, it syncs to your other devices the same way everything
   else here does, and you get it back exactly the way you'd get any
-  bookmark back: open it from your bookmark manager. There's no separate
-  "restore" feature in the extension — the bookmark folder *is* the
-  restore mechanism.
+  bookmark back: open it from your bookmark manager. The ones from the
+  last few days are also listed at the bottom of the
+  [new tab page](#custom-new-tab-page), one click away; the bookmark
+  folder stays the full history.
 - **Pinned tabs and tabs in a browser tab group are never touched**, no
   matter how idle — same exclusion the rest of SyncMyTabs applies
   everywhere else.
@@ -256,20 +263,22 @@ own: the time and date, a search box, and everything you have open.
   they're folded in the browser (click a group's name to fold/unfold it
   on the page only). Each group has some space above and below it, so it
   stands apart from the tabs around it. Pinned tabs are marked as such.
-- **Your other devices' tabs** — what's open on each of your other devices
-  on the same profile, read from the same synced bookmarks as everything
-  else. Ones that are also open here are marked "open here".
 - **Recently auto-archived tabs** — the tabs [auto-archive](#auto-archive-idle-tabs)
   closed over the last 7 days (how many is a setting; 1 = today only), by
-  day, newest first, at the bottom of the page. One click opens it again
-  right there. Tabs archived on your other devices show up too, once the
-  bookmarks have synced; one you've already reopened isn't listed.
+  day — "Today", "Yesterday", then the date — newest first, at the bottom
+  of the page. One click opens it again right there, so a tab closed for
+  being idle is never more than a click away. Tabs archived on your other
+  devices show up too, once the bookmarks have synced; one you've already
+  reopened isn't listed.
+- **No list of your other devices' tabs** (there was one before 4.17.0):
+  sync already opens every one of them here, so it only repeated this
+  list.
 - **Close from the list** — hovering one of this device's tabs shows a
   **✕** at the end of its row; **Delete** does the same for the tab the
   keyboard is on. It's an ordinary close, so it syncs like any other.
 - **Click to jump** — clicking a tab switches to it (bringing its window to
   the front) and closes the new tab you came from, so blank tabs don't pile
-  up. A tab that's only open on another device opens right there instead.
+  up. An archived tab opens right there instead.
 - **Just start typing** to filter by title or address; **Enter** opens the
   first match, the arrow keys move through the list, **Esc** clears. The
   search box stays at the top while you scroll.
@@ -280,8 +289,8 @@ own: the time and date, a search box, and everything you have open.
 - **Two columns on a wide window** — tabs fill them in reading order, one
   on the left and the next on its right.
 - **Choose what's listed** — the options page's *New tab page* card turns
-  each section (this window, your other windows, your other devices,
-  recently archived) on or off.
+  each section (this window, your other windows, recently archived) on or
+  off, and sets how many days of archived tabs to show.
 - **Optional bookmarks bar** (off by default, same card) — a copy of your
   browser's bookmarks bar centred across the top of the page, faded until
   you point at it, so you can keep the browser's own bar hidden. Folders open menus (nested ones to the side),
@@ -320,6 +329,10 @@ are both Chrome/Brave only; everything else — including tab & group order's
 recency sort — works identically on both).
 
 ## Install (developer mode)
+
+The easy way on Chrome/Brave is the
+[Chrome Web Store](https://chromewebstore.google.com/detail/syncmytabs/cmgailmjkngmopmalbdhnhngdeebinpf).
+From source:
 
 **Chrome / Brave**
 
@@ -517,7 +530,7 @@ SyncMyTabs' own initiative):
 | `groups-core.js` | The independent tab-group leashing module's logic — its own bookmark-backed rule storage, link-leash decision, and reconcile pass — same `env`-parameterized, testable style as `sync-core.js` |
 | `archive-core.js` | The independent auto-archive module's logic — tracks tab focus, saves+closes idle ones — same `env`-parameterized, testable style |
 | `order-core.js` | The independent tab & group order module's logic — lays out groups first then tabs by recency, idle-gated, pauses after a manual move — same `env`-parameterized, testable style |
-| `newtab-core.js` | Data side of the custom new tab page — this device's tabs by window/group, other devices' open tabs — same `env`-parameterized, testable style |
+| `newtab-core.js` | Data side of the custom new tab page — this device's tabs by window/group, recently auto-archived tabs, the bookmarks bar — same `env`-parameterized, testable style |
 | `background.js` | Thin wiring: real browser events → `sync-core.js` / `groups-core.js` / `archive-core.js` / `order-core.js` / `newtab-core.js` |
 | `link-leash-content.js` | Content script for the leashing module — intercepts link clicks on a tab it's confirmed is inside a configured group |
 | `popup.html` / `popup.js` | Compact toolbar popup — status, per-module on/off switches, Sync now, and a link to full settings |
@@ -567,8 +580,10 @@ You can still cut a release the old way if you'd rather not wait for a merge:
 push a matching tag (`git tag v3.0.0 && git push origin v3.0.0`), or trigger it
 manually from the Actions tab (`Release` → `Run workflow`).
 
-Upload the Chrome zip to the Chrome Web Store and the Firefox zip to
-[AMO](https://addons.mozilla.org).
+Upload the Chrome zip to the
+[Chrome Web Store](https://chromewebstore.google.com/detail/syncmytabs/cmgailmjkngmopmalbdhnhngdeebinpf)
+(Developer Dashboard → the item → Package → Upload new package, then
+Submit for review) and the Firefox zip to [AMO](https://addons.mozilla.org).
 
 For publishing, see [`PRIVACY.md`](PRIVACY.md) (privacy policy),
 [`PERMISSIONS.md`](PERMISSIONS.md) (per-permission justifications),

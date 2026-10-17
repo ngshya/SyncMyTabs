@@ -148,10 +148,10 @@ from the test and a `data:` favicon — no network, no certificates), and
 offers helpers: `openNewtab()`, `openPage("options.html")`,
 `openSite(url)`, `bg(fn)` (runs `chrome.*` in the service worker),
 `setSettings({...})` (new tab page settings), `setStorage`,
-`addRemoteTab(device, title, url)` (a fake other device in the synced
-tree), `bookmarksBarId()`, and collects page errors in `b.errors`.
+`addArchivedTab(title, url, daysAgo)` (an auto-archived tab in the
+synced tree), `bookmarksBarId()`, and collects page errors in `b.errors`.
 
-Files: `newtab` (strip order, folding, numbers, columns, other devices,
+Files: `newtab` (strip order, folding, numbers, columns, archived tabs,
 close, settings, switching), `bookmarks` (the optional bar), `search`
 (web search), `features` (search-box focus, clock, Matrix rain, options
 card), `ui` (popup/options prefs, background messages, black theme).

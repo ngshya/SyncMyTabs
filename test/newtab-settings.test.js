@@ -9,7 +9,6 @@ test("defaults: tab sections (archived: 7 days), seconds and search focus on; bo
   assert.deepEqual(NewtabSettings.DEFAULTS, {
     thisWindow: true,
     otherWindows: true,
-    otherDevices: true,
     archived: true,
     archivedDays: 7,
     bookmarksBar: false,

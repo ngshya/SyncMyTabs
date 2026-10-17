@@ -26,11 +26,11 @@ KEY FEATURES
 
 • Tab groups (Chrome/Brave) — keep a titled tab group's key pages present on every device, and keep links clicked inside it from wandering outside the group. Group rules sync the same way tabs do.
 
-• Auto-archive idle tabs (on by default, adjustable or toggleable off) — tabs you haven't looked at in a while (you choose the threshold, down to the minute) are saved as a bookmark and closed automatically, so your tab bar doesn't grow forever.
+• Auto-archive idle tabs (on by default, adjustable or toggleable off) — tabs you haven't looked at in a while (you choose the threshold, down to the minute) are saved as a bookmark and closed automatically, so your tab bar doesn't grow forever. The ones archived in the last few days are listed on the new tab page, one click away from coming back.
 
 • Tab & group order (optional, off by default) — keep tab groups (Chrome/Brave) at the start of the window, alphabetically, followed by your other tabs sorted by how recently you used them. Only reorders once you've stepped away or been reading for a while, never while you're actively switching between tabs.
 
-• A minimal new tab page — the time, a search box, and every tab you have open (by window and tab group) plus what's open on your other devices and what was auto-archived in the last few days. Start typing to filter, or type a tab's number and press Enter to jump straight there — no mouse needed. The same box searches the web (your default engine, or Google, Maps, YouTube, Claude, Perplexity, Wikipedia with a one-letter shortcut). Optional Matrix rain in dark mode. You choose which sections it shows, and can add a copy of your bookmarks bar at the top so the browser's own can stay hidden. Note: SyncMyTabs replaces your new tab page; on Chrome, choose "Keep it" when asked — "Change it back" turns off the whole extension, sync included.
+• A minimal new tab page — the time, a search box, every tab you have open (by window and tab group), and the tabs auto-archived over the last 7 days (you choose how many), by day, so you can reopen one with a click. Start typing to filter, or type a tab's number and press Enter to jump straight there — no mouse needed. The same box searches the web (your default engine, or Google, Maps, YouTube, Claude, Perplexity, Wikipedia with a one-letter shortcut). Optional Matrix rain in dark mode. You choose which sections it shows, and can add a copy of your bookmarks bar at the top so the browser's own can stay hidden. Note: SyncMyTabs replaces your new tab page; on Chrome, choose "Keep it" when asked — "Change it back" turns off the whole extension, sync included.
 
 • Light, dark, pure black, or system theme.
 
@@ -40,6 +40,25 @@ PRIVACY
 SyncMyTabs has no server and collects nothing. Everything happens locally, inside your browser's own storage and bookmarks.
 
 Free and open source.
+```
+
+## Screenshots
+
+Upload in this order (Store listing → Graphic assets → Screenshots, five at
+most), all 1280×800 from [`store-assets/`](store-assets/):
+
+1. `screenshot-2-newtab-dark-1280x800.jpg` — the new tab page (dark)
+2. `screenshot-4-newtab-matrix-black-1280x800.jpg` — black theme, Matrix rain
+3. `screenshot-3-newtab-light-1280x800.jpg` — the new tab page (light)
+4. `screenshot-5-newtab-matrix-dark-1280x800.jpg` — dark theme, Matrix rain
+5. `screenshot-1-overview-1280x800.png` — settings page + popup
+
+## What's new (for the release / an announcement)
+
+```
+4.17.0
+• New tab page: a "recently auto-archived" section — the tabs auto-archive closed over the last 7 days (adjustable, 1 = today only), grouped by day; one click reopens a tab right there.
+• New tab page: the "tabs on your other devices" section is gone — sync already opens every one of those tabs on this device, so it only repeated your own list.
 ```
 
 ## Category

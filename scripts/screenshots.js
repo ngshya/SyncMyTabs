@@ -5,12 +5,14 @@
 // visual check — the same browser setup as the browser tests
 // (test/browser/helpers.js: the built package, a fake web), with a
 // believable session: two windows, tab groups (one folded), a pinned tab,
-// another device, a few auto-archived tabs, a bookmarks bar.
+// a few auto-archived tabs, a bookmarks bar.
 //
 //   npm run screenshots -- [outDir]          (default: ./screenshots)
 //
 // Writes newtab-{light,dark,black}.png, newtab-search.png,
-// newtab-narrow.png, popup.png, options-newtab-card.png.
+// newtab-narrow.png, popup.png, options-newtab-card.png, plus the Chrome
+// Web Store listing's new tab page shots in store/ (see the end of this
+// file; store-assets/README.md says which ones are in the listing).
 // ============================================================
 
 const fs = require("node:fs");
@@ -54,8 +56,6 @@ const SITES = {
     await chrome.tabs.move(id("news.example"), { index: 4 });
     await chrome.windows.create({ url: second, focused: false });
   }, urls.slice(9));
-  await b.addRemoteTab("Phone", "Train timetable Milan → Rome", "https://trains.example/", 5);
-  await b.addRemoteTab("Phone", "Hacker News", "https://news.example/", 30);
   await b.addArchivedTab("Best mechanical keyboards of 2026 — Review", "https://review.example/keyboards", 0);
   await b.addArchivedTab("How bookmarks sync works — Blog", "https://blog.example/bookmark-sync", 2);
   await b.addArchivedTab("Flight deals — Travel", "https://travel.example/flights", 2);
@@ -71,7 +71,7 @@ const SITES = {
   await sleep(1000);
 
   const p = await b.openNewtab();
-  await p.waitForSelector("#remoteSection:not([hidden])", { timeout: 8000 }).catch(() => {});
+  await p.waitForSelector("#archivedSection:not([hidden])", { timeout: 8000 }).catch(() => {});
   await sleep(600);
   await p.evaluate(() => document.activeElement.blur());
   for (const theme of ["light", "dark", "black"]) {
@@ -97,6 +97,39 @@ const SITES = {
   const opt = await b.openPage("options.html");
   await sleep(500);
   await opt.locator(".card").last().screenshot({ path: path.join(outDir, "options-newtab-card.png") });
+  // Not left open: they'd show up in the store shots' tab list below.
+  await pop.close();
+  await opt.close();
+  await p.close();
+
+  // Chrome Web Store listing shots: exactly 1280×800 and JPEG — the store
+  // rejects a PNG with an alpha channel — with the page zoomed out a
+  // little so the whole list, archived tabs included, fits in one screen.
+  const storeDir = path.join(outDir, "store");
+  fs.mkdirSync(storeDir, { recursive: true });
+  const storeShot = (page, name) => page.screenshot({ path: path.join(storeDir, name), type: "jpeg", quality: 92 });
+  const st = await b.openNewtab();
+  await st.setViewportSize({ width: 1280, height: 800 });
+  await st.waitForSelector("#archivedSection:not([hidden])", { timeout: 8000 }).catch(() => {});
+  await st.evaluate(() => {
+    document.body.style.zoom = "0.8";
+    document.activeElement.blur();
+  });
+  for (const theme of ["dark", "light"]) {
+    await b.setStorage({ themePreference: theme });
+    await sleep(500);
+    await storeShot(st, `newtab-${theme}-1280x800.jpg`);
+  }
+  // With the optional Matrix rain, on the two themes it's drawn on —
+  // given a few seconds so the columns have filled the screen.
+  await b.setSettings({ matrixRain: true });
+  for (const theme of ["dark", "black"]) {
+    await b.setStorage({ themePreference: theme });
+    await sleep(4000);
+    await storeShot(st, `newtab-matrix-${theme}-1280x800.jpg`);
+  }
+  await b.setSettings({ matrixRain: false });
+  await b.setStorage({ themePreference: "system" });
 
   await b.close();
   if (b.errors.length) console.error("page errors:\n" + b.errors.join("\n"));
