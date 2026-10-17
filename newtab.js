@@ -25,15 +25,14 @@
 // Any other text searches titles/URLs, Enter opens the first match.
 // A tab of this device can be closed from the list too: a ✕ at the end
 // of its row on hover, or Delete on the focused row (see closeTab).
+//
+// The same box searches the web (see the "web search" section below):
+// Shift+Enter — or plain Enter when no tab matches — runs the browser's
+// own default search; a one-letter prefix ("y lofi") or Tab after typing
+// picks another service (newtab-search.js) instead.
 // ============================================================
 
 (function () {
-  // Which sections the page shows — set from the options page's "New tab
-  // page" card (newtab-options.js, which keeps its own copy of this key
-  // and these defaults).
-  const SECTIONS_KEY = "newtabSections";
-  const DEFAULT_SECTIONS = { thisWindow: true, otherWindows: true, otherDevices: true };
-
   // Chrome/Brave's own tab-group palette, as tabGroups reports it.
   const GROUP_COLORS = {
     grey: "#5f6368",
@@ -51,6 +50,8 @@
   const dateEl = document.getElementById("date");
   const searchBarEl = document.getElementById("searchBar");
   const searchEl = document.getElementById("search");
+  const chipEl = document.getElementById("searchChip");
+  const webActionsEl = document.getElementById("webActions");
   const localEl = document.getElementById("local");
   const remoteEl = document.getElementById("remote");
   const remoteSectionEl = document.getElementById("remoteSection");
@@ -59,7 +60,18 @@
   let selfTab = null;
   let localData = { windows: [] };
   let remoteData = { paused: false, devices: [] };
-  let sections = { ...DEFAULT_SECTIONS };
+  // Which sections show (and the page's other settings) — see
+  // newtab-settings.js; set from the options page's "New tab page" card.
+  let sections = { ...NewtabSettings.DEFAULTS };
+
+  // Web search state: the service picked for this query (null = no
+  // service chip: the box searches tabs, and the web row offers the
+  // browser's default search), whether it came from a typed prefix, and
+  // a prefix letter just dismissed with Backspace (so "c" + space doesn't
+  // instantly turn back into a chip for someone typing "c programming").
+  let engine = null;
+  let engineFromPrefix = false;
+  let dismissedPrefix = null;
 
   // A group's fold state on this page is the browser's own (`collapsed`
   // from tabGroups) — clicking its header here overrides that, in memory
@@ -85,7 +97,9 @@
     }
   }
   const locale = uiLocale();
+  // With or without seconds — the `clockSeconds` setting (on by default).
   const timeFmt = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" });
+  const timeFmtSeconds = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit", second: "2-digit" });
   const dateFmt = new Intl.DateTimeFormat(locale, {
     weekday: "long",
     day: "numeric",
@@ -96,7 +110,7 @@
 
   function tick() {
     const now = new Date();
-    timeEl.textContent = timeFmt.format(now);
+    timeEl.textContent = (sections.clockSeconds ? timeFmtSeconds : timeFmt).format(now);
     dateEl.textContent = dateFmt.format(now);
   }
 
@@ -328,6 +342,16 @@
 
   function render() {
     const focusedKey = (document.activeElement && document.activeElement.dataset.key) || null;
+    if (engine) {
+      // A service is picked: this is a web search, not a tab search —
+      // the tab list steps aside for the one web row.
+      localEl.replaceChildren();
+      remoteSectionEl.hidden = true;
+      emptyEl.hidden = true;
+      renderWeb(false);
+      markSelected({ active: true, digits: null });
+      return;
+    }
     const myWindowId = selfTab ? selfTab.windowId : null;
     const allWindows = localData.windows
       .slice()
@@ -415,6 +439,7 @@
       ? "Every tab section is turned off — choose what this page shows in SyncMyTabs's settings."
       : "No matching tabs.";
     emptyEl.hidden = !(nothingShown || (query.active && visible === 0));
+    renderWeb(visible > 0);
     markSelected(query);
 
     // A re-render (a tab finished loading somewhere, say) mustn't yank
@@ -425,15 +450,111 @@
     }
   }
 
-  // While searching, the tab Enter would open is highlighted: the exact
-  // number match when the query is a number, the first match otherwise.
+  // While searching, what Enter would open is highlighted: the exact
+  // number match when the query is a number, the first matching tab
+  // otherwise — or the web row, when no tab matches or a service is picked.
   function markSelected(query) {
     const items = Array.from(document.querySelectorAll("main .item"));
     for (const item of items) item.classList.remove("selected");
     if (!query.active) return;
-    const exact = query.digits !== null && items.find((n) => n.dataset.num === query.digits);
-    const pick = exact || items[0];
+    const web = items.find((n) => n.classList.contains("web"));
+    const tabs = items.filter((n) => n !== web);
+    const exact = query.digits !== null && tabs.find((n) => n.dataset.num === query.digits);
+    const pick = engine ? web : exact || tabs[0] || web;
     if (pick) pick.classList.add("selected");
+  }
+
+  // ---- web search ----
+
+  // Opens `url` here (or, with Ctrl/Cmd, in a new tab).
+  function navigate(url, newTab) {
+    if (newTab) browser.tabs.create({ url });
+    else if (selfTab) browser.tabs.update(selfTab.id, { url });
+    else location.href = url;
+  }
+
+  // What the web row does, for the current text: the picked service's
+  // search; an address, opened as such; otherwise the browser's own
+  // default search engine (search.query — whatever the user chose in the
+  // browser, never a hardcoded one), with Google only as a fallback where
+  // that API is missing. Called straight from the key/click handler:
+  // Firefox only allows search.query from inside a user action.
+  function runWebSearch(newTab) {
+    const text = searchEl.value.trim();
+    if (!text) return;
+    if (engine) return navigate(engineUrl(engine, text, locale), newTab);
+    const url = urlFromInput(text);
+    if (url) return navigate(url, newTab);
+    const api = browser.search;
+    if (api && api.query) {
+      api.query(newTab ? { text, disposition: "NEW_TAB" } : selfTab ? { text, tabId: selfTab.id } : { text });
+    } else {
+      navigate(engineUrl(engineForKey("g"), text, locale), newTab);
+    }
+  }
+
+  function setEngine(next, fromPrefix) {
+    engine = next;
+    engineFromPrefix = !!(next && fromPrefix);
+    chipEl.hidden = !engine;
+    chipEl.textContent = engine ? engine.name : "";
+    render();
+  }
+
+  // Tab / Shift+Tab after typing: through every service and back to
+  // plain tab search, without retyping.
+  function cycleEngine(dir) {
+    const order = [null, ...SEARCH_ENGINES];
+    const i = order.indexOf(engine);
+    setEngine(order[(i + dir + order.length) % order.length], false);
+  }
+
+  // The web row (under the search box, only while something is typed)
+  // and the line of services under it — each a real link, so a middle
+  // click opens it in a new tab like any link.
+  function renderWeb(tabsMatched) {
+    const text = searchEl.value.trim();
+    webActionsEl.replaceChildren();
+    webActionsEl.hidden = !text && !engine;
+    if (webActionsEl.hidden) return;
+
+    const url = engine ? null : urlFromInput(text);
+    const row = el("button", "item web");
+    row.type = "button";
+    row.dataset.key = "web";
+    const label = !text
+      ? `Type what to search on ${engine.name}`
+      : engine
+        ? `Search ${engine.name} for “${text}”`
+        : url
+          ? `Open ${text}`
+          : `Search the web for “${text}”`;
+    row.append(
+      el("span", "num", engine ? engine.key : "↗"),
+      el("span", "title", label),
+      el("span", "meta", engine || !tabsMatched ? "↵" : "⇧ ↵")
+    );
+    row.disabled = !text;
+    row.addEventListener("click", (e) => runWebSearch(e.ctrlKey || e.metaKey));
+    webActionsEl.append(row);
+
+    const list = el("div", "engines");
+    const hint = el("span", "engines-hint", "⇥");
+    hint.title = "Tab / Shift+Tab: switch the search service";
+    list.append(hint);
+    for (const e of SEARCH_ENGINES) {
+      const a = el("a", "engine" + (e === engine ? " active" : ""));
+      a.href = engineUrl(e, text, locale);
+      a.title = `${e.name} — or type “${e.key} ” before your search`;
+      a.append(el("span", "engine-key", e.key), document.createTextNode(e.name));
+      a.addEventListener("click", (ev) => {
+        if (ev.ctrlKey || ev.metaKey || ev.shiftKey || !text) return; // a plain link then
+        ev.preventDefault();
+        navigate(a.href, false);
+      });
+      list.append(a);
+    }
+    webActionsEl.append(list);
   }
 
   // ---- keyboard: type-to-search, Enter opens the selected match, arrows move ----
@@ -473,19 +594,36 @@
     if (document.activeElement === searchEl) {
       if (e.key === "Enter") {
         const selected = document.querySelector("main .item.selected");
-        if (selected) {
+        if (e.shiftKey || (selected && selected.classList.contains("web"))) {
+          e.preventDefault();
+          runWebSearch(e.ctrlKey || e.metaKey);
+        } else if (selected) {
           e.preventDefault();
           selected.click();
         }
+      } else if (e.key === "Tab" && !modified && (searchEl.value.trim() || engine)) {
+        e.preventDefault();
+        cycleEngine(e.shiftKey ? -1 : 1);
+      } else if (e.key === "Backspace" && engine && searchEl.selectionStart === 0 && searchEl.selectionEnd === 0) {
+        // Backspace at the very start removes the service chip; a chip
+        // that came from a typed prefix gives its letter back.
+        e.preventDefault();
+        if (engineFromPrefix && !searchEl.value) {
+          dismissedPrefix = engine.key;
+          searchEl.value = engine.key;
+        }
+        setEngine(null, false);
       } else if (e.key === "ArrowDown") {
         const target = document.querySelector("main .item.selected") || navigables()[0];
         if (target) {
           e.preventDefault();
           target.focus();
         }
-      } else if (e.key === "Escape" && searchEl.value) {
+      } else if (e.key === "Escape" && (searchEl.value || engine)) {
         e.preventDefault();
         searchEl.value = "";
+        engine = null;
+        chipEl.hidden = true;
         onSearchInput();
       }
       return;
@@ -517,6 +655,16 @@
   // The search bar stays pinned at the top while the list scrolls under
   // it; a new query jumps back to the start of the (now filtered) list.
   function onSearchInput() {
+    if (!searchEl.value) dismissedPrefix = null;
+    if (!engine) {
+      const p = parsePrefix(searchEl.value);
+      if (p && p.engine.key !== dismissedPrefix) {
+        searchEl.value = p.rest;
+        setEngine(p.engine, true);
+        window.scrollTo(0, 0);
+        return;
+      }
+    }
     render();
     window.scrollTo(0, 0);
   }
@@ -538,10 +686,7 @@
   // ---- data loading + live refresh ----
 
   async function loadSections() {
-    try {
-      const { [SECTIONS_KEY]: saved } = await browser.storage.local.get(SECTIONS_KEY);
-      sections = { ...DEFAULT_SECTIONS, ...(saved && typeof saved === "object" ? saved : {}) };
-    } catch (e) {}
+    sections = await NewtabSettings.load();
   }
 
   async function loadLocal() {
@@ -596,10 +741,10 @@
     browser.bookmarks[ev].addListener(scheduleRemote);
   }
 
-  // Sections changed on the options page: applied live.
-  browser.storage.onChanged.addListener(async (changes, area) => {
-    if (area !== "local" || !changes[SECTIONS_KEY]) return;
-    await loadSections();
+  // Settings changed on the options page: applied live.
+  NewtabSettings.onChange((settings) => {
+    sections = settings;
+    tick();
     render();
     loadRemote();
   });
@@ -622,6 +767,21 @@
       selfTab = await browser.tabs.getCurrent();
     } catch (e) {}
     await loadSections();
+    tick();
+    if (sections.focusSearch && selfTab && !/[?&]focus\b/.test(location.search)) {
+      // A browser opens its new tab page with the cursor in the address
+      // bar, and a page can't take it from there. Reloading this same
+      // page under its own extension address does put the cursor in the
+      // page — at the cost of the address bar showing that address rather
+      // than staying empty (and the browser's Back button returning to the
+      // plain new tab page, which comes straight back here). That's why it
+      // is a setting (`focusSearch`, on by default). `?focus` marks the
+      // second load so it doesn't loop.
+      try {
+        await browser.tabs.update(selfTab.id, { url: browser.runtime.getURL("newtab.html?focus") });
+        return;
+      } catch (e) {} // couldn't: carry on as a normal new tab page
+    }
     searchEl.focus();
     // autofocus may have focused it before the listener above existed.
     document.body.classList.toggle("searching", document.activeElement === searchEl);

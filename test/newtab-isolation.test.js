@@ -41,14 +41,19 @@ test("pre-existing modules and their UI never reference the new tab page", () =>
 });
 
 // The options page hosts the new tab page's own settings card, but only by
-// loading newtab-options.js, which builds that card itself — options.html
-// carries that one script tag and nothing else about the feature.
-test("options.html only loads newtab-options.js, nothing else about the new tab page", () => {
-  const TAG = '<script src="newtab-options.js"></script>';
-  const src = read("options.html");
-  assert.equal(src.split(TAG).length - 1, 1, "exactly one tag loading newtab-options.js");
-  assert.ok(!NEWTAB_REFERENCE.test(src.replace(TAG, "")), "no other reference to the new tab page");
-  assert.ok(src.indexOf(TAG) > src.indexOf('<script src="options.js"></script>'), "loaded after options.js");
+// loading newtab-settings.js (the settings themselves) and newtab-options.js
+// (which builds that card) — options.html carries those two script tags,
+// after options.js, and nothing else about the feature.
+test("options.html only loads newtab-settings.js + newtab-options.js, nothing else about the new tab page", () => {
+  const TAGS = ['<script src="newtab-settings.js"></script>', '<script src="newtab-options.js"></script>'];
+  let src = read("options.html");
+  const afterOptionsJs = src.indexOf('<script src="options.js"></script>');
+  for (const tag of TAGS) {
+    assert.equal(src.split(tag).length - 1, 1, `exactly one ${tag}`);
+    assert.ok(src.indexOf(tag) > afterOptionsJs, `${tag} loads after options.js`);
+  }
+  for (const tag of TAGS) src = src.replace(tag, "");
+  assert.ok(!NEWTAB_REFERENCE.test(src), "no other reference to the new tab page");
 });
 
 test("background.js calls the new tab engine only from its own, last onMessage listener", () => {

@@ -73,6 +73,13 @@ broad host permission and a content script for its tab-group leashing module
 > and the last-activity timestamp shown in the popup. All of this is stored locally via chrome.storage.local and never
 > transmitted.
 
+### `search`
+> Used only by the new tab page's search box: when the user explicitly
+> asks for a web search (Enter / Shift+Enter), the query is handed to the
+> browser's own default search engine via chrome.search.query, rather
+> than the extension picking an engine. Nothing is searched, suggested or
+> sent while typing.
+
 ### `alarms`
 > The extension periodically re-checks the active profile's tabs against the
 > synced bookmark state, sweeps stale entries per the configurable cleanup

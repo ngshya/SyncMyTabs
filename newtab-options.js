@@ -1,33 +1,24 @@
 // ============================================================
 // SyncMyTabs - newtab-options.js
 //
-// The custom new tab page's own card on the options page: which tab
-// sections newtab.html shows (this window / other windows / other
-// devices), and whether it shows its copy of the bookmarks bar
-// (newtab-bookmarks.js). Kept out of options.js on purpose — like the
-// rest of the new tab page feature, nothing that existed before it knows
-// it exists (see test/newtab-isolation.test.js): options.html only loads
-// this script, and this script builds its card itself, with the page's
-// existing card styles, and appends it after the other cards.
+// The custom new tab page's own card on the options page: one checkbox
+// per new tab page setting (which tab sections show, the bookmarks bar,
+// the clock's seconds, search-box focus, matrix rain). The settings
+// themselves — key, defaults, labels — live in newtab-settings.js, which
+// options.html loads just before this; this file only draws the card.
 //
-// The card is DOM-built (textContent only), saved per checkbox on change
-// to storage.local like every other preference; newtab.js listens for
-// the change, so an open new tab page follows it live.
+// Kept out of options.js on purpose — like the rest of the new tab page
+// feature, nothing that existed before it knows it exists (see
+// test/newtab-isolation.test.js): options.html only loads these two
+// scripts, and this one builds its card itself, with the page's existing
+// card styles, and appends it after the other cards.
+//
+// The card is DOM-built (textContent only), saved on every change to
+// storage.local like every other preference; the new tab page listens for
+// the change, so an open one follows it live.
 // ============================================================
 
 (function () {
-  // Same key and defaults as newtab.js (and newtab-bookmarks.js, for
-  // `bookmarksBar`).
-  const SECTIONS_KEY = "newtabSections";
-  const DEFAULT_SECTIONS = { thisWindow: true, otherWindows: true, otherDevices: true, bookmarksBar: false };
-
-  const OPTIONS = [
-    ["thisWindow", "Tabs in the current window"],
-    ["otherWindows", "Tabs in your other windows"],
-    ["otherDevices", "Tabs on your other devices"],
-    ["bookmarksBar", "Bookmarks bar at the top (a copy of the browser's, so you can keep its own hidden)"],
-  ];
-
   function el(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -41,37 +32,37 @@
   const body = el("div", "card-body");
   card.append(
     header,
-    el(
-      "div",
-      "card-desc",
-      "Choose what the SyncMyTabs new tab page shows. The clock and the search box are always there."
-    ),
+    el("div", "card-desc", "Choose what the SyncMyTabs new tab page shows and how it looks. The clock and the search box are always there."),
     body
   );
 
   const inputs = {};
-  for (const [key, label] of OPTIONS) {
+  let group = null;
+  for (const [key, value, label, groupName] of NewtabSettings.OPTIONS) {
+    if (groupName !== group) {
+      group = groupName;
+      body.append(el("div", "section-title", groupName));
+    }
     const row = el("label", "checkbox-row");
     const input = el("input");
     input.type = "checkbox";
-    input.checked = DEFAULT_SECTIONS[key];
+    input.checked = value;
     inputs[key] = input;
     row.append(input, document.createTextNode(label));
     body.append(row);
   }
 
   async function save() {
-    const value = {};
-    for (const [key] of OPTIONS) value[key] = inputs[key].checked;
-    await browser.storage.local.set({ [SECTIONS_KEY]: value });
+    const values = {};
+    for (const key of Object.keys(inputs)) values[key] = inputs[key].checked;
+    await NewtabSettings.save(values);
     // options.js's own "Saved ✓" flash, when it's there.
     if (typeof flashStatus === "function") flashStatus("Saved ✓");
   }
-  for (const [key] of OPTIONS) inputs[key].addEventListener("change", save);
+  for (const input of Object.values(inputs)) input.addEventListener("change", save);
 
-  browser.storage.local.get(SECTIONS_KEY).then(({ [SECTIONS_KEY]: saved }) => {
-    const sections = { ...DEFAULT_SECTIONS, ...(saved && typeof saved === "object" ? saved : {}) };
-    for (const [key] of OPTIONS) inputs[key].checked = !!sections[key];
+  NewtabSettings.load().then((settings) => {
+    for (const key of Object.keys(inputs)) inputs[key].checked = !!settings[key];
   });
 
   // After the last card, before the status line / version footer.
