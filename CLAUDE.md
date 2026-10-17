@@ -219,7 +219,9 @@ least some Node versions; always pass the explicit glob.)
 
 `newtab-core.js` tests (`test/newtab-core.test.js`) build
 `createNewtabEngine(device.env, device.engine)` inline — no event wiring
-to set up, it only ever reads on request.
+to set up, it only ever reads on request. `test/newtab-isolation.test.js`
+statically checks the module stays self-contained (see its section
+below).
 
 When you change reconcile behavior in `sync-core.js`, `groups-core.js`,
 `archive-core.js`, `order-core.js`, or `newtab-core.js`, add/update a test in `test/`
@@ -438,9 +440,15 @@ the whole installation or not at all, and an extension page can't hand
 control back to the native new tab page (navigating to `chrome://newtab`
 from one is blocked). See Known limitations.
 
+**Self-contained by design**: no other module, nor the popup/options
+UI, references it; `background.js` wires it through an `onMessage`
+listener of its own, separate from the one every other module shares.
+`test/newtab-isolation.test.js` enforces this — keep new-tab-page
+knowledge inside `newtab-core.js`/`newtab.js`.
+
 **Full invariants (why the data side goes through background messages,
-the paused-sync rule for the remote half, favicon privacy, the shared
-new-tab-page detection used by archive/order, …) are in
+the paused-sync rule for the remote half, favicon privacy, how to remove
+the feature cleanly, …) are in
 [`docs/newtab-core.md`](docs/newtab-core.md) — read it before touching
 `newtab-core.js`/`newtab.js`.**
 

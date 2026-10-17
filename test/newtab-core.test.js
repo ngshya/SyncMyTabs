@@ -139,6 +139,13 @@ test("remote: other devices' open tabs, own device and closed entries left out, 
     assert.equal(tabs[1].localTabId, localMirrored.id, "linked to the local copy");
     assert.equal(tabs[1].localWindowId, localMirrored.windowId);
     assert.equal(tabs[0].localTabId, null, "not open here — a click would open it");
+
+    // Favicon: the local copy's own icon once it has one; never anything
+    // for a remote-only tab.
+    await a.tabsApi.update(localMirrored.id, { favIconUrl: "https://mirrored.example/favicon.ico" });
+    const again = (await nt.getRemoteData()).devices[0].tabs;
+    assert.equal(again[1].favIconUrl, "https://mirrored.example/favicon.ico");
+    assert.equal(again[0].favIconUrl, null);
   });
 });
 

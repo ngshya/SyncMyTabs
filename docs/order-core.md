@@ -35,12 +35,15 @@ than on.
   `sync-core.js`/`archive-core.js` apply everywhere else, and one the
   browser itself enforces anyway (pinned tabs always occupy a window's
   first indices, outside any extension's control).
-- **New tab pages go last, not by recency** (`syncEngine.isNewTabPage`) —
-  a just-opened blank tab is the most recently activated one and would
-  otherwise jump right up next to the groups. They're still part of the
+- **Only web tabs are sorted by recency; everything else goes last** —
+  same "http(s) only" rule `sync-core.js` applies to what it syncs (a
+  lazy-restore placeholder counting as the page it stands for). A new tab
+  page, `chrome://settings` or an extension page stays at the end, in its
+  own order: a just-opened blank tab is the most recently activated one
+  and would otherwise jump right up next to the groups. Still part of the
   computed order (at the end) so the "already settled?" check compares
   like with like and doesn't re-move the window on every pass. See the
-  comment above `ungrouped`/`newTabPages` in `reorderWindow`.
+  comment above `isWebTab` in `reorderWindow`.
 - **Trigger: periodic, and only once idle.** Piggybacks on the SAME
   alarm as tab sync (no separate "tab order check interval" setting,
   same convention as `archive-core.js`) — see the `saveTabsAlarm`

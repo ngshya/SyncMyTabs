@@ -211,6 +211,17 @@
       const block = document.createDocumentFragment();
       let count = 0;
 
+      // Same order as the tab strip itself: pinned tabs (always first
+      // there), then the groups, then every other tab.
+      const appendTab = (t) => {
+        if (!matches(terms, t.title, t.url)) return;
+        const meta = hostOf(t.url) + (t.pinned ? " · pinned" : "");
+        block.append(
+          itemButton(t, `t:${t.id}`, meta, () => switchTo(t.id, t.windowId), t.active && !isMyWindow)
+        );
+        count += 1;
+      };
+      win.tabs.filter((t) => t.pinned).forEach(appendTab);
       for (const g of win.groups) {
         const groupHit = filtering && matches(terms, g.title);
         const tabs = g.tabs.filter((t) => groupHit || matches(terms, t.title, t.url, g.title));
@@ -218,14 +229,7 @@
         block.append(renderGroup(g, tabs, filtering, isMyWindow));
         count += tabs.length;
       }
-      for (const t of win.tabs) {
-        if (!matches(terms, t.title, t.url)) continue;
-        const meta = hostOf(t.url) + (t.pinned ? " · pinned" : "");
-        block.append(
-          itemButton(t, `t:${t.id}`, meta, () => switchTo(t.id, t.windowId), t.active && !isMyWindow)
-        );
-        count += 1;
-      }
+      win.tabs.filter((t) => !t.pinned).forEach(appendTab);
 
       if (count === 0) continue;
       const label = isMyWindow ? "This window" : `Window ${++windowNumber}`;

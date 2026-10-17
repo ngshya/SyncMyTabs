@@ -272,11 +272,11 @@ function createArchiveEngine(env, syncEngine) {
 
     const allTabs = await env.tabs.query({});
     // http(s) only — same rule sync-core.js's snapshotOwnTabs applies to
-    // what it syncs. Anything else (a new tab page, this extension's own
-    // newtab.html/options.html, chrome://settings, …) would otherwise be
-    // "archived" as a bookmark pointing at a browser-internal or
-    // extension-internal page: junk in _archive, not a page anyone wants
-    // to fish back out later. A lazy-restore placeholder still counts,
+    // what it syncs. Anything else (a new tab page, an extension page
+    // such as this extension's own options.html, chrome://settings, …)
+    // would otherwise be "archived" as a bookmark pointing at a
+    // browser-internal or extension-internal page: junk in _archive, not
+    // a page anyone wants to fish back out later. A lazy-restore placeholder still counts,
     // through realUrlOfTab, as the real page it stands for.
     const eligible = allTabs.filter(
       (t) =>

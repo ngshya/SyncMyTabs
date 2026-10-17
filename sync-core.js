@@ -113,29 +113,6 @@ function isHttpUrl(u) {
   return /^https?:\/\//.test(u || "");
 }
 
-// URLs a tab can report while it's sitting on a new tab page —
-// including one this extension's own newtab.html override is rendering:
-// depending on the browser, tabs.query() reports either the native
-// new-tab URL (Chrome/Brave keep `chrome://newtab/` for an overridden new
-// tab) or the extension page's own URL (`extensionNewtabUrl`, e.g.
-// moz-extension://…/newtab.html on Firefox) — both are matched, so this
-// doesn't depend on which one a given browser picks. Used to keep new
-// tab pages out of the newtab page's own tab list, archive-core.js's
-// archiving and order-core.js's recency sort.
-const NATIVE_NEWTAB_URLS = [
-  "chrome://newtab/",
-  "chrome://new-tab-page/",
-  "about:newtab",
-  "about:home",
-  "edge://newtab/",
-];
-
-function isNewTabPageUrl(url, extensionNewtabUrl) {
-  if (!url) return false;
-  if (NATIVE_NEWTAB_URLS.includes(url)) return true;
-  return !!extensionNewtabUrl && url.startsWith(extensionNewtabUrl);
-}
-
 // True iff `t` is inside a browser tab group. Feature-detected via
 // `groupId` (Chrome/Brave tabGroups: -1 means ungrouped) rather than
 // assumed present — Firefox tabs don't carry a `groupId` at all, so this
@@ -176,7 +153,6 @@ function isRelevantBookmarkChange(title, url) {
 // ------------------------------------------------------------
 function createSyncEngine(env) {
   const LAZY_PAGE = env.runtime.getURL("lazy.html");
-  const NEWTAB_PAGE = env.runtime.getURL("newtab.html");
 
   // Debounce window, overridable via env.mirrorOpenDebounceMs (real
   // browser.* has no such property, so the real extension always gets
@@ -222,13 +198,6 @@ function createSyncEngine(env) {
       } catch (e) {}
     }
     return u;
-  }
-
-  // Whether `tab` is sitting on a new tab page (native, or this
-  // extension's own newtab.html override) — see isNewTabPageUrl above.
-  function isNewTabPage(tab) {
-    const u = (tab && (tab.url || tab.pendingUrl)) || "";
-    return isNewTabPageUrl(u, NEWTAB_PAGE);
   }
 
   let cachedRootParentId = null;
@@ -1067,7 +1036,6 @@ function createSyncEngine(env) {
     getOrCreateProfileFolder,
     getActiveProfile,
     realUrlOfTab,
-    isNewTabPage,
     isHttpUrl,
     lazyUrlFor,
     snapshotOwnTabs,
@@ -1109,8 +1077,6 @@ if (typeof module !== "undefined" && module.exports) {
     OTHER_BOOKMARKS_PARENT_ID,
     FIREFOX_UNFILED_ID,
     isHttpUrl,
-    isNewTabPageUrl,
-    NATIVE_NEWTAB_URLS,
     buildDeviceStatusUrl,
     parseDeviceStatusUrl,
     isRelevantBookmarkChange,

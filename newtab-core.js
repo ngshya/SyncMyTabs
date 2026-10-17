@@ -24,10 +24,16 @@
 // like the other modules; module.exports at the bottom is a Node-only
 // no-op elsewhere.
 //
+// Self-contained on purpose: nothing in sync-core.js, groups-core.js,
+// archive-core.js or order-core.js knows this module exists. It only
+// READS through the existing syncEngine API below, background.js wires
+// it with its own separate onMessage listener (handleMessage), and
+// knowledge of what a new tab page even is (isNewTabPageUrl) lives here
+// and nowhere else.
+//
 // CONTRACT with sync-core.js: this module reuses exactly
-// syncEngine.realUrlOfTab() / .isNewTabPage() / .isSyncEnabled() /
-// .getActiveProfile() / .getOrCreateProfileFolder() /
-// .readProfileEntries() and nothing else.
+// syncEngine.realUrlOfTab() / .isSyncEnabled() / .getActiveProfile() /
+// .getOrCreateProfileFolder() / .readProfileEntries() and nothing else.
 //
 // See docs/newtab-core.md for the full invariants (why remote data is
 // skipped while sync is paused, favicon handling, …) — this file's own
@@ -39,8 +45,35 @@
 // its window's ungrouped list — no special-casing needed below.
 // ============================================================
 
+// URLs a tab can report while it's sitting on a new tab page —
+// including one this extension's own newtab.html override is rendering:
+// depending on the browser, tabs.query() reports either the native
+// new-tab URL (Chrome/Brave keep `chrome://newtab/` for an overridden new
+// tab) or the extension page's own URL (`extensionNewtabUrl`, e.g.
+// moz-extension://…/newtab.html on Firefox) — both are matched, so this
+// doesn't depend on which one a given browser picks. Used to keep new
+// tab pages (this one included) out of the page's own tab list.
+const NATIVE_NEWTAB_URLS = [
+  "chrome://newtab/",
+  "chrome://new-tab-page/",
+  "about:newtab",
+  "about:home",
+  "edge://newtab/",
+];
+
+function isNewTabPageUrl(url, extensionNewtabUrl) {
+  if (!url) return false;
+  if (NATIVE_NEWTAB_URLS.includes(url)) return true;
+  return !!extensionNewtabUrl && url.startsWith(extensionNewtabUrl);
+}
+
 function createNewtabEngine(env, syncEngine) {
   const TAB_GROUP_ID_NONE = -1;
+  const NEWTAB_PAGE = env.runtime.getURL("newtab.html");
+
+  function isNewTabPage(tab) {
+    return isNewTabPageUrl((tab && (tab.url || tab.pendingUrl)) || "", NEWTAB_PAGE);
+  }
 
   function isGrouped(tab) {
     return typeof tab.groupId === "number" && tab.groupId !== TAB_GROUP_ID_NONE;
@@ -98,7 +131,7 @@ function createNewtabEngine(env, syncEngine) {
 
     const byWindow = new Map();
     for (const t of allTabs) {
-      if (syncEngine.isNewTabPage(t)) continue;
+      if (isNewTabPage(t)) continue;
       let win = byWindow.get(t.windowId);
       if (!win) {
         win = {
@@ -156,7 +189,7 @@ function createNewtabEngine(env, syncEngine) {
 
     const localByUrl = new Map();
     for (const t of await env.tabs.query({})) {
-      if (syncEngine.isNewTabPage(t)) continue;
+      if (isNewTabPage(t)) continue;
       const u = syncEngine.realUrlOfTab(t);
       if (!localByUrl.has(u)) localByUrl.set(u, t);
     }
@@ -175,6 +208,10 @@ function createNewtabEngine(env, syncEngine) {
           t: open.t,
           localTabId: local ? local.id : null,
           localWindowId: local ? local.windowId : null,
+          // Only when the same page is also open HERE: that tab's own,
+          // already-loaded icon (same safeFaviconUrl rule). Never fetched
+          // for a remote-only tab — the page shows a letter instead.
+          favIconUrl: local ? safeFaviconUrl(local.favIconUrl) : null,
         });
       }
     }
@@ -185,12 +222,30 @@ function createNewtabEngine(env, syncEngine) {
     return { paused: false, profile, devices };
   }
 
+  // The single entry point background.js wires, in an onMessage listener
+  // of its own (not a branch inside the existing one): returns a promise
+  // for a message this module owns, or null for anything else, so the
+  // other modules' message handling never even sees these.
+  //
+  // Two messages rather than one on purpose: the local half is just one
+  // tabs.query and renders instantly; the remote half walks the whole
+  // profile's bookmark tree (readProfileEntries), so the page renders
+  // local tabs first and fills the "other devices" section in when this
+  // one answers, instead of the whole page waiting on the slower one.
+  function handleMessage(message) {
+    if (message && message.type === "NEWTAB_LOCAL") return getLocalData();
+    if (message && message.type === "NEWTAB_REMOTE") return getRemoteData();
+    return null;
+  }
+
   return {
+    isNewTabPage,
     getLocalData,
     getRemoteData,
+    handleMessage,
   };
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { createNewtabEngine };
+  module.exports = { createNewtabEngine, isNewTabPageUrl, NATIVE_NEWTAB_URLS };
 }
