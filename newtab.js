@@ -3,11 +3,12 @@
 //
 // DOM layer of the custom new tab page (newtab.html, wired via
 // manifest.json's chrome_url_overrides.newtab): a clock, a search box,
-// this device's open tabs grouped by window and tab group, and the tabs
-// open on the user's other devices. All the data assembly lives in
-// newtab-core.js (served by background.js's NEWTAB_LOCAL/NEWTAB_REMOTE
-// messages, see its header comment for why it isn't done here); this
-// file only renders it and reacts to clicks/keys.
+// this device's open tabs by window in the browser's own tab-strip order
+// (tab groups where they sit, folded when they're folded in the
+// browser), and the tabs open on the user's other devices. All the data
+// assembly lives in newtab-core.js (served by background.js's
+// NEWTAB_LOCAL/NEWTAB_REMOTE messages, see its header comment for why it
+// isn't done here); this file only renders it and reacts to clicks/keys.
 //
 // Every node is built with createElement/textContent, never innerHTML:
 // tab titles and URLs are arbitrary text controlled by whatever page is
@@ -18,14 +19,23 @@
 // the blank one you came from would otherwise just pile up. A tab
 // that's only open on another device opens right here, in this same
 // tab, instead.
+//
+// Keyboard-only use: every listed tab has a number (see numberTabs);
+// typing digits narrows the list to that number and Enter opens it.
+// Any other text searches titles/URLs, Enter opens the first match.
 // ============================================================
 
 (function () {
-  // Per-device UI convenience (which groups are folded on this page),
-  // same storage.local convention as every other local preference —
-  // keyed by group title, the only stable identity a group has (see
-  // groups-core.js), or `#<id>` for an untitled one.
-  const COLLAPSED_KEY = "newtabCollapsedGroups";
+  // Layout hint, read synchronously before anything renders: whether the
+  // last page had something to show in the "other devices" column. The
+  // remote half arrives a moment after the local one (see loadRemote), so
+  // deciding the two-column layout only once it's here would visibly
+  // reflow the page on every open. A per-device, throwaway convenience —
+  // localStorage on purpose (synchronous), nothing else is kept there.
+  const TWO_COL_HINT_KEY = "newtabTwoColumns";
+  try {
+    if (localStorage.getItem(TWO_COL_HINT_KEY) === "1") document.documentElement.classList.add("two-col");
+  } catch (e) {}
 
   // Chrome/Brave's own tab-group palette, as tabGroups reports it.
   const GROUP_COLORS = {
@@ -42,6 +52,7 @@
 
   const timeEl = document.getElementById("time");
   const dateEl = document.getElementById("date");
+  const searchBarEl = document.getElementById("searchBar");
   const searchEl = document.getElementById("search");
   const localEl = document.getElementById("local");
   const remoteEl = document.getElementById("remote");
@@ -51,7 +62,15 @@
   let selfTab = null;
   let localData = { windows: [] };
   let remoteData = { paused: false, devices: [] };
-  let collapsed = new Set();
+  let remoteLoaded = false;
+
+  // A group's fold state on this page is the browser's own (`collapsed`
+  // from tabGroups) — clicking its header here overrides that, in memory
+  // only and only until the browser's state changes: groupId →
+  // { collapsed, browserCollapsed } where `browserCollapsed` is what the
+  // browser said when the header was clicked. Folding/unfolding the group
+  // in the browser afterwards wins again (see isFolded).
+  const foldOverrides = new Map();
 
   // ---- clock ----
 
@@ -106,24 +125,74 @@
     return img;
   }
 
-  function matches(terms, ...fields) {
-    if (terms.length === 0) return true;
-    const haystack = fields.join(" ").toLowerCase();
-    return terms.every((t) => haystack.includes(t));
+  function entryTabs(entry) {
+    return entry.kind === "tab" ? [entry.tab] : entry.group.tabs;
   }
 
-  function itemButton(entry, key, meta, onActivate, isCurrent) {
+  function itemButton(entry, key, num, meta, onActivate, isCurrent) {
     const btn = el("button", "item" + (isCurrent ? " current" : ""));
     btn.type = "button";
     btn.dataset.key = key;
+    btn.dataset.num = String(num);
     btn.title = entry.url;
-    btn.append(iconFor(entry), el("span", "title", entry.title || entry.url), el("span", "meta", meta));
+    btn.append(
+      el("span", "num", String(num)),
+      iconFor(entry),
+      el("span", "title", entry.title || entry.url),
+      el("span", "meta", meta)
+    );
     btn.addEventListener("click", onActivate);
     return btn;
   }
 
-  function groupKey(group) {
-    return group.title || `#${group.id}`;
+  // ---- numbering + matching ----
+
+  // Every listed tab gets a number, in display order over the WHOLE,
+  // unfiltered list — this window, then the other windows, then the other
+  // devices — so a tab keeps its number while you type, and a tab inside
+  // a folded group has one too. A remote tab that's also open here reuses
+  // the local tab's number (it's the same tab a click would switch to);
+  // only remote-only ones get numbers of their own, after the local ones.
+  // Numbers follow positions, so they shift when tabs open/close/move.
+  function numberTabs(windows) {
+    const local = new Map(); // local tab id → number
+    let n = 0;
+    for (const win of windows) {
+      for (const entry of win.entries) for (const t of entryTabs(entry)) local.set(t.id, ++n);
+    }
+    const remote = new Map(); // `${device}|${url}` → number
+    for (const device of remoteData.devices) {
+      for (const t of device.tabs) {
+        const mine = t.localTabId !== null && t.localTabId !== undefined && local.get(t.localTabId);
+        remote.set(`${device.name}|${t.url}`, mine || ++n);
+      }
+    }
+    return { local, remote, max: n };
+  }
+
+  // A query of digits only is a tab number: it matches every tab whose
+  // number STARTS with those digits (typing "1" on the way to "12" keeps
+  // 12 in view), and the exact one gets selected (see markSelected).
+  // Falls back to plain text search when no tab has such a number, so a
+  // "2026" still finds titles containing it on a short list.
+  function buildQuery(numbers) {
+    const raw = searchEl.value.trim();
+    const terms = raw.toLowerCase().split(/\s+/).filter(Boolean);
+    let digits = null;
+    if (/^\d+$/.test(raw)) {
+      const all = [...numbers.local.values(), ...numbers.remote.values()];
+      if (all.some((num) => String(num).startsWith(raw))) digits = raw;
+    }
+    return {
+      active: terms.length > 0,
+      digits,
+      hit(num, ...fields) {
+        if (digits !== null) return String(num).startsWith(digits);
+        if (terms.length === 0) return true;
+        const haystack = fields.join(" ").toLowerCase();
+        return terms.every((t) => haystack.includes(t));
+      },
+    };
   }
 
   // ---- actions ----
@@ -150,28 +219,32 @@
     }
   }
 
-  async function toggleGroup(key) {
-    if (collapsed.has(key)) collapsed.delete(key);
-    else collapsed.add(key);
+  function isFolded(group) {
+    const o = foldOverrides.get(group.id);
+    if (o && o.browserCollapsed === group.collapsed) return o.collapsed;
+    foldOverrides.delete(group.id); // the browser's own state moved on — it wins again
+    return group.collapsed;
+  }
+
+  function toggleGroup(group) {
+    foldOverrides.set(group.id, { collapsed: !isFolded(group), browserCollapsed: group.collapsed });
     render();
-    try {
-      await browser.storage.local.set({ [COLLAPSED_KEY]: Array.from(collapsed) });
-    } catch (e) {}
   }
 
   // ---- render ----
 
-  function renderGroup(group, tabs, filtering, isMyWindow) {
-    const key = groupKey(group);
-    const isCollapsed = !filtering && collapsed.has(key);
-    const wrap = el("div", "group" + (isCollapsed ? " collapsed" : ""));
+  function renderGroup(group, tabs, query, numbers, isMyWindow) {
+    // While searching, every group with a match is open — a number typed
+    // for a tab inside a folded group must still show that tab.
+    const folded = !query.active && isFolded(group);
+    const wrap = el("div", "group" + (folded ? " collapsed" : ""));
     const color = GROUP_COLORS[group.color] || GROUP_COLORS.grey;
     wrap.style.setProperty("--group-color", color);
 
     const header = el("button", "group-header");
     header.type = "button";
-    header.dataset.key = `g:${key}`;
-    header.setAttribute("aria-expanded", String(!isCollapsed));
+    header.dataset.key = `g:${group.id}`;
+    header.setAttribute("aria-expanded", String(!folded));
     const dot = el("span", "dot");
     dot.style.background = color;
     header.append(
@@ -180,13 +253,12 @@
       el("span", "count", String(tabs.length)),
       el("span", "chevron", "▾")
     );
-    header.addEventListener("click", () => toggleGroup(key));
+    header.addEventListener("click", () => toggleGroup(group));
 
     const list = el("div", "group-tabs");
     for (const t of tabs) {
-      list.append(
-        itemButton(t, `t:${t.id}`, hostOf(t.url), () => switchTo(t.id, t.windowId), t.active && !isMyWindow)
-      );
+      const num = numbers.local.get(t.id);
+      list.append(itemButton(t, `t:${t.id}`, num, hostOf(t.url), () => switchTo(t.id, t.windowId), t.active && !isMyWindow));
     }
     wrap.append(header, list);
     return wrap;
@@ -194,16 +266,18 @@
 
   function render() {
     const focusedKey = (document.activeElement && document.activeElement.dataset.key) || null;
-    const terms = searchEl.value.toLowerCase().split(/\s+/).filter(Boolean);
-    const filtering = terms.length > 0;
-    let visible = 0;
-
-    // This device — the window this page lives in first.
-    localEl.replaceChildren();
     const myWindowId = selfTab ? selfTab.windowId : null;
     const windows = localData.windows
       .slice()
       .sort((a, b) => Number(b.id === myWindowId) - Number(a.id === myWindowId));
+    const numbers = numberTabs(windows);
+    const query = buildQuery(numbers);
+    document.querySelector("main").style.setProperty("--num-w", `${Math.max(2, String(numbers.max).length)}ch`);
+    let visible = 0;
+
+    // This device — the window this page lives in first, each window in
+    // its own tab-strip order (newtab-core.js's `entries`).
+    localEl.replaceChildren();
     const labelWindows = windows.length > 1;
     let windowNumber = 1;
     for (const win of windows) {
@@ -211,25 +285,23 @@
       const block = document.createDocumentFragment();
       let count = 0;
 
-      // Same order as the tab strip itself: pinned tabs (always first
-      // there), then the groups, then every other tab.
-      const appendTab = (t) => {
-        if (!matches(terms, t.title, t.url)) return;
-        const meta = hostOf(t.url) + (t.pinned ? " · pinned" : "");
-        block.append(
-          itemButton(t, `t:${t.id}`, meta, () => switchTo(t.id, t.windowId), t.active && !isMyWindow)
-        );
-        count += 1;
-      };
-      win.tabs.filter((t) => t.pinned).forEach(appendTab);
-      for (const g of win.groups) {
-        const groupHit = filtering && matches(terms, g.title);
-        const tabs = g.tabs.filter((t) => groupHit || matches(terms, t.title, t.url, g.title));
-        if (tabs.length === 0) continue;
-        block.append(renderGroup(g, tabs, filtering, isMyWindow));
-        count += tabs.length;
+      for (const entry of win.entries) {
+        if (entry.kind === "tab") {
+          const t = entry.tab;
+          const num = numbers.local.get(t.id);
+          if (!query.hit(num, t.title, t.url)) continue;
+          const meta = hostOf(t.url) + (t.pinned ? " · pinned" : "");
+          block.append(itemButton(t, `t:${t.id}`, num, meta, () => switchTo(t.id, t.windowId), t.active && !isMyWindow));
+          count += 1;
+        } else {
+          const g = entry.group;
+          const groupHit = query.active && query.digits === null && query.hit(0, g.title);
+          const tabs = g.tabs.filter((t) => groupHit || query.hit(numbers.local.get(t.id), t.title, t.url, g.title));
+          if (tabs.length === 0) continue;
+          block.append(renderGroup(g, tabs, query, numbers, isMyWindow));
+          count += tabs.length;
+        }
       }
-      win.tabs.filter((t) => !t.pinned).forEach(appendTab);
 
       if (count === 0) continue;
       const label = isMyWindow ? "This window" : `Window ${++windowNumber}`;
@@ -240,19 +312,23 @@
     // Other devices.
     remoteEl.replaceChildren();
     let remoteVisible = 0;
-    if (remoteData.paused && !filtering) {
+    if (remoteData.paused && !query.active) {
       remoteEl.append(el("div", "note", "Sync is paused — tabs on your other devices aren't shown."));
     }
     for (const device of remoteData.devices) {
-      const tabs = device.tabs.filter((t) => matches(terms, t.title, t.url, device.name));
+      const tabs = device.tabs.filter((t) =>
+        query.hit(numbers.remote.get(`${device.name}|${t.url}`), t.title, t.url, device.name)
+      );
       if (tabs.length === 0) continue;
       remoteEl.append(el("div", "sub-title", device.name));
       for (const t of tabs) {
+        const key = `${device.name}|${t.url}`;
         const isLocal = t.localTabId !== null && t.localTabId !== undefined;
         remoteEl.append(
           itemButton(
             t,
-            `r:${device.name}|${t.url}`,
+            `r:${key}`,
+            numbers.remote.get(key),
             isLocal ? "open here" : hostOf(t.url),
             () => (isLocal ? switchTo(t.localTabId, t.localWindowId) : openHere(t.url)),
             false
@@ -261,10 +337,12 @@
       }
       remoteVisible += tabs.length;
     }
-    remoteSectionEl.hidden = remoteVisible === 0 && !(remoteData.paused && !filtering);
+    remoteSectionEl.hidden = remoteVisible === 0 && !(remoteData.paused && !query.active);
     visible += remoteVisible;
 
-    emptyEl.hidden = !(filtering && visible === 0);
+    emptyEl.hidden = !(query.active && visible === 0);
+    updateLayout();
+    markSelected(query);
 
     // A re-render (a tab finished loading somewhere, say) mustn't yank
     // keyboard focus out from under someone arrowing through the list.
@@ -274,7 +352,32 @@
     }
   }
 
-  // ---- keyboard: type-to-search, Enter opens the first match, arrows move ----
+  // Two columns (this device | other devices) on a wide window, whenever
+  // the other-devices side has anything to show at all — decided on the
+  // UNFILTERED data so the layout doesn't jump around while typing. The
+  // width threshold itself is a media query in newtab.html; this only
+  // says whether there's a second column to have.
+  function updateLayout() {
+    if (!remoteLoaded) return; // keep the hint until the real answer is in
+    const twoCol = remoteData.paused || remoteData.devices.some((d) => d.tabs.length > 0);
+    document.documentElement.classList.toggle("two-col", twoCol);
+    try {
+      localStorage.setItem(TWO_COL_HINT_KEY, twoCol ? "1" : "0");
+    } catch (e) {}
+  }
+
+  // While searching, the tab Enter would open is highlighted: the exact
+  // number match when the query is a number, the first match otherwise.
+  function markSelected(query) {
+    const items = Array.from(document.querySelectorAll("main .item"));
+    for (const item of items) item.classList.remove("selected");
+    if (!query.active) return;
+    const exact = query.digits !== null && items.find((n) => n.dataset.num === query.digits);
+    const pick = exact || items[0];
+    if (pick) pick.classList.add("selected");
+  }
+
+  // ---- keyboard: type-to-search, Enter opens the selected match, arrows move ----
 
   function navigables() {
     return Array.from(document.querySelectorAll("main .item, main .group-header")).filter(
@@ -286,21 +389,21 @@
     const modified = e.ctrlKey || e.metaKey || e.altKey;
     if (document.activeElement === searchEl) {
       if (e.key === "Enter") {
-        const first = navigables().find((n) => n.classList.contains("item"));
-        if (first && searchEl.value.trim()) {
+        const selected = document.querySelector("main .item.selected");
+        if (selected) {
           e.preventDefault();
-          first.click();
+          selected.click();
         }
       } else if (e.key === "ArrowDown") {
-        const nav = navigables();
-        if (nav[0]) {
+        const target = document.querySelector("main .item.selected") || navigables()[0];
+        if (target) {
           e.preventDefault();
-          nav[0].focus();
+          target.focus();
         }
       } else if (e.key === "Escape" && searchEl.value) {
         e.preventDefault();
         searchEl.value = "";
-        render();
+        onSearchInput();
       }
       return;
     }
@@ -317,12 +420,31 @@
     } else if (e.key === "Escape") {
       searchEl.focus();
     } else if (e.key.length === 1 && e.key !== " " && !modified) {
-      // Typing anywhere on the page lands in the search box.
+      // Typing anywhere on the page — a digit included — lands in the
+      // search box.
       searchEl.focus();
     }
   });
 
-  searchEl.addEventListener("input", render);
+  // The search bar stays pinned at the top while the list scrolls under
+  // it; a new query jumps back to the start of the (now filtered) list.
+  function onSearchInput() {
+    render();
+    window.scrollTo(0, 0);
+  }
+  searchEl.addEventListener("input", onSearchInput);
+
+  // The selection highlight only means something while Enter would act
+  // on it, i.e. while the search box has focus.
+  searchEl.addEventListener("focus", () => document.body.classList.add("searching"));
+  searchEl.addEventListener("blur", () => document.body.classList.remove("searching"));
+
+  // The sticky other-devices column sits right below the sticky search
+  // bar, so it needs the bar's real height.
+  function measureBar() {
+    document.documentElement.style.setProperty("--bar-h", `${searchBarEl.offsetHeight}px`);
+  }
+  window.addEventListener("resize", measureBar);
 
   // ---- data loading + live refresh ----
 
@@ -339,6 +461,7 @@
       const data = await browser.runtime.sendMessage({ type: "NEWTAB_REMOTE" });
       if (data && Array.isArray(data.devices)) remoteData = data;
     } catch (e) {}
+    remoteLoaded = true;
     render();
   }
 
@@ -366,6 +489,7 @@
   browser.tabs.onCreated.addListener(scheduleRemote);
   browser.tabs.onRemoved.addListener(scheduleRemote);
   if (browser.tabGroups) {
+    // onUpdated covers a group being folded/unfolded in the browser.
     for (const ev of ["onCreated", "onUpdated", "onRemoved", "onMoved"]) {
       if (browser.tabGroups[ev]) browser.tabGroups[ev].addListener(scheduleLocal);
     }
@@ -385,16 +509,15 @@
 
   tick();
   setInterval(tick, 1000);
+  measureBar();
 
   (async () => {
     try {
       selfTab = await browser.tabs.getCurrent();
     } catch (e) {}
-    try {
-      const { [COLLAPSED_KEY]: saved } = await browser.storage.local.get(COLLAPSED_KEY);
-      collapsed = new Set(Array.isArray(saved) ? saved : []);
-    } catch (e) {}
     searchEl.focus();
+    // autofocus may have focused it before the listener above existed.
+    document.body.classList.toggle("searching", document.activeElement === searchEl);
     await loadLocal();
     loadRemote();
   })();

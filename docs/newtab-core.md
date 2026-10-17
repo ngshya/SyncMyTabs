@@ -7,8 +7,8 @@
 
 Replaces the browser's new tab page (`chrome_url_overrides.newtab` in
 `manifest.json` — supported on Chrome/Brave and Firefox): a clock and
-date, a search box, this device's open tabs grouped by window and browser
-tab group, and the tabs open on the user's other devices on the same
+date, a search box, this device's open tabs by window and browser tab
+group, and the tabs open on the user's other devices on the same
 profile.
 
 - **Split in two: data in `newtab-core.js`, DOM in `newtab.js`.**
@@ -64,6 +64,30 @@ profile.
   the dark theme, favicons sit on a small light chip (defined in
   `newtab.html`, not the shared `theme.css`), since many are drawn for
   light backgrounds and a black one would vanish.
+- **Local tabs come in the browser's own tab-strip order** — one
+  `entries` list per window, where a tab group is a single entry at the
+  position of its first tab, so ungrouped tabs between two groups stay
+  between them. See `getLocalData` in `newtab-core.js`.
+- **Fold state is the browser's, with an in-memory page override.** A
+  group folded in the browser shows folded here; clicking its header on
+  the page flips it for this page only, and only until the browser's own
+  state for that group changes (then the browser wins again). Nothing is
+  persisted. See `foldOverrides`/`isFolded` in `newtab.js`. While
+  searching, every group with a match is shown open.
+- **Every tab is numbered, for keyboard-only use.** Numbers run over the
+  whole unfiltered list in display order (this window, other windows,
+  then remote-only tabs — a remote tab also open here reuses the local
+  tab's number), so they don't change while typing. A digits-only query
+  matches numbers by prefix and selects the exact one for Enter; with no
+  such number it falls back to text search. Positional, so they shift as
+  tabs open/close/move. See `numberTabs`/`buildQuery` in `newtab.js`.
+- **Layout: sticky search bar; two columns on a wide window** (≥1100px,
+  media query in `newtab.html`) whenever the other-devices side has
+  anything to show — decided on unfiltered data so typing never reflows
+  it. The other-devices column is sticky with its own scroll. Since the
+  remote half arrives after the local one, the last decision is kept as
+  a synchronous `localStorage` hint (`newtabTwoColumns`) so the page
+  doesn't jump on open. See `updateLayout` in `newtab.js`.
 - **A click switches, then closes the new tab page behind it** — the
   blank tab you came from would otherwise pile up after every jump. See
   `switchTo` in `newtab.js`.

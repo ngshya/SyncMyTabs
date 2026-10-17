@@ -58,13 +58,13 @@ Firefox.** Keep this in mind in every change:
 | `groups-core.js` | **The independent tab-group leashing module** (see its own "Tab-group leashing" section below, and [`docs/groups-core.md`](docs/groups-core.md) for the full invariants) — same `env`-parameterized style as `sync-core.js`, plus takes the already-created sync engine instance (`createGroupsEngine(env, syncEngine)`) to reuse `getActiveProfile`/`getOrCreateProfileFolder`/`mergeFolderInto`/`isSyncEnabled` rather than re-implementing them. Chrome/Brave only (feature-detects `env.tabGroups`, a silent no-op on Firefox). |
 | `archive-core.js` | **The independent auto-archive module** (see its own "Auto-archive idle tabs" section below, and [`docs/archive-core.md`](docs/archive-core.md) for the full invariants) — same `env`-parameterized style, takes the sync engine instance (`createArchiveEngine(env, syncEngine)`) for the same reuse reasons as `groups-core.js`. Tracks each tab's last-focused time and, on by default, saves+closes one that's been idle past a threshold. |
 | `order-core.js` | **The independent tab & group order module** (see its own "Tab & group order" section below, and [`docs/order-core.md`](docs/order-core.md) for the full invariants) — same `env`-parameterized style, takes BOTH the sync engine (`isSyncEnabled`) and the archive engine (`getActivityMap`, reused rather than duplicated) instances: `createOrderEngine(env, syncEngine, archiveEngine)`. Off by default; lays out each window with groups first (alphabetical) then tabs by recency, only once idle, pausing after a detected manual move. |
-| `newtab-core.js` | **The data side of the custom new tab page** (see its own "Custom new tab page" section below, and [`docs/newtab-core.md`](docs/newtab-core.md) for the full invariants) — same `env`-parameterized style, takes the sync engine instance (`createNewtabEngine(env, syncEngine)`). Assembles this device's tabs by window/tab group and the other devices' open tabs for `newtab.html`, served through background.js messages so the background engine stays the only bookmark writer. |
+| `newtab-core.js` | **The data side of the custom new tab page** (see its own "Custom new tab page" section below, and [`docs/newtab-core.md`](docs/newtab-core.md) for the full invariants) — same `env`-parameterized style, takes the sync engine instance (`createNewtabEngine(env, syncEngine)`). Assembles this device's tabs by window in tab-strip order (groups in place, with the browser's fold state) and the other devices' open tabs for `newtab.html`, served through background.js messages so the background engine stays the only bookmark writer. |
 | `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s / `groups-core.js`'s / `archive-core.js`'s / `order-core.js`'s / `newtab-core.js`'s engine functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
 | `link-leash-content.js` | Content script for the leashing module — see its section below |
 | `popup.html` / `popup.js` | The **compact** toolbar popup — status, an on/off switch per feature module (open-tab sync, tab groups, auto-archive, tab & group order), a "Sync now" quick action, and a button to open `options.html`. Deliberately minimal; see "Popup vs. options page" below for why. |
 | `options.html` / `options.js` | The **full settings page**, opened as a plain tab (from the popup's "Open full settings" button, or by `browser.runtime.onInstalled` for first-run setup, since popups can't be opened programmatically) — device name, profiles, the shared check interval, and every module's detail settings (grouped into four cards: Open tabs sync, Tab groups, Auto-archive, Tab & group order), plus the theme selector. Mostly the same DOM-building code the old all-in-one popup used to have. |
 | `theme.css` / `theme.js` | Shared dark/light/system theme system, loaded by both `popup.html` and `options.html` — see "Popup vs. options page" below |
-| `newtab.html` / `newtab.js` | The **custom new tab page** (`chrome_url_overrides.newtab` in the manifest) — clock/date, a type-to-search box, this device's tabs by window and tab group, and the tabs open on other devices; clicking one switches to it and closes the new tab page. DOM-only — all data comes from `newtab-core.js` via the `NEWTAB_LOCAL`/`NEWTAB_REMOTE` messages. |
+| `newtab.html` / `newtab.js` | The **custom new tab page** (`chrome_url_overrides.newtab` in the manifest) — clock/date, a sticky type-to-search box, this device's tabs by window in tab-strip order, and the tabs open on other devices (a second column on wide windows); every tab is numbered for keyboard-only jumps; clicking one switches to it and closes the new tab page. DOM-only — all data comes from `newtab-core.js` via the `NEWTAB_LOCAL`/`NEWTAB_REMOTE` messages. |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page — by default loads the real URL only on an explicit click (not just on becoming visible), so autoplay media (YouTube, etc.) never starts just from switching tabs; `lazyRequireClick: false` in storage restores the old load-on-visible behavior |
 | `browser-polyfill.min.js` | Vendored Mozilla WebExtension polyfill so `browser.*` is promise-based on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
@@ -428,11 +428,14 @@ groups-core.js/archive-core.js docs above.
 
 Replaces the browser's new tab page (`chrome_url_overrides.newtab`, on
 both Chrome/Brave and Firefox): a clock and date, a search box, this
-device's open tabs grouped by window and browser tab group (folded
-per-group in the page itself, remembered in `newtabCollapsedGroups`),
-and the tabs open on the user's other devices on the same profile. A
-click switches to the tab — focusing its window — then closes the new
-tab page behind it; a tab only open on another device opens in place.
+device's open tabs by window in the browser's own tab-strip order (tab
+groups where they sit, folded when folded in the browser), and the tabs
+open on the user's other devices on the same profile — in a second
+column on a wide window, under a search bar that stays pinned while the
+list scrolls. Every tab is numbered: typing a number narrows to it,
+Enter opens it, no mouse needed. A click switches to the tab — focusing
+its window — then closes the new tab page behind it; a tab only open on
+another device opens in place.
 
 **Unlike every other module, this one has no on/off switch**:
 `chrome_url_overrides` is declarative, the browser either applies it for

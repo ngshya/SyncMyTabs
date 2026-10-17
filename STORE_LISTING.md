@@ -30,7 +30,7 @@ KEY FEATURES
 
 • Tab & group order (optional, off by default) — keep tab groups (Chrome/Brave) at the start of the window, alphabetically, followed by your other tabs sorted by how recently you used them. Only reorders once you've stepped away or been reading for a while, never while you're actively switching between tabs.
 
-• A minimal new tab page — the time, a search box, and every tab you have open (by window and tab group) plus what's open on your other devices. Start typing to filter, click to jump straight there. Note: SyncMyTabs replaces your new tab page; on Chrome, choose "Keep it" when asked — "Change it back" turns off the whole extension, sync included.
+• A minimal new tab page — the time, a search box, and every tab you have open (by window and tab group) plus what's open on your other devices. Start typing to filter, or type a tab's number and press Enter to jump straight there — no mouse needed. Note: SyncMyTabs replaces your new tab page; on Chrome, choose "Keep it" when asked — "Change it back" turns off the whole extension, sync included.
 
 • Light, dark, or system theme.
 

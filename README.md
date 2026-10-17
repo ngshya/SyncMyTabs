@@ -251,17 +251,24 @@ every other tab sorted by how recently you actually used it.
 Every new tab opens on a minimal SyncMyTabs page instead of the browser's
 own: the time and date, a search box, and everything you have open.
 
-- **Your open tabs, every window** — grouped by browser tab group
-  (Chrome/Brave), each group foldable right on the page (remembered next
-  time). Pinned tabs are marked as such.
+- **Your open tabs, every window** — in the same order as your tab strip,
+  browser tab groups (Chrome/Brave) right where they sit, folded if
+  they're folded in the browser (click a group's name to fold/unfold it
+  on the page only). Pinned tabs are marked as such.
 - **Your other devices' tabs** — what's open on each of your other devices
   on the same profile, read from the same synced bookmarks as everything
-  else. Ones that are also open here are marked "open here".
+  else. Ones that are also open here are marked "open here". On a wide
+  window they get a column of their own, next to yours.
 - **Click to jump** — clicking a tab switches to it (bringing its window to
   the front) and closes the new tab you came from, so blank tabs don't pile
   up. A tab that's only open on another device opens right there instead.
 - **Just start typing** to filter by title or address; **Enter** opens the
-  first match, the arrow keys move through the list, **Esc** clears.
+  first match, the arrow keys move through the list, **Esc** clears. The
+  search box stays at the top while you scroll.
+- **Every tab has a number** — type it and press **Enter** to jump there
+  without touching the mouse (typing `1` keeps 1, 10, 11… in view; the
+  exact match is the one Enter opens). Numbers follow the list order, so
+  they shift when tabs open, close or move.
 - Favicons are only ever the tab's own icon — no third-party favicon
   service, nothing leaves your device.
 - Follows the same light/dark/system theme as the rest of the extension.

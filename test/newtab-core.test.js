@@ -14,6 +14,21 @@ function newtabEngineFor(device) {
   return createNewtabEngine(device.env, device.engine);
 }
 
+// A window's entries as a compact, readable shape: "url" for a plain tab,
+// { group: title, collapsed, urls: [...] } for a tab group.
+function layout(win) {
+  return win.entries.map((e) =>
+    e.kind === "tab"
+      ? e.tab.url
+      : { group: e.group.title, collapsed: e.group.collapsed, urls: e.group.tabs.map((t) => t.url) }
+  );
+}
+
+// Every tab view in a window, grouped or not, in order.
+function allTabs(win) {
+  return win.entries.flatMap((e) => (e.kind === "tab" ? [e.tab] : e.group.tabs));
+}
+
 // Same helper as archive-core.test.js / ttl-cleanup.test.js.
 async function withFakeClock(startTime, fn) {
   const realNow = Date.now;
@@ -28,7 +43,7 @@ async function withFakeClock(startTime, fn) {
   }
 }
 
-test("lists every window's tabs, groups first, focused window first, new tab pages left out", async () => {
+test("lists every window's tabs, focused window first, new tab pages left out", async () => {
   const world = new SimWorld();
   const a = world.addDevice({ deviceName: "A" });
   const nt = newtabEngineFor(a);
@@ -47,18 +62,58 @@ test("lists every window's tabs, groups first, focused window first, new tab pag
   assert.equal(windows.length, 2);
   assert.equal(windows[0].id, second.id, "focused window comes first");
   assert.equal(windows[0].focused, true);
-  assert.deepEqual(windows[0].tabs.map((t) => t.url), ["https://second.example/"]);
+  assert.deepEqual(layout(windows[0]), ["https://second.example/"]);
 
   const first = windows[1];
   assert.equal(first.id, firstWindowId);
   assert.deepEqual(
-    first.groups.map((g) => ({ title: g.title, urls: g.tabs.map((t) => t.url) })),
-    [{ title: "Work", urls: ["https://work.example/"] }]
-  );
-  assert.deepEqual(
-    first.tabs.map((t) => t.url),
-    ["https://plain.example/"],
+    layout(first),
+    [{ group: "Work", collapsed: false, urls: ["https://work.example/"] }, "https://plain.example/"],
     "both kinds of new tab page are left out of the list"
+  );
+});
+
+test("entries follow the browser's tab strip exactly: a group sits where its tabs are, between ungrouped ones", async () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const nt = newtabEngineFor(a);
+
+  await a.openTab("https://before.example/");
+  await a.openGroupedTab("https://g1.example/", "G1", "Work");
+  await a.openTab("https://between.example/");
+  await a.openGroupedTab("https://h1.example/", "H1", "Play");
+  // A second tab opened INTO "Work" lands right after its last member,
+  // like the real strip — before "between", not at the end.
+  await a.openGroupedTab("https://g2.example/", "G2", "Work");
+  await a.openTab("https://after.example/");
+
+  const { windows } = await nt.getLocalData();
+  assert.deepEqual(layout(windows[0]), [
+    "https://before.example/",
+    { group: "Work", collapsed: false, urls: ["https://g1.example/", "https://g2.example/"] },
+    "https://between.example/",
+    { group: "Play", collapsed: false, urls: ["https://h1.example/"] },
+    "https://after.example/",
+  ]);
+});
+
+test("a group collapsed in the browser comes through as collapsed", async () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const nt = newtabEngineFor(a);
+
+  await a.openGroupedTab("https://open.example/", "Open", "Open group");
+  await a.openGroupedTab("https://folded.example/", "Folded", "Folded group");
+  const foldedId = a.ensureOpenGroup("Folded group");
+  await a.tabGroupsApi.update(foldedId, { collapsed: true });
+
+  const { windows } = await nt.getLocalData();
+  assert.deepEqual(
+    layout(windows[0]).map((e) => [e.group, e.collapsed]),
+    [
+      ["Open group", false],
+      ["Folded group", true],
+    ]
   );
 });
 
@@ -75,8 +130,8 @@ test("a lazy-restore placeholder shows the real page it stands for", async () =>
   await a.world.flush();
 
   const { windows } = await nt.getLocalData();
-  assert.deepEqual(windows[0].tabs.map((t) => t.url), ["https://real.example/page"]);
-  assert.equal(windows[0].tabs[0].title, "Real page");
+  assert.deepEqual(allTabs(windows[0]).map((t) => t.url), ["https://real.example/page"]);
+  assert.equal(allTabs(windows[0])[0].title, "Real page");
 });
 
 test("favicons: only the tab's own http(s)/data: icon, never anything else", async () => {
@@ -91,7 +146,7 @@ test("favicons: only the tab's own http(s)/data: icon, never anything else", asy
   await a.tabsApi.update(internalIcon.id, { favIconUrl: "chrome://theme/IDR_DEFAULT_FAVICON" });
 
   const { windows } = await nt.getLocalData();
-  const byUrl = new Map(windows[0].tabs.map((t) => [t.url, t]));
+  const byUrl = new Map(allTabs(windows[0]).map((t) => [t.url, t]));
   assert.equal(byUrl.get("https://icon.example/").favIconUrl, "https://icon.example/favicon.ico");
   assert.equal(byUrl.get("https://internal-icon.example/").favIconUrl, null);
   assert.equal(byUrl.get("https://no-icon.example/").favIconUrl, null);

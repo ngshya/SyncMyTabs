@@ -105,12 +105,17 @@ function createNewtabEngine(env, syncEngine) {
     };
   }
 
-  // This device's open tabs, every window. Each window: its browser tab
-  // groups (in tab-strip order — position of each group's first tab),
-  // each with its own tabs, then every ungrouped tab, pinned ones
-  // included (they're simply first in strip order). New tab pages — this
-  // one and any other — are left out; a new tab page listing itself
-  // would just be noise. The focused window comes first.
+  // This device's open tabs, every window, in EXACTLY the browser's own
+  // tab-strip order: each window is one `entries` list where a browser tab
+  // group appears as a single `{ kind: "group" }` entry at the position of
+  // its first tab (holding its own tabs, in order), and every other tab as
+  // a `{ kind: "tab" }` entry where it sits — so ungrouped tabs between two
+  // groups stay between them, and pinned tabs come first because that's
+  // where the strip keeps them. Each group carries the browser's own
+  // `collapsed` state (false on Firefox, which has no tab groups), which
+  // the page uses as its default fold state. New tab pages — this one and
+  // any other — are left out; a new tab page listing itself would just be
+  // noise. The focused window comes first, then the rest by window id.
   async function getLocalData() {
     const allTabs = (await env.tabs.query({}))
       .slice()
@@ -134,13 +139,7 @@ function createNewtabEngine(env, syncEngine) {
       if (isNewTabPage(t)) continue;
       let win = byWindow.get(t.windowId);
       if (!win) {
-        win = {
-          id: t.windowId,
-          focused: t.windowId === focusedWindowId,
-          groups: [],
-          tabs: [],
-          groupIndex: new Map(),
-        };
+        win = { id: t.windowId, focused: t.windowId === focusedWindowId, entries: [], groupIndex: new Map() };
         byWindow.set(t.windowId, win);
       }
       const view = tabView(t);
@@ -148,18 +147,26 @@ function createNewtabEngine(env, syncEngine) {
         let group = win.groupIndex.get(t.groupId);
         if (!group) {
           const info = groupsById.get(t.groupId);
-          group = { id: info.id, title: info.title || "", color: info.color || "grey", tabs: [] };
+          group = {
+            id: info.id,
+            title: info.title || "",
+            color: info.color || "grey",
+            collapsed: !!info.collapsed,
+            tabs: [],
+          };
           win.groupIndex.set(t.groupId, group);
-          win.groups.push(group);
+          win.entries.push({ kind: "group", group });
         }
         group.tabs.push(view);
       } else {
-        win.tabs.push(view);
+        win.entries.push({ kind: "tab", tab: view });
       }
     }
 
     const windows = Array.from(byWindow.values()).map(({ groupIndex, ...w }) => w);
-    windows.sort((a, b) => Number(b.focused) - Number(a.focused));
+    windows.sort(
+      (a, b) => Number(b.focused) - Number(a.focused) || String(a.id).localeCompare(String(b.id), undefined, { numeric: true })
+    );
     return { windows };
   }
 
