@@ -125,7 +125,9 @@ profile.
   cursor in the page. Costs: the address bar shows that address, and Back
   goes to the plain new tab page (which comes straight back). Hence a
   setting.
-- **Clock** — bold; seconds by default (`clockSeconds`).
+- **Clock** (`newtab-clock.js`) — bold; 24-hour (`clock24h`, `hourCycle:
+  "h23"`) and seconds (`clockSeconds`) by default; with `clock24h` off,
+  the browser language's own format.
 - **Optional Matrix rain** (`matrixRain`, off by default,
   `newtab-matrix.js`): a canvas behind everything (z-index -1, 16%
   opacity), drawn only while the page background is actually dark (read

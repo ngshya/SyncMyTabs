@@ -295,8 +295,8 @@ own: the time and date, a search box, and everything you have open.
   while you type.
 - **The cursor starts in the search box**, not the address bar (setting,
   on by default — the address bar then shows the page's own address).
-- The clock is in bold, with seconds (setting), and the date and time are
-  in your browser's language.
+- The clock is in bold, 24-hour, with seconds (each a setting), and the
+  date is in your browser's language.
 - **Optional Matrix rain** in the background of the dark and black themes
   (setting, off by default) — faint enough to leave the text readable,
   and off for anyone whose system asks for reduced motion.

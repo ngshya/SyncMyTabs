@@ -37,18 +37,21 @@ describe("new tab page extras", { skip: SKIP }, () => {
     const opt = await b.openPage("options.html");
     await sleep(500);
     const card = await opt.locator(".card").last().evaluate((c) => Array.from(c.querySelectorAll(".section-title, label")).map((n) => (n.querySelector("input") ? (n.querySelector("input").checked ? "x" : "-") : "#") + n.textContent.trim().split(" ")[0]));
-    assert.deepEqual(card, ["#Show", "xTabs", "xTabs", "xTabs", "-Bookmarks", "#Look", "xSeconds", "-Put", "-Matrix"]);
+    assert.deepEqual(card, ["#Show", "xTabs", "xTabs", "xTabs", "-Bookmarks", "#Look", "xSeconds", "x24-hour", "-Put", "-Matrix"]);
     await opt.close();
   });
 
-  test("clock: bold, seconds by default, without them when turned off (live)", async () => {
+  test("clock: bold, 24-hour with seconds by default; both settings apply live", async () => {
     const p = await b.openNewtab();
     const time = () => p.evaluate(() => document.getElementById("time").textContent);
     assert.equal(await p.evaluate(() => getComputedStyle(document.getElementById("time")).fontWeight), "600");
-    assert.match(await time(), /\d{1,2}[:.]\d{2}[:.]\d{2}/);
+    assert.match(await time(), /^\d{2}:\d{2}:\d{2}$/, "HH:MM:SS, even in an English (AM/PM) browser");
     await b.setSettings({ clockSeconds: false });
     await sleep(500);
-    assert.doesNotMatch(await time(), /\d{1,2}[:.]\d{2}[:.]\d{2}/);
+    assert.match(await time(), /^\d{2}:\d{2}$/);
+    await b.setSettings({ clock24h: false });
+    await sleep(500);
+    assert.match(await time(), /^\d{1,2}:\d{2}\s?(AM|PM)$/, "the browser language's own format (English here)");
     await p.close();
   });
 

@@ -22,6 +22,7 @@ const NewtabSettings = (function () {
     ["otherDevices", true, "Tabs on your other devices", "Show"],
     ["bookmarksBar", false, "Bookmarks bar at the top (a copy of the browser's, so you can keep its own hidden)", "Show"],
     ["clockSeconds", true, "Seconds on the clock", "Look & feel"],
+    ["clock24h", true, "24-hour clock (off: the browser language's own format, e.g. AM/PM)", "Look & feel"],
     ["focusSearch", true, "Put the cursor in the search box, not the address bar (the address bar then shows the page's own address)", "Look & feel"],
     ["matrixRain", false, "Matrix rain in the background (dark and black themes only)", "Look & feel"],
   ];
