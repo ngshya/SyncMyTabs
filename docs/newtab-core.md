@@ -8,8 +8,7 @@
 Replaces the browser's new tab page (`chrome_url_overrides.newtab` in
 `manifest.json` — supported on Chrome/Brave and Firefox): a clock and
 date, a search box, this device's open tabs by window and browser tab
-group, and the tabs open on the user's other devices on the same
-profile.
+group, and the tabs auto-archived over the last few days.
 
 - **Split in two: data in `newtab-core.js`, DOM in `newtab.js`.**
   `newtab-core.js` is an ordinary `env`-parameterized module
@@ -17,14 +16,14 @@ profile.
   others; `newtab.js` only renders what it returns and handles
   clicks/keys. See the header comments of both files.
 - **The data goes through background.js messages
-  (`NEWTAB_LOCAL`/`NEWTAB_REMOTE`), not a second engine in the page.**
-  The remote half reads the bookmark tree through `readProfileEntries`,
-  which self-heals duplicate folders with real writes — an engine living
-  in every open new tab page would mean concurrent, un-serialized writers
-  on the same tree. Two messages rather than one so local tabs (a single
-  `tabs.query`) render instantly while the slower bookmark walk fills the
-  "other devices" section in afterwards. See `handleMessage`'s comment
-  in `newtab-core.js`.
+  (`NEWTAB_LOCAL`/`NEWTAB_ARCHIVED`/`NEWTAB_BOOKMARKS`), not a second
+  engine in the page.** The archived half finds the profile folder
+  through `getOrCreateProfileFolder`, which can create it and self-heals
+  duplicates with real writes — an engine living in every open new tab
+  page would mean concurrent, un-serialized writers on the same tree.
+  Separate messages so local tabs (a single `tabs.query`) render
+  instantly while the slower bookmark walk fills the archived section in
+  afterwards. See `handleMessage`'s comment in `newtab-core.js`.
 - **Self-contained: no other module knows this one exists.**
   `sync-core.js`, `groups-core.js`, `archive-core.js`, `order-core.js`
   and the popup/options UI never reference it; `background.js` wires it
@@ -48,21 +47,22 @@ profile.
   without any new-tab knowledge, through the generic "http(s) tabs only"
   rule `sync-core.js` already applies to what it syncs (see their own
   docs).
-- **The remote half is skipped entirely while sync is paused**
-  (`{ paused: true }`, nothing read) — reading it can write to the
-  bookmark tree (self-heal, creating a missing profile folder), and the
-  master switch's contract is "nothing touches bookmarks in either
-  direction". See `getRemoteData`'s comment.
-- **Remote entries link to a local copy when there is one** (`localTabId`/
-  `localWindowId`): with sync running, almost every remote tab is
-  mirrored in here anyway, so that section is mostly a "what's open on
-  which device" view; a click switches to the local copy, and only a
-  not-yet-mirrored one is actually opened (in place, in the new tab).
+- **The archived half is skipped entirely while sync is paused**
+  (`{ paused: true }`, nothing read; the section only says so) — finding
+  the profile folder can write to the bookmark tree (self-heal, creating
+  a missing one), and the master switch's contract is "nothing touches
+  bookmarks in either direction". See `getArchivedData`'s comment.
+- **No "other devices" section any more (removed in 4.17.0).** With sync
+  running, every tab opened on another device is mirrored in here within
+  seconds and a close anywhere closes it everywhere (then the folder is
+  deleted), so such a list only repeated this device's own tabs, and
+  there's no history of tabs closed elsewhere to show instead — the
+  archive is that history. Don't bring it back without a new reason.
 - **Favicons: only the tab's own icon, never a third-party service.**
   `safeFaviconUrl` keeps only http(s)/`data:image/` icon URLs the browser
   already loaded for that tab, loaded with `no-referrer`; anything else
-  gets a letter placeholder. A remote tab gets the icon of its local copy
-  when it's also open here, a letter otherwise. A favicon service
+  gets a letter placeholder. An archived tab gets the icon of an open tab
+  on the same site, a letter otherwise. A favicon service
   (google.com/s2/favicons and the like) would leak every open tab's
   domain off-device — PRIVACY.md promises nothing leaves the device. In
   the dark theme, favicons sit on a small light chip (defined in
@@ -80,8 +80,7 @@ profile.
   searching, every group with a match is shown open.
 - **Every tab is numbered, for keyboard-only use.** Numbers run over the
   whole unfiltered list in display order (this window, other windows,
-  then remote-only tabs — a remote tab also open here reuses the local
-  tab's number), so they don't change while typing. A digits-only query
+  then archived tabs), so they don't change while typing. A digits-only query
   matches numbers by prefix and selects the exact one for Enter; with no
   such number it falls back to text search. Positional, so they shift as
   tabs open/close/move. See `numberTabs`/`buildQuery` in `newtab.js`.
@@ -92,19 +91,30 @@ profile.
   width; a group's tabs are marked by a thin bar in its colour rather
   than an indent, so every grid's columns line up. Up/Down move by row
   (`rowNeighbour` in `newtab.js`), Left/Right through reading order.
+- **Recently auto-archived tabs** (`archived`, on by default; the last
+  `archivedDays` calendar days, default 7, today counting as one) — last
+  section, by day, newest first; a click reopens one in place. Read-only
+  from `<profile>/_archive/<year>/<month>/<day>/` (archive-core.js's
+  tree; the folder title is repeated in `newtab-core.js`, a test keeps
+  the two equal), so it covers every device on the profile. Days come
+  from the folder names, not `dateAdded` (bookmark-sync tools may reset
+  it); a URL archived twice shows once, one open again here not at all;
+  skipped while sync is paused. See `getArchivedData` in `newtab-core.js`.
 - **Which sections show is a setting** — `newtabSections` in
-  `storage.local` (`thisWindow`/`otherWindows`/`otherDevices`, all on by
-  default), set from the options page's "New tab page" card
-  (`newtab-options.js`, which keeps its own copy of the key and
-  defaults). Applied live through `storage.onChanged`. Hidden sections
-  get no numbers, and with "other devices" off the remote half isn't
-  even requested, so nothing walks the bookmark tree for it.
+  `storage.local` (`thisWindow`/`otherWindows`/`archived`, all on by
+  default, plus the number `archivedDays`), set from the options page's
+  "New tab page" card (`newtab-options.js`). Applied live through
+  `storage.onChanged`. Hidden sections get no numbers, and with
+  "archived" off that half isn't even requested, so nothing walks the
+  bookmark tree for it. (A stale `otherDevices` key from before 4.17.0
+  is simply ignored.)
 - **Settings live in one place: `newtab-settings.js`** — the storage key
   (`newtabSections`, a historical name), every default and the options
   card's labels, as the global `NewtabSettings` (`load`/`save`/`onChange`/
   `merge`). Loaded by `newtab.html` and `options.html`; every other file
   reads settings through it, none keeps its own copy. A new setting is one
-  line in its `OPTIONS` plus the code that uses it.
+  line in its `OPTIONS` plus the code that uses it (a boolean default is a
+  checkbox on the options card, a number one a number field).
 - **Web search from the same box** (`newtab-search.js` + the "web search"
   section of `newtab.js`). Enter still opens the selected tab; with no tab
   matching — or with Shift+Enter — the web row runs: an address is opened
@@ -160,9 +170,10 @@ profile.
 - **This device's tabs can be closed from the list** — a ✕ at the end
   of the row, shown on hover or keyboard focus, or Delete on the focused
   row (`closeTab` in `newtab.js`). Each row is two sibling buttons (the
-  tab and its ✕), since HTML doesn't allow one inside the other. Other
-  devices' tabs get none: closing one there would mean writing to the
-  bookmark tree from the page, which only the background engine does. A
+  tab and its ✕), since HTML doesn't allow one inside the other.
+  Archived tabs get none: removing one from the archive would mean
+  writing to the bookmark tree from the page, which only the background
+  engine does. A
   close here is an ordinary `tabs.remove`, so sync treats it like any
   other close.
 - **A click switches, then closes the new tab page behind it** — the
@@ -175,5 +186,6 @@ profile.
   new tab page. See `docs/known-limitations.md`.
 - **Live refresh, only while visible**: tab/tab-group events re-fetch the
   local half (150 ms debounce); bookmark events — every device heartbeat
-  is one — re-fetch the remote half (1 s debounce). A hidden new tab page
+  is one — and tabs opening/closing re-fetch the archived half (1 s
+  debounce). A hidden new tab page
   refreshes nothing until it's shown again (`visibilitychange`).

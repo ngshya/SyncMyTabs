@@ -1,6 +1,6 @@
 // The new tab page's main flow in a real browser: tab-strip order, groups
-// and their fold state, numbers, search, two columns, other devices,
-// closing from the list, settings applied live, switching to a tab.
+// and their fold state, numbers, search, two columns, recently archived
+// tabs, closing from the list, settings applied live, switching to a tab.
 
 const { describe, test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
@@ -34,8 +34,8 @@ describe("new tab page", { skip: SKIP }, () => {
       await chrome.tabs.update(id("github.com"), { pinned: true });
       return { work, research };
     });
-    await b.addRemoteTab("Phone", "Train timetable", "https://trains.example/", 1);
-    await b.addRemoteTab("Phone", "Morning news digest", "https://news.example/today", 2);
+    await b.addArchivedTab("Yesterday's article", "https://old.example/article", 1);
+    await b.addArchivedTab("Ancient thread", "https://forum.example/thread", 10);
   });
   after(() => b && b.close());
 
@@ -81,22 +81,18 @@ describe("new tab page", { skip: SKIP }, () => {
   test("numbers and text search select what Enter would open", async () => {
     const p = await b.openNewtab();
     const shown = () => p.evaluate(() => Array.from(document.querySelectorAll("main .item")).filter((n) => n.offsetParent && !n.classList.contains("web")).map((n) => `${n.dataset.num}${n.classList.contains("selected") ? "*" : ""}`));
+    await p.waitForSelector("#archivedSection:not([hidden])", { timeout: 8000 });
     await p.keyboard.type("5");
-    assert.deepEqual(await shown(), ["5*", "5"], "local tab 5 + the remote copy reusing its number");
+    assert.deepEqual(await shown(), ["5*"]);
+    await p.keyboard.press("Escape");
+    await p.keyboard.type("7");
+    assert.deepEqual(await shown(), ["7*"], "the archived tab, numbered after the open ones");
     await p.keyboard.press("Escape");
     await p.keyboard.type("6");
     assert.deepEqual(await shown(), ["6*"], "a tab inside a folded group is still found");
     await p.keyboard.press("Escape");
     await p.keyboard.type("cal");
     assert.deepEqual(await shown(), ["3*"]);
-    await p.close();
-  });
-
-  test("other devices: remote-only tabs get their own numbers, local copies say 'open here'", async () => {
-    const p = await b.openNewtab();
-    await p.waitForSelector("#remoteSection:not([hidden])", { timeout: 8000 });
-    const remote = await p.evaluate(() => Array.from(document.querySelectorAll("#remote .item")).map((n) => `${n.dataset.num} ${n.querySelector(".title").textContent} | ${n.querySelector(".meta").textContent}`));
-    assert.deepEqual(remote, ["7 Train timetable | trains.example", "5 Morning news digest | open here"]);
     await p.close();
   });
 
@@ -113,11 +109,12 @@ describe("new tab page", { skip: SKIP }, () => {
 
   test("sections can be hidden from the settings, live; the black theme is black", async () => {
     const p = await b.openNewtab();
-    await b.setSettings({ otherDevices: false, thisWindow: false });
+    await p.waitForSelector("#archivedSection:not([hidden])", { timeout: 8000 });
+    await b.setSettings({ archived: false, thisWindow: false });
     await sleep(500);
-    assert.equal(await p.evaluate(() => document.getElementById("remoteSection").hidden), true);
+    assert.equal(await p.evaluate(() => document.getElementById("archivedSection").hidden), true);
     assert.equal(await p.locator("#local .item").count(), 0);
-    await b.setSettings({ otherDevices: true, thisWindow: true });
+    await b.setSettings({ archived: true, thisWindow: true });
     await b.setStorage({ themePreference: "black" });
     await sleep(500);
     assert.equal(await p.locator("#local .item").count() > 0, true);
@@ -126,21 +123,50 @@ describe("new tab page", { skip: SKIP }, () => {
     await p.close();
   });
 
-  test("✕ only on hover and only on this device's tabs; ✕ and Delete close the tab", async () => {
+  test("✕ only on hover and only on open tabs; ✕ and Delete close the tab", async () => {
     const p = await b.openNewtab();
-    await p.waitForSelector("#remoteSection:not([hidden])", { timeout: 8000 });
+    await p.waitForSelector("#archivedSection:not([hidden])", { timeout: 8000 });
     const row = (title) => p.locator(".row", { has: p.locator(".title", { hasText: title }) }).first();
     const closeDisplay = (title) => row(title).locator(".close").evaluate((n) => getComputedStyle(n).display);
     assert.equal(await closeDisplay("Design doc"), "none");
     await row("Design doc").hover();
     assert.equal(await closeDisplay("Design doc"), "flex");
-    assert.equal(await p.locator("#remote .close").count(), 0);
+    assert.equal(await p.locator("#archived .close").count(), 0);
     await row("Design doc").locator(".close").click();
     await row("Morning news").locator(".item").focus();
     await p.keyboard.press("Delete");
     await sleep(600);
     const titles = await b.bg(async () => (await chrome.tabs.query({})).map((t) => t.title));
     assert.ok(!titles.includes("Design doc: sync v5") && !titles.includes("Morning news digest"));
+    await p.close();
+  });
+
+  test("auto-archived tabs: the last n days by day, numbered after the rest, a click reopens one here", async () => {
+    const p = await b.openNewtab();
+    await p.waitForSelector("#archivedSection:not([hidden])", { timeout: 8000 });
+    const archived = () =>
+      p.evaluate(() =>
+        Array.from(document.querySelectorAll("#archived .sub-title, #archived .item")).map((n) =>
+          n.classList.contains("item") ? `${n.dataset.num} ${n.querySelector(".title").textContent}` : `[${n.textContent}]`
+        )
+      );
+    // Numbered right after the open tabs (closing tabs in the test above
+    // has shifted those).
+    const n = 1 + (await p.evaluate(() => Math.max(...Array.from(document.querySelectorAll("#local .item")).map((i) => Number(i.dataset.num)))));
+    assert.equal(await p.textContent("#archivedTitle"), "Auto-archived · last 7 days");
+    assert.deepEqual(await archived(), ["[Yesterday]", `${n} Yesterday's article`], "10 days ago is out");
+
+    await b.setSettings({ archivedDays: 30 });
+    await p.waitForFunction(() => document.querySelectorAll("#archived .item").length === 2, null, { timeout: 8000 });
+    assert.equal((await archived()).at(-1), `${n + 1} Ancient thread`);
+    await b.setSettings({ archived: false });
+    await p.waitForSelector("#archivedSection[hidden]", { state: "attached", timeout: 8000 });
+    await b.setSettings({ archived: true, archivedDays: 7 });
+    await p.waitForSelector("#archivedSection:not([hidden])", { timeout: 8000 });
+
+    await p.keyboard.type(String(n));
+    await p.keyboard.press("Enter");
+    await p.waitForURL("https://old.example/article", { timeout: 5000 });
     await p.close();
   });
 

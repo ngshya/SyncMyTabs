@@ -5,11 +5,12 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { NewtabSettings } = require("../newtab-settings.js");
 
-test("defaults: tab sections, seconds and search focus on; bookmarks bar and matrix rain off", () => {
+test("defaults: tab sections (archived: 7 days), seconds and search focus on; bookmarks bar and matrix rain off", () => {
   assert.deepEqual(NewtabSettings.DEFAULTS, {
     thisWindow: true,
     otherWindows: true,
-    otherDevices: true,
+    archived: true,
+    archivedDays: 7,
     bookmarksBar: false,
     clockSeconds: true,
     clock24h: true,
@@ -29,7 +30,7 @@ test("every option has a label and a group, and keys are unique", () => {
   const keys = NewtabSettings.OPTIONS.map(([key]) => key);
   assert.equal(new Set(keys).size, keys.length);
   for (const [key, value, label, group] of NewtabSettings.OPTIONS) {
-    assert.equal(typeof value, "boolean", key);
+    assert.ok(typeof value === "boolean" || (Number.isInteger(value) && value >= 1), key);
     assert.ok(label && group, key);
   }
 });

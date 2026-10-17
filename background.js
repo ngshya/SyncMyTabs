@@ -68,7 +68,7 @@
 // newtab-core.js is the data side of the custom new tab page
 // (newtab.html, via manifest.json's chrome_url_overrides): this
 // device's tabs across every window grouped by tab group, plus the tabs
-// open on the user's other devices. Fully self-contained — no other
+// auto-archived over the last few days. Fully self-contained — no other
 // module knows it exists; it's wired with its own onMessage listener at
 // the very end of this file, apart from the one every other module
 // shares. See newtab-core.js's own header comment.
