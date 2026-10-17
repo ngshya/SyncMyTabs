@@ -76,9 +76,15 @@
       text-transform: uppercase;
       letter-spacing: 0.06em;
       color: var(--section-title);
-      margin: 0 0 6px 10px;
+      margin: 0 0 10px;
+      text-align: center;
     }
-    #local .section-title:not(:first-child) { margin-top: 24px; }
+    /* A new window (or the other-devices part) starts after a clear gap,
+       so its centred title reads as the start of a new section rather
+       than one more line of the list above. Margins collapse, so a group
+       right before it doesn't add its own gap on top. */
+    #local .section-title:not(:first-child) { margin-top: 44px; }
+    #remoteSection { margin-top: 44px; }
     .sub-title {
       font-size: 12px;
       color: var(--muted);
