@@ -335,3 +335,27 @@ test("archived: skipped while sync is paused, bookmark tree untouched", async ()
   assert.deepEqual(await newtabEngineFor(a).getArchivedData(7), { paused: true, days: [] });
   assert.equal(JSON.stringify(world.root), before);
 });
+
+// ---- one new tab page per window ----
+
+test("closeOtherNewTabPages: older new tab pages in the same window close; other windows, pinned ones and normal tabs stay", async () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const nt = createNewtabEngine(a.env, a.engine);
+
+  const web = await a.openTab("https://site.example/");
+  const old1 = await a.openTab("chrome://newtab/");
+  const old2 = await a.openTab(a.env.runtime.getURL("newtab.html?focus"));
+  const pinned = await a.openTab("chrome://newtab/");
+  await a.tabsApi.update(pinned.id, { pinned: true });
+  const keep = await a.openTab("chrome://newtab/");
+  const otherWindow = await a.windowsApi.create({ url: "chrome://newtab/" });
+  await a.world.flush();
+
+  const closed = await nt.handleMessage({ type: "NEWTAB_SINGLE", tabId: keep.id });
+  assert.deepEqual(closed.sort(), [old1.id, old2.id].sort());
+  const left = (await a.tabsApi.query({})).map((t) => t.id);
+  for (const id of [web.id, pinned.id, keep.id]) assert.ok(left.includes(id));
+  assert.equal((await a.tabsApi.query({ windowId: otherWindow.id })).length, 1, "the other window's new tab page stays");
+  assert.deepEqual(await nt.closeOtherNewTabPages("no-such-tab"), [], "unknown tab: nothing closed");
+});

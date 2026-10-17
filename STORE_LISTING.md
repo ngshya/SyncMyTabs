@@ -1,22 +1,25 @@
 # Chrome Web Store listing copy
 
 Copy-paste ready text for the Chrome Web Store Developer Dashboard's "Store
-listing" tab. Keep this in sync with `README.md` when the feature set
+listing" tab — plain text only (the store shows no Markdown: no bold, no
+links), which is why the README's opening paragraphs are written the same
+way: they're the description's first three paragraphs, verbatim. Keep this in sync with `README.md` when the feature set
 changes — same spirit as `PERMISSIONS.md`/`PRIVACY.md`.
 
 ## Summary (132 characters max)
 
-> Sync your open tabs across devices using your own bookmarks. No server, no account, no cloud.
+> Sync your open tabs across devices through your own bookmarks, plus a new tab page listing them all. No server, no account.
 
-(93 characters)
+(123 characters)
 
 ## Description
 
 ```
-SyncMyTabs keeps your open browser tabs in sync across all your devices — without a server, without an account, and without any cloud service of its own.
+Sync your open browser tabs across devices — organized by profile, with no server, no account, and no cloud service of its own.
 
-HOW IT WORKS
-Instead of routing your tabs through someone else's server, SyncMyTabs reads and writes a small, structured folder in your own bookmarks. Whatever bookmark-sync mechanism you already trust — your browser's built-in sync, Floccus, xBrowserSync, or anything else — is what actually carries the data between your devices. If your bookmarks sync, your tabs sync.
+SyncMyTabs uses your bookmarks as the transport. It reads and writes a small, structured bookmark tree and reacts to changes in it — nothing more. The actual moving of data between devices is done by whatever bookmark-sync mechanism you already use: your browser's built-in sync, or a third-party tool like Floccus or xBrowserSync. If your bookmarks sync, your tabs sync.
+
+It also replaces the new tab page with one that lists every tab you have open — by window and tab group, searchable, each one a click or a number away. That makes it a natural fit for browsing in full screen, or with the tab bar hidden or kept narrow: every tab is always one new tab away.
 
 KEY FEATURES
 
@@ -30,7 +33,7 @@ KEY FEATURES
 
 • Tab & group order (optional, off by default) — keep tab groups (Chrome/Brave) at the start of the window, alphabetically, followed by your other tabs sorted by how recently you used them. Only reorders once you've stepped away or been reading for a while, never while you're actively switching between tabs.
 
-• A minimal new tab page — the time, a search box, every tab you have open (by window and tab group), and the tabs auto-archived over the last 7 days (you choose how many), by day, so you can reopen one with a click. Start typing to filter, or type a tab's number and press Enter to jump straight there — no mouse needed. The same box searches the web (your default engine, or Google, Maps, YouTube, Claude, Perplexity, Wikipedia with a one-letter shortcut). Optional Matrix rain in dark mode. You choose which sections it shows, and can add a copy of your bookmarks bar at the top so the browser's own can stay hidden. Note: SyncMyTabs replaces your new tab page; on Chrome, choose "Keep it" when asked — "Change it back" turns off the whole extension, sync included.
+• A minimal new tab page — the time, a search box, every tab you have open (by window and tab group), and the tabs auto-archived over the last 7 days (you choose how many), by day, so you can reopen one with a click. Start typing to filter, or type a tab's number and press Enter to jump straight there — no mouse needed. The same box searches the web (your default engine, or Google, Maps, YouTube, Claude, Perplexity, Wikipedia with a one-letter shortcut). Only one new tab page per window, so they don't pile up. Optional Matrix rain in dark mode. You choose which sections it shows, and can add a copy of your bookmarks bar at the top so the browser's own can stay hidden. Note: SyncMyTabs replaces your new tab page; on Chrome, choose "Keep it" when asked — "Change it back" turns off the whole extension, sync included.
 
 • Light, dark, pure black, or system theme.
 
@@ -56,6 +59,9 @@ most), all 1280×800 from [`store-assets/`](store-assets/):
 ## What's new (for the release / an announcement)
 
 ```
+4.18.0
+• New tab page: only one per window — opening a new one closes the older ones in that window, so blank new tabs don't pile up (a setting, on by default).
+
 4.17.0
 • New tab page: a "recently auto-archived" section — the tabs auto-archive closed over the last 7 days (adjustable, 1 = today only), grouped by day; one click reopens a tab right there.
 • New tab page: the "tabs on your other devices" section is gone — sync already opens every one of those tabs on this device, so it only repeated your own list.

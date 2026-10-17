@@ -15,6 +15,7 @@ test("defaults: tab sections (archived: 7 days), seconds and search focus on; bo
     clockSeconds: true,
     clock24h: true,
     focusSearch: true,
+    singleNewTab: true,
     matrixRain: false,
   });
 });

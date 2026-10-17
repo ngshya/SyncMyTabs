@@ -370,10 +370,34 @@ function createNewtabEngine(env, syncEngine) {
   // and renders instantly; the archived half walks bookmark folders, so
   // the page renders local tabs first and fills the archived section in
   // when that one answers, instead of the whole page waiting on it.
+  // "One new tab page per window" (the page's `singleNewTab` setting): when
+  // a new tab page opens, every OTHER new tab page in the same window is
+  // closed — the newest wins, since it's the one just asked for (Ctrl+T),
+  // where the browser just put it. Pinned ones are left alone (pinning one
+  // is a deliberate choice), and other windows aren't touched. Asked for
+  // by the page itself once it has settled — after its search-focus
+  // re-open, if any — so a page about to replace itself never closes its
+  // own replacement. Returns the ids it closed.
+  async function closeOtherNewTabPages(keepTabId) {
+    const tabs = await env.tabs.query({});
+    const keep = tabs.find((t) => t.id === keepTabId);
+    if (!keep) return [];
+    const closed = [];
+    for (const t of tabs) {
+      if (t.id === keepTabId || t.windowId !== keep.windowId || t.pinned || !isNewTabPage(t)) continue;
+      try {
+        await env.tabs.remove(t.id);
+        closed.push(t.id);
+      } catch (e) {} // already gone
+    }
+    return closed;
+  }
+
   function handleMessage(message) {
     if (message && message.type === "NEWTAB_LOCAL") return getLocalData();
     if (message && message.type === "NEWTAB_BOOKMARKS") return getBookmarksBar();
     if (message && message.type === "NEWTAB_ARCHIVED") return getArchivedData(message.days);
+    if (message && message.type === "NEWTAB_SINGLE") return closeOtherNewTabPages(message.tabId);
     return null;
   }
 
@@ -383,6 +407,7 @@ function createNewtabEngine(env, syncEngine) {
     getLocalData,
     getArchivedData,
     getBookmarksBar,
+    closeOtherNewTabPages,
     handleMessage,
   };
 }

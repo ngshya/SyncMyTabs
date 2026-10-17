@@ -732,6 +732,12 @@
         return;
       } catch (e) {} // couldn't: carry on as a normal new tab page
     }
+    // One new tab page per window (`singleNewTab`): this one, the newest,
+    // stays; older ones in this window close (newtab-core.js's
+    // closeOtherNewTabPages).
+    if (sections.singleNewTab && selfTab) {
+      browser.runtime.sendMessage({ type: "NEWTAB_SINGLE", tabId: selfTab.id }).catch(() => {});
+    }
     searchEl.focus();
     // autofocus may have focused it before the listener above existed.
     document.body.classList.toggle("searching", document.activeElement === searchEl);

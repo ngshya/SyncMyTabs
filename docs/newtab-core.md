@@ -138,6 +138,11 @@ group, and the tabs auto-archived over the last few days.
   focus. Costs: the address bar shows that address, the tab blinks once.
   Hence a setting. Headless tests can check the mechanics but not the
   address bar itself (no address bar there) — confirm by hand.
+- **One new tab page per window** (`singleNewTab`, on by default): once
+  a page has settled (after its search-focus re-open, so it never closes
+  its own replacement) it asks `NEWTAB_SINGLE`; `closeOtherNewTabPages`
+  closes every other new tab page in that window — the newest wins —
+  never pinned ones or other windows'.
 - **Clock** (`newtab-clock.js`) — bold; 24-hour (`clock24h`, `hourCycle:
   "h23"`) and seconds (`clockSeconds`) by default; with `clock24h` off,
   the browser language's own format.

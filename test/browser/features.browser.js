@@ -46,7 +46,31 @@ describe("new tab page extras", { skip: SKIP }, () => {
     await r.close();
   });
 
-  test("options card: two groups, eight settings, defaults as documented", async () => {
+  test("singleNewTab: opening a new tab page closes the older one in the same window — also with focusSearch on", async () => {
+    await b.setSettings({ singleNewTab: true, focusSearch: false });
+    const newtabTabs = () => b.bg(async () => (await chrome.tabs.query({})).filter((t) => /newtab/.test(t.url || t.pendingUrl)).length);
+    const first = await b.openNewtab();
+    const second = await b.openNewtab();
+    await sleep(600);
+    assert.equal(first.isClosed(), true, "the older one closed");
+    assert.equal(second.isClosed(), false, "the new one stays");
+    assert.equal(await newtabTabs(), 1);
+
+    // With the search-focus re-open as well: still exactly one, the newest.
+    await b.setSettings({ focusSearch: true });
+    const reborn = b.ctx.waitForEvent("page", { predicate: (pg) => /newtab\.html\?focus$/.test(pg.url()), timeout: 5000 });
+    await b.openNewtab({ waitFor: null });
+    const third = await reborn;
+    await third.waitForSelector(".item");
+    await sleep(800);
+    assert.equal(second.isClosed(), true);
+    assert.equal(third.isClosed(), false);
+    assert.equal(await newtabTabs(), 1);
+    await third.close();
+    await b.setSettings({ singleNewTab: false, focusSearch: false });
+  });
+
+  test("options card: three groups, ten settings, defaults as documented", async () => {
     const opt = await b.openPage("options.html");
     await sleep(500);
     const mark = (input) => (input.type === "number" ? `=${input.value}:` : input.checked ? "x" : "-");
@@ -54,7 +78,9 @@ describe("new tab page extras", { skip: SKIP }, () => {
       const mark = eval(markSrc);
       return Array.from(c.querySelectorAll(".section-title, label")).map((n) => (n.querySelector("input") ? mark(n.querySelector("input")) : "#") + n.textContent.trim().split(" ")[0]);
     }, mark.toString());
-    assert.deepEqual(card, ["#Show", "xTabs", "xTabs", "xTabs", "=7:Auto-archived", "-Bookmarks", "#Look", "xSeconds", "x24-hour", "-Put", "-Matrix"]);
+    // (focusSearch and singleNewTab are off here only because the test
+    // helper turns them off; both default to on.)
+    assert.deepEqual(card, ["#Show", "xTabs", "xTabs", "xTabs", "=7:Auto-archived", "-Bookmarks", "#Look", "xSeconds", "x24-hour", "-Matrix", "#Behavior", "-Put", "-Keep"]);
     await opt.close();
   });
 
