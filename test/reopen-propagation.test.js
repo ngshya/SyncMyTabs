@@ -3,7 +3,7 @@
 // device's STALE "closed" entry in that folder (deleting it so that
 // device naturally re-mirrors the URL back in as open on its own next
 // reconcile) — but never touches a device that's still genuinely open.
-// See CLAUDE.md's resetClosedPeers section.
+// See docs/sync-core.md (resetClosedPeers).
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");

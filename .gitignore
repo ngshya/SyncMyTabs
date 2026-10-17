@@ -9,3 +9,4 @@ build/
 manifest.chrome.json
 manifest.firefox.json
 web-ext-artifacts/
+screenshots/

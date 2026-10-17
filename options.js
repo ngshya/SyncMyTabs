@@ -23,7 +23,7 @@ themeSelect.addEventListener("change", async () => {
 
 // ------------------------------------------------------------
 // Sync on/off — also the master switch (pauses groups + archive too,
-// see CLAUDE.md's "Master on/off switch").
+// see docs/sync-core.md's "Master on/off switch").
 // ------------------------------------------------------------
 async function refreshSyncState() {
   const { syncEnabled } = await browser.storage.local.get("syncEnabled");

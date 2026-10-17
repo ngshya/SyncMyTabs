@@ -203,8 +203,8 @@ browser.runtime.onStartup.addListener(async () => {
   // first — reconciling against a still-incomplete snapshot could
   // wrongly treat a not-yet-restored tab as "missing" or "duplicate".
   // Recurs after that at the SAME period as the main sync alarm
-  // (syncIntervalMinutes) — see CLAUDE.md's "Tab-group leashing"
-  // section for why running mid-session is safe.
+  // (syncIntervalMinutes) — see docs/groups-core.md
+  // for why running mid-session is safe.
   const [seconds, syncIntervalMinutes] = await Promise.all([
     groupsEngine.groupsStartupDelaySeconds(),
     browser.storage.local

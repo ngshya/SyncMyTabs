@@ -12,6 +12,7 @@ test("defaults: tab sections, seconds and search focus on; bookmarks bar and mat
     otherDevices: true,
     bookmarksBar: false,
     clockSeconds: true,
+    clock24h: true,
     focusSearch: true,
     matrixRain: false,
   });
