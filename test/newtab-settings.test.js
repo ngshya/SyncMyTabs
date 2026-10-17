@@ -1,0 +1,34 @@
+// The new tab page's settings (newtab-settings.js): one key, one list of
+// defaults, shared by every page that reads or writes them.
+
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const { NewtabSettings } = require("../newtab-settings.js");
+
+test("defaults: tab sections, seconds and search focus on; bookmarks bar and matrix rain off", () => {
+  assert.deepEqual(NewtabSettings.DEFAULTS, {
+    thisWindow: true,
+    otherWindows: true,
+    otherDevices: true,
+    bookmarksBar: false,
+    clockSeconds: true,
+    focusSearch: true,
+    matrixRain: false,
+  });
+});
+
+test("saved values win over defaults; missing or junk values fall back to them", () => {
+  assert.equal(NewtabSettings.merge({ clockSeconds: false }).clockSeconds, false);
+  assert.equal(NewtabSettings.merge({ clockSeconds: false }).thisWindow, true);
+  assert.deepEqual(NewtabSettings.merge(undefined), NewtabSettings.DEFAULTS);
+  assert.deepEqual(NewtabSettings.merge("junk"), NewtabSettings.DEFAULTS);
+});
+
+test("every option has a label and a group, and keys are unique", () => {
+  const keys = NewtabSettings.OPTIONS.map(([key]) => key);
+  assert.equal(new Set(keys).size, keys.length);
+  for (const [key, value, label, group] of NewtabSettings.OPTIONS) {
+    assert.equal(typeof value, "boolean", key);
+    assert.ok(label && group, key);
+  }
+});

@@ -10,8 +10,8 @@
 // browser's bar.
 //
 // Off by default; turned on from the options page's "New tab page" card
-// (newtab-options.js) — `bookmarksBar` inside the same `newtabSections`
-// object newtab.js reads its own sections from. Applied live.
+// (newtab-options.js) — `bookmarksBar` in newtab-settings.js. Applied
+// live.
 //
 // Independent of newtab.js: its own file, its own data (background.js's
 // NEWTAB_BOOKMARKS message → newtab-core.js's getBookmarksBar, read-only),
@@ -30,9 +30,6 @@
 // ============================================================
 
 (function () {
-  // Same key as newtab.js / newtab-options.js.
-  const SECTIONS_KEY = "newtabSections";
-
   const barEl = document.getElementById("bookmarksBar");
   const itemsEl = barEl.querySelector(".bm-items");
   const menusEl = document.getElementById("bookmarkMenus");
@@ -136,6 +133,7 @@
       anchor.classList.remove("open");
       anchor.setAttribute("aria-expanded", "false");
     }
+    barEl.classList.toggle("menu-open", menus.length > 0);
   }
 
   // Opens `nodes` as a menu at depth `level` (0 = dropped from the bar,
@@ -177,6 +175,7 @@
 
     menusEl.append(menu);
     menus.push({ el: menu, anchor });
+    barEl.classList.add("menu-open"); // stays fully opaque while a menu is open
     anchor.classList.add("open");
     anchor.setAttribute("aria-expanded", "true");
     placeMenu(menu, anchor, level);
@@ -266,7 +265,19 @@
 
   // Whatever doesn't fit on the line is hidden from the bar and listed in
   // the "»" menu instead, in the same order.
+  // Measured left-aligned (the "measuring" class): the bar is centred, and
+  // a centred line that's too long would spill off BOTH ends, which a
+  // left-to-right fit check can't see.
   function layoutOverflow() {
+    itemsEl.classList.add("measuring");
+    try {
+      fitItems();
+    } finally {
+      itemsEl.classList.remove("measuring");
+    }
+  }
+
+  function fitItems() {
     const children = Array.from(itemsEl.children);
     const more = children.pop();
     for (const c of children) c.hidden = false;
@@ -392,12 +403,7 @@
   // ---- data + live refresh ----
 
   async function loadSetting() {
-    try {
-      const { [SECTIONS_KEY]: saved } = await browser.storage.local.get(SECTIONS_KEY);
-      enabled = !!(saved && saved.bookmarksBar);
-    } catch (e) {
-      enabled = false;
-    }
+    enabled = !!(await NewtabSettings.load()).bookmarksBar;
   }
 
   // Re-renders only when something actually changed: bookmark events fire
@@ -434,9 +440,8 @@
   browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.favIconUrl) scheduleLoad(); // icons come from open tabs
   });
-  browser.storage.onChanged.addListener(async (changes, area) => {
-    if (area !== "local" || !changes[SECTIONS_KEY]) return;
-    await loadSetting();
+  NewtabSettings.onChange((settings) => {
+    enabled = !!settings.bookmarksBar;
     load();
   });
   document.addEventListener("visibilitychange", () => {

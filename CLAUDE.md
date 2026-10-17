@@ -66,6 +66,9 @@ Firefox.** Keep this in mind in every change:
 | `theme.css` / `theme.js` | Shared dark/light/system theme system, loaded by both `popup.html` and `options.html` — see "Popup vs. options page" below |
 | `newtab.html` / `newtab.js` | The **custom new tab page** (`chrome_url_overrides.newtab` in the manifest) — clock/date, a sticky type-to-search box, this device's tabs by window in tab-strip order, and the tabs open on other devices; tabs flow in two columns (reading order) on wide windows; every tab is numbered for keyboard-only jumps; clicking one switches to it and closes the new tab page. DOM-only — all data comes from `newtab-core.js` via the `NEWTAB_LOCAL`/`NEWTAB_REMOTE` messages. |
 | `newtab-options.js` | The new tab page's own card on the options page (which tab sections it shows, `newtabSections` in storage) — loaded by `options.html` after `options.js` and builds its card itself, so `options.js` knows nothing about the new tab page. |
+| `newtab-settings.js` | The new tab page's settings in ONE place — storage key (`newtabSections`), every default, the options card's labels — as the global `NewtabSettings`; loaded by both `newtab.html` and `options.html`. Add a setting = one line in its `OPTIONS`. |
+| `newtab-search.js` | Pure helpers for the new tab page's web search: the services and their one-letter prefixes, service URLs, address-vs-search detection. Node-tested (`test/newtab-search.test.js`). |
+| `newtab-matrix.js` | Optional Matrix-rain canvas behind the new tab page (`matrixRain`, off by default; dark/black backgrounds only, never with reduced motion). |
 | `newtab-bookmarks.js` | The new tab page's optional copy of the browser's bookmarks bar (off by default, `newtabSections.bookmarksBar`) — its own file, data (`NEWTAB_BOOKMARKS` → `newtab-core.js`'s read-only `getBookmarksBar`) and listeners; shares only the `--bm-h` CSS variable with the page. |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page — by default loads the real URL only on an explicit click (not just on becoming visible), so autoplay media (YouTube, etc.) never starts just from switching tabs; `lazyRequireClick: false` in storage restores the old load-on-visible behavior |
 | `browser-polyfill.min.js` | Vendored Mozilla WebExtension polyfill so `browser.*` is promise-based on Chrome too |
@@ -92,7 +95,9 @@ copy); listing screenshots live in `store-assets/`.
 `importScripts`/`background.scripts` (like `archive-core.js`), or a new file
 an HTML page loads via its own `<script src>`/`<link href>` (like
 `options.js`/`theme.css`) — **add it to `release.yml`'s `COMMON` file list
-too** (and the syntax-check step, if it's JS). This isn't automatic: the
+too** (and the syntax-check step, if it's JS) — `test/release-files.test.js`
+fails if you don't (it checks the list against every file the manifest
+and the packaged HTML pages load). This isn't automatic: the
 dev tree (what `git clone` + "Load unpacked" gives you) and the store zips
 are built from two different file lists that only the workflow keeps in
 sync, and nothing here checks that they match. Missing this once already
@@ -251,7 +256,7 @@ extensions), and `context.serviceWorkers()[0].evaluate(...)` runs
    `sync-core.js`, not `background.js` — see "Testing" above.
 3. **Syntax-check** any JS you touched:
    ```bash
-   node --check background.js && node --check sync-core.js && node --check groups-core.js && node --check archive-core.js && node --check order-core.js && node --check newtab-core.js && node --check popup.js && node --check options.js && node --check newtab.js && node --check newtab-options.js && node --check newtab-bookmarks.js
+   npm run check               # node --check on every top-level .js
    ```
 4. **Run the test suite** (`npm test`) — see "Testing" above. Add/update
    tests for any reconcile-logic change.
@@ -438,8 +443,14 @@ flow in two columns, left then right. Which of those three tab sections
 show is a setting (a "New tab page" card on the options page), as is an
 optional copy of the browser's bookmarks bar along the top
 (`newtab-bookmarks.js`, off by default). The date
-and time follow the browser's UI language. Every tab is numbered: typing a number narrows to it,
-Enter opens it, no mouse needed. A click switches to the tab — focusing
+and time follow the browser's UI language (bold, seconds optional).
+Every tab is numbered: typing a number narrows to it, Enter opens it, no
+mouse needed. The same box searches the web: Shift+Enter (or Enter with
+no tab match) uses the browser's default engine, a one-letter prefix or
+Tab picks another service (`newtab-search.js`). By default the page
+re-opens itself under its own address so the cursor lands in its search
+box, not the address bar (`focusSearch`). Optional Matrix rain behind
+dark themes (`newtab-matrix.js`). A click switches to the tab — focusing
 its window — then closes the new tab page behind it; a tab only open on
 another device opens in place.
 
@@ -452,10 +463,9 @@ from one is blocked). See Known limitations.
 **Self-contained by design**: no other module, nor the popup/options
 UI, references it; `background.js` wires it through an `onMessage`
 listener of its own, separate from the one every other module shares,
-and `options.html` only loads `newtab-options.js`, which builds the
-settings card itself. `test/newtab-isolation.test.js` enforces this —
-keep new-tab-page knowledge inside `newtab-core.js`/`newtab.js`/
-`newtab-options.js`.
+and `options.html` only loads `newtab-settings.js` + `newtab-options.js`,
+which builds the settings card itself. `test/newtab-isolation.test.js` enforces this —
+keep new-tab-page knowledge inside the `newtab*` files.
 
 **Full invariants (why the data side goes through background messages,
 the paused-sync rule for the remote half, favicon privacy, how to remove

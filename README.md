@@ -278,14 +278,28 @@ own: the time and date, a search box, and everything you have open.
   each section (this window, your other windows, your other devices) on or
   off.
 - **Optional bookmarks bar** (off by default, same card) — a copy of your
-  browser's bookmarks bar across the top of the page, so you can keep the
-  browser's own bar hidden. Folders open menus (nested ones to the side),
+  browser's bookmarks bar centred across the top of the page, faded until
+  you point at it, so you can keep the browser's own bar hidden. Folders open menus (nested ones to the side),
   whatever doesn't fit goes under **»**. A click opens the bookmark in this
   tab, Ctrl/Cmd-click or middle-click in a new tab, Shift-click in a new
   window; the arrow keys work too. It's read-only: edit your bookmarks in
   the browser as usual, the bar follows. Icons show for sites you have open;
   the rest get a letter (no favicon is ever fetched from anywhere).
-- The date and time are in your browser's language.
+- **Search the web from the same box** — **Shift+Enter** (or just Enter
+  when no tab matches) searches with your browser's default search
+  engine; an address like `github.com` opens directly. For another
+  service, start with its letter and a space — `g` Google, `m` Maps,
+  `y` YouTube, `c` Claude, `p` Perplexity, `w` Wikipedia, `d` DuckDuckGo
+  (e.g. `y lofi beats`) — or press **Tab** after typing to cycle through
+  them. Nothing is sent anywhere until you press Enter: no suggestions
+  while you type.
+- **The cursor starts in the search box**, not the address bar (setting,
+  on by default — the address bar then shows the page's own address).
+- The clock is in bold, with seconds (setting), and the date and time are
+  in your browser's language.
+- **Optional Matrix rain** in the background of the dark and black themes
+  (setting, off by default) — faint enough to leave the text readable,
+  and off for anyone whose system asks for reduced motion.
 - Favicons are only ever the tab's own icon — no third-party favicon
   service, nothing leaves your device.
 - Follows the same theme (system/light/dark/black) as the rest of the extension.

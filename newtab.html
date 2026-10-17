@@ -25,7 +25,7 @@
     .clock { text-align: center; margin-bottom: 18px; }
     #time {
       font-size: 72px;
-      font-weight: 200;
+      font-weight: 600;
       letter-spacing: -0.02em;
       font-variant-numeric: tabular-nums;
       line-height: 1;
@@ -34,29 +34,90 @@
     #date::first-letter { text-transform: uppercase; }
 
     /* Not the full width of a wide page — a long empty bar reads as a
-       form field, not a quick filter. */
-    #search {
-      display: block;
-      width: 100%;
+       form field, not a quick filter. The box is the frame; the input and
+       the picked search service's chip (newtab.js) sit inside it. */
+    .search-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
       max-width: 600px;
       margin: 0 auto;
-      padding: 11px 14px;
-      font: inherit;
-      font-size: 15px;
-      color: var(--fg);
+      padding: 0 6px 0 14px;
       background: var(--input-bg);
       border: 1px solid var(--border);
       border-radius: 10px;
+    }
+    .search-box:focus-within { border-color: var(--accent); }
+    #search {
+      flex: 1;
+      min-width: 0;
+      padding: 11px 0;
+      font: inherit;
+      font-size: 15px;
+      color: var(--fg);
+      background: none;
+      border: none;
       outline: none;
     }
-    #search:focus { border-color: var(--accent); }
+    .search-chip {
+      flex-shrink: 0;
+      padding: 3px 9px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent-fg);
+      background: var(--accent);
+      border-radius: 999px;
+    }
+
+    /* The web row under the search box, and the services under it. */
+    #webActions { max-width: 600px; margin: 2px auto 0; }
+    .item.web .num { color: var(--accent); font-weight: 600; }
+    .item.web:disabled { cursor: default; color: var(--muted); }
+    .engines {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px 2px;
+      padding: 4px 10px 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .engines-hint { margin-right: 4px; }
+    .engine {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 2px 5px 2px 3px;
+      color: var(--muted);
+      text-decoration: none;
+      border-radius: 999px;
+    }
+    .engine:hover, .engine:focus-visible { color: var(--fg); background: var(--card-bg); outline: none; }
+    .engine.active { color: var(--accent-fg); background: var(--accent); }
+    .engine-key {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      font-size: 9.5px;
+      font-weight: 700;
+      border: 1px solid currentColor;
+      border-radius: 4px;
+      opacity: 0.8;
+    }
     /* Stays put while the list scrolls under it. */
     #searchBar {
       position: sticky;
       top: var(--bm-h, 0px); /* right below the bookmarks bar, when shown */
       z-index: 2;
       padding: 10px 0;
-      background: var(--bg);
+      /* Frosted rather than solid: the list scrolling underneath stays
+         legible, and the optional background rain isn't cut off by a hard
+         band. */
+      background: color-mix(in srgb, var(--bg) 82%, transparent);
+      -webkit-backdrop-filter: blur(8px);
+      backdrop-filter: blur(8px);
     }
 
     section { margin-top: 18px; }
@@ -217,6 +278,18 @@
 
     .note { color: var(--muted); font-size: 13px; margin: 8px 10px; }
 
+    /* Optional Matrix rain (newtab-matrix.js): behind everything, faint
+       enough that the text in front always wins. */
+    #matrix {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      opacity: 0.16;
+    }
+
     /* The optional copy of the browser's bookmarks bar
        (newtab-bookmarks.js): one line across the very top, staying there
        while the page scrolls; folders open menus. */
@@ -225,16 +298,27 @@
       top: 0;
       z-index: 4;
       padding: 4px 8px;
-      background: var(--bg);
+      background: color-mix(in srgb, var(--bg) 82%, transparent); /* frosted, like #searchBar */
+      -webkit-backdrop-filter: blur(8px);
+      backdrop-filter: blur(8px);
     }
+    /* Centred, and semi-transparent until the pointer (or keyboard focus,
+       or an open menu) is on it — present, but quiet. */
     .bm-items {
       position: relative;
       display: flex;
       align-items: center;
+      justify-content: center;
       gap: 2px;
       overflow: hidden;
       white-space: nowrap;
+      opacity: 0.45;
+      transition: opacity 0.2s;
     }
+    .bm-items.measuring { justify-content: flex-start; }
+    #bookmarksBar:hover .bm-items,
+    #bookmarksBar:focus-within .bm-items,
+    #bookmarksBar.menu-open .bm-items { opacity: 1; }
     .bm-item {
       display: inline-flex;
       align-items: center;
@@ -254,7 +338,7 @@
     .bm-item:hover, .bm-item:focus-visible, .bm-item.open { background: var(--card-bg); outline: none; }
     .bm-item .bm-title { overflow: hidden; text-overflow: ellipsis; }
     .bm-sep { width: 8px; flex-shrink: 0; }
-    .bm-more { margin-left: auto; color: var(--muted); }
+    .bm-more { color: var(--muted); }
     .bm-folder-icon { width: 16px; height: 16px; flex-shrink: 0; fill: var(--muted); }
 
     .bm-menu {
@@ -296,6 +380,7 @@
   </style>
 </head>
 <body>
+  <canvas id="matrix" aria-hidden="true" hidden></canvas>
   <nav id="bookmarksBar" aria-label="Bookmarks bar" hidden><div class="bm-items"></div></nav>
   <div id="bookmarkMenus"></div>
   <main>
@@ -305,8 +390,12 @@
     </div>
 
     <div id="searchBar">
-      <input id="search" type="search" placeholder="Search, or type a tab number…" autocomplete="off" spellcheck="false" autofocus />
+      <div class="search-box">
+        <span id="searchChip" class="search-chip" hidden></span>
+        <input id="search" type="search" placeholder="Search tabs or the web, or type a tab number…" autocomplete="off" spellcheck="false" autofocus />
+      </div>
     </div>
+    <div id="webActions" hidden></div>
 
     <section id="localSection">
       <div id="local"></div>
@@ -322,7 +411,10 @@
 
   <script src="browser-polyfill.min.js"></script>
   <script src="theme.js"></script>
+  <script src="newtab-settings.js"></script>
+  <script src="newtab-search.js"></script>
   <script src="newtab.js"></script>
   <script src="newtab-bookmarks.js"></script>
+  <script src="newtab-matrix.js"></script>
 </body>
 </html>

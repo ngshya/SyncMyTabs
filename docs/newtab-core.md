@@ -32,15 +32,13 @@ profile.
   module shares), calling only `newtabEngine.handleMessage()`, which
   returns `null` for anything that isn't a `NEWTAB_*` message. Its
   settings card on the options page is built by `newtab-options.js`,
-  which `options.html` loads with one `<script>` tag — `options.js`
+  which `options.html` loads (with `newtab-settings.js`) — `options.js`
   knows nothing about it. `test/newtab-isolation.test.js` enforces all
-  three. Removing the feature comes down to deleting its five files
-  (`newtab-core.js`, `newtab.html`, `newtab.js`, `newtab-options.js`,
-  `newtab-bookmarks.js`)
-  plus its wiring lines (`importScripts`, the engine `const`, that
-  listener, the manifest's override and `background.scripts` entry,
-  `options.html`'s script tag, `release.yml`'s file list and syntax
-  check).
+  three. Removing the feature comes down to deleting every `newtab*`
+  file (and their tests) plus the wiring lines: `importScripts`, the
+  engine `const`, that listener, the manifest's override,
+  `background.scripts` entry and `search` permission, `options.html`'s
+  two script tags, `release.yml`'s file list and syntax checks.
 - **New tab pages are recognized here and only here** —
   `isNewTabPageUrl` in `newtab-core.js`: a tab on the new tab page can
   report either the native URL (`chrome://newtab/` — what Chrome keeps
@@ -101,8 +99,43 @@ profile.
   defaults). Applied live through `storage.onChanged`. Hidden sections
   get no numbers, and with "other devices" off the remote half isn't
   even requested, so nothing walks the bookmark tree for it.
+- **Settings live in one place: `newtab-settings.js`** — the storage key
+  (`newtabSections`, a historical name), every default and the options
+  card's labels, as the global `NewtabSettings` (`load`/`save`/`onChange`/
+  `merge`). Loaded by `newtab.html` and `options.html`; every other file
+  reads settings through it, none keeps its own copy. A new setting is one
+  line in its `OPTIONS` plus the code that uses it.
+- **Web search from the same box** (`newtab-search.js` + the "web search"
+  section of `newtab.js`). Enter still opens the selected tab; with no tab
+  matching — or with Shift+Enter — the web row runs: an address is opened
+  as such (`urlFromInput`), anything else goes to the browser's own
+  default engine through the `search` permission's `search.query` (never
+  a hardcoded engine; Google only as a fallback without that API, and
+  called straight from the key/click handler — Firefox only allows it in
+  a user action). Another service is picked with a one-letter prefix
+  ("y lofi" → a YouTube chip; Backspace at the start drops it, giving a
+  typed prefix's letter back) or Tab/Shift+Tab, which cycle the services
+  and back to tab search; the services are also links under the web row.
+  No search suggestions, on purpose: they'd send every keystroke to a
+  search company — the query leaves the device only on Enter/click.
+- **Search-box focus (`focusSearch`, on by default).** A browser opens a
+  new tab with the cursor in its address bar, and no page can take it
+  from there; the page reloads itself under its own address
+  (`newtab.html?focus` — the marker stops a loop), which does put the
+  cursor in the page. Costs: the address bar shows that address, and Back
+  goes to the plain new tab page (which comes straight back). Hence a
+  setting.
+- **Clock** — bold; seconds by default (`clockSeconds`).
+- **Optional Matrix rain** (`matrixRain`, off by default,
+  `newtab-matrix.js`): a canvas behind everything (z-index -1, 16%
+  opacity), drawn only while the page background is actually dark (read
+  from the computed colour, so it follows theme.css without knowing its
+  rules), never with `prefers-reduced-motion`, ~20 fps and nothing while
+  hidden. The search and bookmarks bars are frosted (semi-opaque + blur)
+  rather than solid, so the rain isn't cut by hard bands.
 - **Optional bookmarks bar** (`newtabSections.bookmarksBar`, off by
-  default): a copy of the browser's own bar along the top, in
+  default): a copy of the browser's own bar along the top — centred, and
+  at 45% opacity until hovered/focused or a menu is open — in
   `newtab-bookmarks.js` — a file of its own with its own data
   (`NEWTAB_BOOKMARKS` → `getBookmarksBar` in `newtab-core.js`) and
   listeners, sharing only the `--bm-h` CSS variable (its height, so the
