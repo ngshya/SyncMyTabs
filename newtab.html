@@ -33,8 +33,13 @@
     #date { margin-top: 10px; font-size: 15px; color: var(--muted); }
     #date::first-letter { text-transform: uppercase; }
 
+    /* Not the full width of a wide page — a long empty bar reads as a
+       form field, not a quick filter. */
     #search {
+      display: block;
       width: 100%;
+      max-width: 600px;
+      margin: 0 auto;
       padding: 11px 14px;
       font: inherit;
       font-size: 15px;
@@ -56,24 +61,14 @@
 
     section { margin-top: 18px; }
 
-    /* Two columns — this device | other devices — on a wide window, when
-       there's anything on the other-devices side at all (newtab.js sets
-       html.two-col). The right column stays in view on its own, scrolling
-       separately, while the long left one scrolls the page. */
-    @media (min-width: 1100px) {
-      html.two-col main { max-width: 1180px; }
-      html.two-col .columns {
-        display: grid;
-        grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-        gap: 40px;
-        align-items: start;
-      }
-      html.two-col #remoteSection {
-        position: sticky;
-        top: var(--bar-h, 66px);
-        max-height: calc(100vh - var(--bar-h, 66px) - 16px);
-        overflow-y: auto;
-      }
+    /* Two columns on a wide window: tabs fill them in reading order —
+       one on the left, the next on its right (see newtab.js's render) —
+       so numbers still run in sequence. Group headers and section titles
+       span the full width; one column below the threshold. */
+    .tab-grid { display: grid; grid-template-columns: minmax(0, 1fr); }
+    @media (min-width: 1000px) {
+      main { max-width: 1120px; }
+      .tab-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
     }
     .section-title {
       font-size: 11px;
@@ -112,7 +107,18 @@
     .chevron { margin-left: auto; color: var(--muted); font-size: 11px; transition: transform 0.12s; }
     .group.collapsed .chevron { transform: rotate(-90deg); }
     .group.collapsed .group-tabs { display: none; }
-    .group-tabs { margin-left: 13px; padding-left: 4px; border-left: 2px solid var(--group-color, var(--hairline)); }
+    /* Group membership is a thin bar in the group's colour on each of its
+       tabs, not an indent — so a group's tabs line up with the ungrouped
+       ones in both grid columns. */
+    .group-tabs .item { position: relative; }
+    .group-tabs .item::before {
+      content: "";
+      position: absolute;
+      left: 2px; top: 6px; bottom: 6px;
+      width: 2px;
+      border-radius: 1px;
+      background: var(--group-color, var(--hairline));
+    }
 
     .item {
       display: flex;
@@ -183,17 +189,16 @@
       <input id="search" type="search" placeholder="Search, or type a tab number…" autocomplete="off" spellcheck="false" autofocus />
     </div>
 
-    <div class="columns">
-      <section id="localSection">
-        <div id="local"></div>
-        <div id="empty" class="note" hidden>No matching tabs.</div>
-      </section>
+    <section id="localSection">
+      <div id="local"></div>
+    </section>
 
-      <section id="remoteSection" hidden>
-        <div class="section-title">On your other devices</div>
-        <div id="remote"></div>
-      </section>
-    </div>
+    <section id="remoteSection" hidden>
+      <div class="section-title">On your other devices</div>
+      <div id="remote"></div>
+    </section>
+
+    <div id="empty" class="note" hidden>No matching tabs.</div>
   </main>
 
   <script src="browser-polyfill.min.js"></script>

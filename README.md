@@ -257,8 +257,7 @@ own: the time and date, a search box, and everything you have open.
   on the page only). Pinned tabs are marked as such.
 - **Your other devices' tabs** — what's open on each of your other devices
   on the same profile, read from the same synced bookmarks as everything
-  else. Ones that are also open here are marked "open here". On a wide
-  window they get a column of their own, next to yours.
+  else. Ones that are also open here are marked "open here".
 - **Click to jump** — clicking a tab switches to it (bringing its window to
   the front) and closes the new tab you came from, so blank tabs don't pile
   up. A tab that's only open on another device opens right there instead.
@@ -269,6 +268,12 @@ own: the time and date, a search box, and everything you have open.
   without touching the mouse (typing `1` keeps 1, 10, 11… in view; the
   exact match is the one Enter opens). Numbers follow the list order, so
   they shift when tabs open, close or move.
+- **Two columns on a wide window** — tabs fill them in reading order, one
+  on the left and the next on its right.
+- **Choose what's listed** — the options page's *New tab page* card turns
+  each section (this window, your other windows, your other devices) on or
+  off.
+- The date and time are in your browser's language.
 - Favicons are only ever the tab's own icon — no third-party favicon
   service, nothing leaves your device.
 - Follows the same light/dark/system theme as the rest of the extension.

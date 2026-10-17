@@ -26,16 +26,11 @@
 // ============================================================
 
 (function () {
-  // Layout hint, read synchronously before anything renders: whether the
-  // last page had something to show in the "other devices" column. The
-  // remote half arrives a moment after the local one (see loadRemote), so
-  // deciding the two-column layout only once it's here would visibly
-  // reflow the page on every open. A per-device, throwaway convenience —
-  // localStorage on purpose (synchronous), nothing else is kept there.
-  const TWO_COL_HINT_KEY = "newtabTwoColumns";
-  try {
-    if (localStorage.getItem(TWO_COL_HINT_KEY) === "1") document.documentElement.classList.add("two-col");
-  } catch (e) {}
+  // Which sections the page shows — set from the options page's "New tab
+  // page" card (newtab-options.js, which keeps its own copy of this key
+  // and these defaults).
+  const SECTIONS_KEY = "newtabSections";
+  const DEFAULT_SECTIONS = { thisWindow: true, otherWindows: true, otherDevices: true };
 
   // Chrome/Brave's own tab-group palette, as tabGroups reports it.
   const GROUP_COLORS = {
@@ -62,7 +57,7 @@
   let selfTab = null;
   let localData = { windows: [] };
   let remoteData = { paused: false, devices: [] };
-  let remoteLoaded = false;
+  let sections = { ...DEFAULT_SECTIONS };
 
   // A group's fold state on this page is the browser's own (`collapsed`
   // from tabGroups) — clicking its header here overrides that, in memory
@@ -74,13 +69,28 @@
 
   // ---- clock ----
 
-  const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
-  const dateFmt = new Intl.DateTimeFormat(undefined, {
+  // The browser's own display language, not whatever the page happens to
+  // default to: i18n.getUILanguage() is exactly that on both Chrome and
+  // Firefox. Falls back to the default locale if it's somehow not a tag
+  // Intl accepts.
+  function uiLocale() {
+    try {
+      const lang = browser.i18n.getUILanguage();
+      Intl.DateTimeFormat.supportedLocalesOf([lang]); // throws on a malformed tag
+      return lang;
+    } catch (e) {
+      return undefined;
+    }
+  }
+  const locale = uiLocale();
+  const timeFmt = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" });
+  const dateFmt = new Intl.DateTimeFormat(locale, {
     weekday: "long",
     day: "numeric",
     month: "long",
     year: "numeric",
   });
+  if (locale) dateEl.lang = locale; // so ::first-letter capitalizes by that language's rules
 
   function tick() {
     const now = new Date();
@@ -148,12 +158,13 @@
   // ---- numbering + matching ----
 
   // Every listed tab gets a number, in display order over the WHOLE,
-  // unfiltered list — this window, then the other windows, then the other
-  // devices — so a tab keeps its number while you type, and a tab inside
-  // a folded group has one too. A remote tab that's also open here reuses
-  // the local tab's number (it's the same tab a click would switch to);
-  // only remote-only ones get numbers of their own, after the local ones.
-  // Numbers follow positions, so they shift when tabs open/close/move.
+  // unfiltered list of the sections being shown — this window, then the
+  // other windows, then the other devices — so a tab keeps its number
+  // while you type, and a tab inside a folded group has one too. A remote
+  // tab that's also listed here reuses the local tab's number (it's the
+  // same tab a click would switch to); only the others get numbers of
+  // their own, after the local ones. Numbers follow positions, so they
+  // shift when tabs open/close/move.
   function numberTabs(windows) {
     const local = new Map(); // local tab id → number
     let n = 0;
@@ -161,10 +172,12 @@
       for (const entry of win.entries) for (const t of entryTabs(entry)) local.set(t.id, ++n);
     }
     const remote = new Map(); // `${device}|${url}` → number
-    for (const device of remoteData.devices) {
-      for (const t of device.tabs) {
-        const mine = t.localTabId !== null && t.localTabId !== undefined && local.get(t.localTabId);
-        remote.set(`${device.name}|${t.url}`, mine || ++n);
+    if (sections.otherDevices) {
+      for (const device of remoteData.devices) {
+        for (const t of device.tabs) {
+          const mine = t.localTabId !== null && t.localTabId !== undefined && local.get(t.localTabId);
+          remote.set(`${device.name}|${t.url}`, mine || ++n);
+        }
       }
     }
     return { local, remote, max: n };
@@ -233,6 +246,12 @@
 
   // ---- render ----
 
+  // Tabs are laid out in a `.tab-grid`: one column on a narrow window,
+  // two on a wide one (media query in newtab.html), filled in reading
+  // order — a tab on the left, the next one on its right, and so on —
+  // so the numbers still read in sequence. A group header always spans
+  // the full width, with its own tabs in a grid of their own.
+
   function renderGroup(group, tabs, query, numbers, isMyWindow) {
     // While searching, every group with a match is open — a number typed
     // for a tab inside a folded group must still show that tab.
@@ -255,7 +274,7 @@
     );
     header.addEventListener("click", () => toggleGroup(group));
 
-    const list = el("div", "group-tabs");
+    const list = el("div", "group-tabs tab-grid");
     for (const t of tabs) {
       const num = numbers.local.get(t.id);
       list.append(itemButton(t, `t:${t.id}`, num, hostOf(t.url), () => switchTo(t.id, t.windowId), t.active && !isMyWindow));
@@ -267,9 +286,11 @@
   function render() {
     const focusedKey = (document.activeElement && document.activeElement.dataset.key) || null;
     const myWindowId = selfTab ? selfTab.windowId : null;
-    const windows = localData.windows
+    const allWindows = localData.windows
       .slice()
       .sort((a, b) => Number(b.id === myWindowId) - Number(a.id === myWindowId));
+    const labelWindows = allWindows.length > 1;
+    const windows = allWindows.filter((w) => (w.id === myWindowId ? sections.thisWindow : sections.otherWindows));
     const numbers = numberTabs(windows);
     const query = buildQuery(numbers);
     document.querySelector("main").style.setProperty("--num-w", `${Math.max(2, String(numbers.max).length)}ch`);
@@ -278,11 +299,10 @@
     // This device — the window this page lives in first, each window in
     // its own tab-strip order (newtab-core.js's `entries`).
     localEl.replaceChildren();
-    const labelWindows = windows.length > 1;
-    let windowNumber = 1;
     for (const win of windows) {
       const isMyWindow = win.id === myWindowId;
       const block = document.createDocumentFragment();
+      let run = null; // the grid consecutive ungrouped tabs go into
       let count = 0;
 
       for (const entry of win.entries) {
@@ -291,7 +311,8 @@
           const num = numbers.local.get(t.id);
           if (!query.hit(num, t.title, t.url)) continue;
           const meta = hostOf(t.url) + (t.pinned ? " · pinned" : "");
-          block.append(itemButton(t, `t:${t.id}`, num, meta, () => switchTo(t.id, t.windowId), t.active && !isMyWindow));
+          if (!run) block.append((run = el("div", "tab-grid")));
+          run.append(itemButton(t, `t:${t.id}`, num, meta, () => switchTo(t.id, t.windowId), t.active && !isMyWindow));
           count += 1;
         } else {
           const g = entry.group;
@@ -299,12 +320,15 @@
           const tabs = g.tabs.filter((t) => groupHit || query.hit(numbers.local.get(t.id), t.title, t.url, g.title));
           if (tabs.length === 0) continue;
           block.append(renderGroup(g, tabs, query, numbers, isMyWindow));
+          run = null;
           count += tabs.length;
         }
       }
 
       if (count === 0) continue;
-      const label = isMyWindow ? "This window" : `Window ${++windowNumber}`;
+      // Labels stay those of the full window list, so hiding "this
+      // window" doesn't renumber the others.
+      const label = isMyWindow ? "This window" : `Window ${allWindows.indexOf(win) + 1}`;
       localEl.append(el("div", "section-title", labelWindows ? label : "Open tabs"), block);
       visible += count;
     }
@@ -312,36 +336,42 @@
     // Other devices.
     remoteEl.replaceChildren();
     let remoteVisible = 0;
-    if (remoteData.paused && !query.active) {
-      remoteEl.append(el("div", "note", "Sync is paused — tabs on your other devices aren't shown."));
-    }
-    for (const device of remoteData.devices) {
-      const tabs = device.tabs.filter((t) =>
-        query.hit(numbers.remote.get(`${device.name}|${t.url}`), t.title, t.url, device.name)
-      );
-      if (tabs.length === 0) continue;
-      remoteEl.append(el("div", "sub-title", device.name));
-      for (const t of tabs) {
-        const key = `${device.name}|${t.url}`;
-        const isLocal = t.localTabId !== null && t.localTabId !== undefined;
-        remoteEl.append(
-          itemButton(
-            t,
-            `r:${key}`,
-            numbers.remote.get(key),
-            isLocal ? "open here" : hostOf(t.url),
-            () => (isLocal ? switchTo(t.localTabId, t.localWindowId) : openHere(t.url)),
-            false
-          )
-        );
+    if (sections.otherDevices) {
+      if (remoteData.paused && !query.active) {
+        remoteEl.append(el("div", "note", "Sync is paused — tabs on your other devices aren't shown."));
       }
-      remoteVisible += tabs.length;
+      for (const device of remoteData.devices) {
+        const tabs = device.tabs.filter((t) =>
+          query.hit(numbers.remote.get(`${device.name}|${t.url}`), t.title, t.url, device.name)
+        );
+        if (tabs.length === 0) continue;
+        const grid = el("div", "tab-grid");
+        for (const t of tabs) {
+          const key = `${device.name}|${t.url}`;
+          const isLocal = t.localTabId !== null && t.localTabId !== undefined;
+          grid.append(
+            itemButton(
+              t,
+              `r:${key}`,
+              numbers.remote.get(key),
+              isLocal ? "open here" : hostOf(t.url),
+              () => (isLocal ? switchTo(t.localTabId, t.localWindowId) : openHere(t.url)),
+              false
+            )
+          );
+        }
+        remoteEl.append(el("div", "sub-title", device.name), grid);
+        remoteVisible += tabs.length;
+      }
     }
-    remoteSectionEl.hidden = remoteVisible === 0 && !(remoteData.paused && !query.active);
+    remoteSectionEl.hidden = remoteVisible === 0 && !(sections.otherDevices && remoteData.paused && !query.active);
     visible += remoteVisible;
 
-    emptyEl.hidden = !(query.active && visible === 0);
-    updateLayout();
+    const nothingShown = !sections.thisWindow && !sections.otherWindows && !sections.otherDevices;
+    emptyEl.textContent = nothingShown
+      ? "Every tab section is turned off — choose what this page shows in SyncMyTabs's settings."
+      : "No matching tabs.";
+    emptyEl.hidden = !(nothingShown || (query.active && visible === 0));
     markSelected(query);
 
     // A re-render (a tab finished loading somewhere, say) mustn't yank
@@ -350,20 +380,6 @@
       const again = document.querySelector(`[data-key="${CSS.escape(focusedKey)}"]`);
       if (again) again.focus();
     }
-  }
-
-  // Two columns (this device | other devices) on a wide window, whenever
-  // the other-devices side has anything to show at all — decided on the
-  // UNFILTERED data so the layout doesn't jump around while typing. The
-  // width threshold itself is a media query in newtab.html; this only
-  // says whether there's a second column to have.
-  function updateLayout() {
-    if (!remoteLoaded) return; // keep the hint until the real answer is in
-    const twoCol = remoteData.paused || remoteData.devices.some((d) => d.tabs.length > 0);
-    document.documentElement.classList.toggle("two-col", twoCol);
-    try {
-      localStorage.setItem(TWO_COL_HINT_KEY, twoCol ? "1" : "0");
-    } catch (e) {}
   }
 
   // While searching, the tab Enter would open is highlighted: the exact
@@ -383,6 +399,30 @@
     return Array.from(document.querySelectorAll("main .item, main .group-header")).filter(
       (n) => n.offsetParent !== null
     );
+  }
+
+  // Up/Down move by ROW, which in the two-column grid isn't the same as
+  // the next/previous element: the nearest row above/below, then the
+  // entry in it closest horizontally (a group header spans both
+  // columns). Left/Right step through reading order.
+  function rowNeighbour(current, dir) {
+    const r = current.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    let best = null;
+    let bestDy = Infinity;
+    let bestDx = Infinity;
+    for (const n of navigables()) {
+      const q = n.getBoundingClientRect();
+      const dy = dir > 0 ? q.top - r.top : r.top - q.top;
+      if (dy <= 1) continue;
+      const dx = Math.abs(q.left + q.width / 2 - cx);
+      if (dy < bestDy - 1 || (Math.abs(dy - bestDy) <= 1 && dx < bestDx)) {
+        best = n;
+        bestDy = dy;
+        bestDx = dx;
+      }
+    }
+    return best;
   }
 
   document.addEventListener("keydown", (e) => {
@@ -410,13 +450,15 @@
 
     const nav = navigables();
     const i = nav.indexOf(document.activeElement);
-    if (e.key === "ArrowDown" && i !== -1) {
+    if (i !== -1 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
-      (nav[i + 1] || nav[i]).focus();
-    } else if (e.key === "ArrowUp" && i !== -1) {
+      const next = rowNeighbour(nav[i], e.key === "ArrowDown" ? 1 : -1);
+      if (next) next.focus();
+      else if (e.key === "ArrowUp") searchEl.focus();
+    } else if (i !== -1 && (e.key === "ArrowRight" || e.key === "ArrowLeft")) {
       e.preventDefault();
-      if (i === 0) searchEl.focus();
-      else nav[i - 1].focus();
+      const next = nav[i + (e.key === "ArrowRight" ? 1 : -1)];
+      if (next) next.focus();
     } else if (e.key === "Escape") {
       searchEl.focus();
     } else if (e.key.length === 1 && e.key !== " " && !modified) {
@@ -439,14 +481,22 @@
   searchEl.addEventListener("focus", () => document.body.classList.add("searching"));
   searchEl.addEventListener("blur", () => document.body.classList.remove("searching"));
 
-  // The sticky other-devices column sits right below the sticky search
-  // bar, so it needs the bar's real height.
+  // Keyboard focus scrolling a row into view must clear the sticky
+  // search bar (newtab.html's scroll-padding-top), so it needs the bar's
+  // real height.
   function measureBar() {
     document.documentElement.style.setProperty("--bar-h", `${searchBarEl.offsetHeight}px`);
   }
   window.addEventListener("resize", measureBar);
 
   // ---- data loading + live refresh ----
+
+  async function loadSections() {
+    try {
+      const { [SECTIONS_KEY]: saved } = await browser.storage.local.get(SECTIONS_KEY);
+      sections = { ...DEFAULT_SECTIONS, ...(saved && typeof saved === "object" ? saved : {}) };
+    } catch (e) {}
+  }
 
   async function loadLocal() {
     try {
@@ -456,12 +506,14 @@
     render();
   }
 
+  // Not even asked for while the section is turned off — no reason to
+  // walk the bookmark tree for something that isn't shown.
   async function loadRemote() {
+    if (!sections.otherDevices) return;
     try {
       const data = await browser.runtime.sendMessage({ type: "NEWTAB_REMOTE" });
       if (data && Array.isArray(data.devices)) remoteData = data;
     } catch (e) {}
-    remoteLoaded = true;
     render();
   }
 
@@ -498,6 +550,14 @@
     browser.bookmarks[ev].addListener(scheduleRemote);
   }
 
+  // Sections changed on the options page: applied live.
+  browser.storage.onChanged.addListener(async (changes, area) => {
+    if (area !== "local" || !changes[SECTIONS_KEY]) return;
+    await loadSections();
+    render();
+    loadRemote();
+  });
+
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       loadLocal();
@@ -515,6 +575,7 @@
     try {
       selfTab = await browser.tabs.getCurrent();
     } catch (e) {}
+    await loadSections();
     searchEl.focus();
     // autofocus may have focused it before the listener above existed.
     document.body.classList.toggle("searching", document.activeElement === searchEl);

@@ -30,11 +30,16 @@ profile.
   and the popup/options UI never reference it; `background.js` wires it
   with an `onMessage` listener of its own (after the one every other
   module shares), calling only `newtabEngine.handleMessage()`, which
-  returns `null` for anything that isn't a `NEWTAB_*` message.
-  `test/newtab-isolation.test.js` enforces both. Removing the feature
-  comes down to deleting its three files plus its wiring lines
-  (`importScripts`, the engine `const`, that listener, the manifest's
-  override and `background.scripts` entry, `release.yml`'s file list).
+  returns `null` for anything that isn't a `NEWTAB_*` message. Its
+  settings card on the options page is built by `newtab-options.js`,
+  which `options.html` loads with one `<script>` tag — `options.js`
+  knows nothing about it. `test/newtab-isolation.test.js` enforces all
+  three. Removing the feature comes down to deleting its four files
+  (`newtab-core.js`, `newtab.html`, `newtab.js`, `newtab-options.js`)
+  plus its wiring lines (`importScripts`, the engine `const`, that
+  listener, the manifest's override and `background.scripts` entry,
+  `options.html`'s script tag, `release.yml`'s file list and syntax
+  check).
 - **New tab pages are recognized here and only here** —
   `isNewTabPageUrl` in `newtab-core.js`: a tab on the new tab page can
   report either the native URL (`chrome://newtab/` — what Chrome keeps
@@ -81,13 +86,24 @@ profile.
   matches numbers by prefix and selects the exact one for Enter; with no
   such number it falls back to text search. Positional, so they shift as
   tabs open/close/move. See `numberTabs`/`buildQuery` in `newtab.js`.
-- **Layout: sticky search bar; two columns on a wide window** (≥1100px,
-  media query in `newtab.html`) whenever the other-devices side has
-  anything to show — decided on unfiltered data so typing never reflows
-  it. The other-devices column is sticky with its own scroll. Since the
-  remote half arrives after the local one, the last decision is kept as
-  a synchronous `localStorage` hint (`newtabTwoColumns`) so the page
-  doesn't jump on open. See `updateLayout` in `newtab.js`.
+- **Layout: sticky, width-capped search bar; tabs in two columns on a
+  wide window** (≥1000px, media query in `newtab.html`), filled in
+  reading order — a tab on the left, the next on its right — so numbers
+  still read in sequence. Section titles and group headers span the full
+  width; a group's tabs are marked by a thin bar in its colour rather
+  than an indent, so every grid's columns line up. Up/Down move by row
+  (`rowNeighbour` in `newtab.js`), Left/Right through reading order.
+- **Which sections show is a setting** — `newtabSections` in
+  `storage.local` (`thisWindow`/`otherWindows`/`otherDevices`, all on by
+  default), set from the options page's "New tab page" card
+  (`newtab-options.js`, which keeps its own copy of the key and
+  defaults). Applied live through `storage.onChanged`. Hidden sections
+  get no numbers, and with "other devices" off the remote half isn't
+  even requested, so nothing walks the bookmark tree for it.
+- **Date and time follow the browser's UI language** —
+  `i18n.getUILanguage()`, not the page's default locale, falling back to
+  the default only if Intl rejects the tag. The page's own labels stay
+  English, like the rest of the extension's UI.
 - **A click switches, then closes the new tab page behind it** — the
   blank tab you came from would otherwise pile up after every jump. See
   `switchTo` in `newtab.js`.

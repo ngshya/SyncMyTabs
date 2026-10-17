@@ -62,9 +62,10 @@ Firefox.** Keep this in mind in every change:
 | `background.js` | Thin wiring: registers real `browser.*` event listeners and forwards them to `sync-core.js`'s / `groups-core.js`'s / `archive-core.js`'s / `order-core.js`'s / `newtab-core.js`'s engine functions, plus browser-chrome-only bits (toolbar icon, alarm registration) that aren't sync logic |
 | `link-leash-content.js` | Content script for the leashing module — see its section below |
 | `popup.html` / `popup.js` | The **compact** toolbar popup — status, an on/off switch per feature module (open-tab sync, tab groups, auto-archive, tab & group order), a "Sync now" quick action, and a button to open `options.html`. Deliberately minimal; see "Popup vs. options page" below for why. |
-| `options.html` / `options.js` | The **full settings page**, opened as a plain tab (from the popup's "Open full settings" button, or by `browser.runtime.onInstalled` for first-run setup, since popups can't be opened programmatically) — device name, profiles, the shared check interval, and every module's detail settings (grouped into four cards: Open tabs sync, Tab groups, Auto-archive, Tab & group order), plus the theme selector. Mostly the same DOM-building code the old all-in-one popup used to have. |
+| `options.html` / `options.js` | The **full settings page**, opened as a plain tab (from the popup's "Open full settings" button, or by `browser.runtime.onInstalled` for first-run setup, since popups can't be opened programmatically) — device name, profiles, the shared check interval, and every module's detail settings (grouped into four cards: Open tabs sync, Tab groups, Auto-archive, Tab & group order — plus a fifth, New tab page, built by `newtab-options.js`, not `options.js`), plus the theme selector. Mostly the same DOM-building code the old all-in-one popup used to have. |
 | `theme.css` / `theme.js` | Shared dark/light/system theme system, loaded by both `popup.html` and `options.html` — see "Popup vs. options page" below |
-| `newtab.html` / `newtab.js` | The **custom new tab page** (`chrome_url_overrides.newtab` in the manifest) — clock/date, a sticky type-to-search box, this device's tabs by window in tab-strip order, and the tabs open on other devices (a second column on wide windows); every tab is numbered for keyboard-only jumps; clicking one switches to it and closes the new tab page. DOM-only — all data comes from `newtab-core.js` via the `NEWTAB_LOCAL`/`NEWTAB_REMOTE` messages. |
+| `newtab.html` / `newtab.js` | The **custom new tab page** (`chrome_url_overrides.newtab` in the manifest) — clock/date, a sticky type-to-search box, this device's tabs by window in tab-strip order, and the tabs open on other devices; tabs flow in two columns (reading order) on wide windows; every tab is numbered for keyboard-only jumps; clicking one switches to it and closes the new tab page. DOM-only — all data comes from `newtab-core.js` via the `NEWTAB_LOCAL`/`NEWTAB_REMOTE` messages. |
+| `newtab-options.js` | The new tab page's own card on the options page (which tab sections it shows, `newtabSections` in storage) — loaded by `options.html` after `options.js` and builds its card itself, so `options.js` knows nothing about the new tab page. |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page — by default loads the real URL only on an explicit click (not just on becoming visible), so autoplay media (YouTube, etc.) never starts just from switching tabs; `lazyRequireClick: false` in storage restores the old load-on-visible behavior |
 | `browser-polyfill.min.js` | Vendored Mozilla WebExtension polyfill so `browser.*` is promise-based on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
@@ -249,7 +250,7 @@ extensions), and `context.serviceWorkers()[0].evaluate(...)` runs
    `sync-core.js`, not `background.js` — see "Testing" above.
 3. **Syntax-check** any JS you touched:
    ```bash
-   node --check background.js && node --check sync-core.js && node --check groups-core.js && node --check archive-core.js && node --check order-core.js && node --check newtab-core.js && node --check popup.js && node --check options.js && node --check newtab.js
+   node --check background.js && node --check sync-core.js && node --check groups-core.js && node --check archive-core.js && node --check order-core.js && node --check newtab-core.js && node --check popup.js && node --check options.js && node --check newtab.js && node --check newtab-options.js
    ```
 4. **Run the test suite** (`npm test`) — see "Testing" above. Add/update
    tests for any reconcile-logic change.
@@ -430,9 +431,11 @@ Replaces the browser's new tab page (`chrome_url_overrides.newtab`, on
 both Chrome/Brave and Firefox): a clock and date, a search box, this
 device's open tabs by window in the browser's own tab-strip order (tab
 groups where they sit, folded when folded in the browser), and the tabs
-open on the user's other devices on the same profile — in a second
-column on a wide window, under a search bar that stays pinned while the
-list scrolls. Every tab is numbered: typing a number narrows to it,
+open on the user's other devices on the same profile, under a search
+bar that stays pinned while the list scrolls; on a wide window tabs
+flow in two columns, left then right. Which of those three tab sections
+show is a setting (a "New tab page" card on the options page). The date
+and time follow the browser's UI language. Every tab is numbered: typing a number narrows to it,
 Enter opens it, no mouse needed. A click switches to the tab — focusing
 its window — then closes the new tab page behind it; a tab only open on
 another device opens in place.
@@ -445,9 +448,11 @@ from one is blocked). See Known limitations.
 
 **Self-contained by design**: no other module, nor the popup/options
 UI, references it; `background.js` wires it through an `onMessage`
-listener of its own, separate from the one every other module shares.
-`test/newtab-isolation.test.js` enforces this — keep new-tab-page
-knowledge inside `newtab-core.js`/`newtab.js`.
+listener of its own, separate from the one every other module shares,
+and `options.html` only loads `newtab-options.js`, which builds the
+settings card itself. `test/newtab-isolation.test.js` enforces this —
+keep new-tab-page knowledge inside `newtab-core.js`/`newtab.js`/
+`newtab-options.js`.
 
 **Full invariants (why the data side goes through background messages,
 the paused-sync rule for the remote half, favicon privacy, how to remove

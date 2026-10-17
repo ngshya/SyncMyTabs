@@ -3,9 +3,9 @@
 // tab order — and their UI) knows it exists, and background.js wires it
 // with its own onMessage listener rather than a branch inside the one
 // every other module shares. Removing the feature should come down to
-// deleting newtab-core.js/newtab.html/newtab.js and their few wiring
-// lines — this test keeps it that way, so a later change that
-// re-entangles them fails here rather than in review.
+// deleting newtab-core.js/newtab.html/newtab.js/newtab-options.js and
+// their few wiring lines — this test keeps it that way, so a later
+// change that re-entangles them fails here rather than in review.
 //
 // Static checks, same style as no-name-collision.test.js.
 
@@ -29,7 +29,6 @@ const UNAWARE_FILES = [
   "popup.js",
   "options.js",
   "popup.html",
-  "options.html",
 ];
 
 test("pre-existing modules and their UI never reference the new tab page", () => {
@@ -39,6 +38,17 @@ test("pre-existing modules and their UI never reference the new tab page", () =>
     [],
     "keep new-tab-page knowledge inside newtab-core.js/newtab.js — these files must work without it"
   );
+});
+
+// The options page hosts the new tab page's own settings card, but only by
+// loading newtab-options.js, which builds that card itself — options.html
+// carries that one script tag and nothing else about the feature.
+test("options.html only loads newtab-options.js, nothing else about the new tab page", () => {
+  const TAG = '<script src="newtab-options.js"></script>';
+  const src = read("options.html");
+  assert.equal(src.split(TAG).length - 1, 1, "exactly one tag loading newtab-options.js");
+  assert.ok(!NEWTAB_REFERENCE.test(src.replace(TAG, "")), "no other reference to the new tab page");
+  assert.ok(src.indexOf(TAG) > src.indexOf('<script src="options.js"></script>'), "loaded after options.js");
 });
 
 test("background.js calls the new tab engine only from its own, last onMessage listener", () => {

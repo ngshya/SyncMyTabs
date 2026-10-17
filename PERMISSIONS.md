@@ -66,7 +66,8 @@ broad host permission and a content script for its tab-group leashing module
 > on/off and ungroup-undeclared-tabs preferences, the auto-archive module's
 > own on/off and idle-threshold preferences plus its per-tab last-active-time
 > bookkeeping, the tab-order module's own on/off, idle-before-reordering, and
-> manual-move-pause preferences, and the last-activity timestamp shown in the popup. All of this is stored locally via chrome.storage.local and never
+> manual-move-pause preferences, which tab sections the new tab page shows,
+> and the last-activity timestamp shown in the popup. All of this is stored locally via chrome.storage.local and never
 > transmitted.
 
 ### `alarms`
