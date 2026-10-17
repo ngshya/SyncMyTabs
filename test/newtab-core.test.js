@@ -297,3 +297,105 @@ test("NEWTAB_BOOKMARKS is answered; the bar is never written to", async () => {
   assert.deepEqual(reply.bar.children, []);
   assert.equal(JSON.stringify(world.root.children[0]), before);
 });
+
+// ---- recently auto-archived tabs ----
+
+const { createArchiveEngine, ARCHIVE_ROOT_TITLE } = require("../archive-core.js");
+
+// Archives `url` the way archive-core.js does (its own archiveTab, via a
+// tab that has gone idle), `daysAgo` days before `now`.
+async function archiveAt(device, now, daysAgo, url, title) {
+  const realNow = Date.now;
+  Date.now = () => now - daysAgo * 24 * 60 * MINUTE_MS;
+  try {
+    const tab = await device.openTab(url, title);
+    const archive = createArchiveEngine(device.env, device.engine);
+    await device.env.storage.local.set({ archiveIdleDays: 0, archiveIdleHours: 0, archiveIdleMinutes: 1 });
+    await archive.handleStartupSeed();
+    Date.now = () => now - daysAgo * 24 * 60 * MINUTE_MS + 2 * MINUTE_MS;
+    await archive.reconcileArchive();
+    await device.world.flush();
+    assert.ok(!(await device.tabsApi.query({})).some((t) => t.id === tab.id), `${url} archived and closed`);
+  } finally {
+    Date.now = realNow;
+  }
+}
+
+test("archived: the folder title is archive-core.js's own", () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  assert.equal(newtabEngineFor(a).ARCHIVE_FOLDER_TITLE, ARCHIVE_ROOT_TITLE);
+});
+
+test("archived: last n calendar days, newest day first, newest first within a day", async () => {
+  const now = new Date(2026, 9, 17, 12, 0).getTime();
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const nt = newtabEngineFor(a);
+
+  await archiveAt(a, now, 0, "https://today-1.example/", "Today 1");
+  await archiveAt(a, now, 0, "https://today-2.example/", "Today 2");
+  await archiveAt(a, now, 1, "https://yesterday.example/", "Yesterday");
+  await archiveAt(a, now, 6, "https://six-days.example/", "Six days ago");
+  await archiveAt(a, now, 7, "https://seven-days.example/", "Seven days ago");
+  await archiveAt(a, now, 40, "https://last-month.example/", "Last month");
+
+  await withFakeClock(now, async () => {
+    const shape = (data) => data.days.map((d) => [d.date, d.tabs.map((t) => t.title)]);
+    assert.deepEqual(shape(await nt.getArchivedData(7)), [
+      ["2026-10-17", ["Today 2", "Today 1"]],
+      ["2026-10-16", ["Yesterday"]],
+      ["2026-10-11", ["Six days ago"]],
+    ]);
+    assert.deepEqual(shape(await nt.getArchivedData(1)), [["2026-10-17", ["Today 2", "Today 1"]]]);
+    assert.equal((await nt.getArchivedData(60)).days.length, 5, "a longer window reaches last month");
+    assert.equal((await nt.getArchivedData("junk")).days.length, 3, "an invalid value falls back to 7 days");
+    const reply = await nt.handleMessage({ type: "NEWTAB_ARCHIVED", days: 2 });
+    assert.deepEqual(shape(reply).map(([d]) => d), ["2026-10-17", "2026-10-16"]);
+  });
+});
+
+test("archived: a URL archived twice shows once, on its latest day; one open again here is left out", async () => {
+  const now = new Date(2026, 9, 17, 12, 0).getTime();
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const nt = newtabEngineFor(a);
+
+  await archiveAt(a, now, 3, "https://twice.example/", "Twice");
+  await archiveAt(a, now, 1, "https://twice.example/", "Twice");
+  await archiveAt(a, now, 1, "https://reopened.example/", "Reopened");
+
+  await withFakeClock(now, async () => {
+    const before = await nt.getArchivedData(7);
+    assert.deepEqual(
+      before.days.map((d) => [d.date, d.tabs.map((t) => t.url)]),
+      [["2026-10-16", ["https://reopened.example/", "https://twice.example/"]]]
+    );
+    await a.openTab("https://reopened.example/", "Reopened");
+    const after = await nt.getArchivedData(7);
+    assert.deepEqual(after.days[0].tabs.map((t) => t.url), ["https://twice.example/"]);
+  });
+});
+
+test("archived: covers what other devices archived on the same profile, and never writes", async () => {
+  const now = new Date(2026, 9, 17, 12, 0).getTime();
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A" });
+  const b = world.addDevice({ deviceName: "B" });
+  await archiveAt(b, now, 0, "https://from-b.example/", "From B");
+
+  await withFakeClock(now, async () => {
+    const before = JSON.stringify(world.root);
+    const data = await newtabEngineFor(a).getArchivedData(7);
+    assert.deepEqual(data.days[0].tabs.map((t) => t.title), ["From B"]);
+    assert.equal(JSON.stringify(world.root), before, "read-only");
+  });
+});
+
+test("archived: skipped while sync is paused, bookmark tree untouched", async () => {
+  const world = new SimWorld();
+  const a = world.addDevice({ deviceName: "A", storage: { syncEnabled: false } });
+  const before = JSON.stringify(world.root);
+  assert.deepEqual(await newtabEngineFor(a).getArchivedData(7), { paused: true, days: [] });
+  assert.equal(JSON.stringify(world.root), before);
+});

@@ -144,6 +144,37 @@ describe("new tab page", { skip: SKIP }, () => {
     await p.close();
   });
 
+  test("auto-archived tabs: the last n days by day, numbered after the rest, a click reopens one here", async () => {
+    await b.addArchivedTab("Yesterday's article", "https://old.example/article", 1);
+    await b.addArchivedTab("Ancient thread", "https://forum.example/thread", 10);
+    const p = await b.openNewtab();
+    await p.waitForSelector("#archivedSection:not([hidden])", { timeout: 8000 });
+    const archived = () =>
+      p.evaluate(() =>
+        Array.from(document.querySelectorAll("#archived .sub-title, #archived .item")).map((n) =>
+          n.classList.contains("item") ? `${n.dataset.num} ${n.querySelector(".title").textContent}` : `[${n.textContent}]`
+        )
+      );
+    // Numbered right after the other sections (tabs closed by the tests
+    // above have shifted those).
+    const n = 1 + (await p.evaluate(() => Math.max(...Array.from(document.querySelectorAll("#local .item, #remote .item")).map((i) => Number(i.dataset.num)))));
+    assert.equal(await p.textContent("#archivedTitle"), "Auto-archived · last 7 days");
+    assert.deepEqual(await archived(), ["[Yesterday]", `${n} Yesterday's article`], "10 days ago is out");
+
+    await b.setSettings({ archivedDays: 30 });
+    await p.waitForFunction(() => document.querySelectorAll("#archived .item").length === 2, null, { timeout: 8000 });
+    assert.equal((await archived()).at(-1), `${n + 1} Ancient thread`);
+    await b.setSettings({ archived: false });
+    await p.waitForSelector("#archivedSection[hidden]", { state: "attached", timeout: 8000 });
+    await b.setSettings({ archived: true, archivedDays: 7 });
+    await p.waitForSelector("#archivedSection:not([hidden])", { timeout: 8000 });
+
+    await p.keyboard.type(String(n));
+    await p.keyboard.press("Enter");
+    await p.waitForURL("https://old.example/article", { timeout: 5000 });
+    await p.close();
+  });
+
   test("Enter on a tab switches to it and closes the new tab page", async () => {
     const p = await b.openNewtab();
     await p.keyboard.type("pasta"); // by title: closing tabs above renumbered it

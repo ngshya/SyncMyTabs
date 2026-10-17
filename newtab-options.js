@@ -3,7 +3,8 @@
 //
 // The custom new tab page's own card on the options page: one checkbox
 // per new tab page setting (which tab sections show, the bookmarks bar,
-// the clock's seconds, search-box focus, matrix rain). The settings
+// the clock's seconds, search-box focus, matrix rain) — or a number field
+// for a numeric one (how many days of archived tabs). The settings
 // themselves — key, defaults, labels — live in newtab-settings.js, which
 // options.html loads just before this; this file only draws the card.
 //
@@ -45,16 +46,40 @@
     }
     const row = el("label", "checkbox-row");
     const input = el("input");
-    input.type = "checkbox";
-    input.checked = value;
+    if (typeof value === "number") {
+      // A number setting: its label first, then the field (the options
+      // page's own number-input styles), indented under the checkbox above
+      // it, which it refines.
+      row.style.paddingLeft = "24px";
+      input.type = "number";
+      input.min = "1";
+      input.step = "1";
+      input.style.width = "64px";
+      input.value = String(value);
+      row.append(document.createTextNode(label), input);
+    } else {
+      input.type = "checkbox";
+      input.checked = value;
+      row.append(input, document.createTextNode(label));
+    }
     inputs[key] = input;
-    row.append(input, document.createTextNode(label));
     body.append(row);
+  }
+
+  // A number field left empty, below 1 or fractional saves as the nearest
+  // whole number ≥ 1 (its default when it's not a number at all).
+  function readInput(key) {
+    const input = inputs[key];
+    if (input.type !== "number") return input.checked;
+    let n = Math.floor(Number(input.value));
+    if (!(n >= 1)) n = input.value.trim() === "" || Number.isNaN(n) ? NewtabSettings.DEFAULTS[key] : 1;
+    input.value = String(n);
+    return n;
   }
 
   async function save() {
     const values = {};
-    for (const key of Object.keys(inputs)) values[key] = inputs[key].checked;
+    for (const key of Object.keys(inputs)) values[key] = readInput(key);
     await NewtabSettings.save(values);
     // options.js's own "Saved ✓" flash, when it's there.
     if (typeof flashStatus === "function") flashStatus("Saved ✓");
@@ -62,7 +87,10 @@
   for (const input of Object.values(inputs)) input.addEventListener("change", save);
 
   NewtabSettings.load().then((settings) => {
-    for (const key of Object.keys(inputs)) inputs[key].checked = !!settings[key];
+    for (const key of Object.keys(inputs)) {
+      if (inputs[key].type === "number") inputs[key].value = String(settings[key]);
+      else inputs[key].checked = !!settings[key];
+    }
   });
 
   // After the last card, before the status line / version footer.

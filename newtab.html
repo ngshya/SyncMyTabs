@@ -145,7 +145,7 @@
        than one more line of the list above. Margins collapse, so a group
        right before it doesn't add its own gap on top. */
     #local .section-title:not(:first-child) { margin-top: 44px; }
-    #remoteSection { margin-top: 44px; }
+    #remoteSection, #archivedSection { margin-top: 44px; }
     .sub-title {
       font-size: 12px;
       color: var(--muted);
@@ -404,6 +404,11 @@
     <section id="remoteSection" hidden>
       <div class="section-title">On your other devices</div>
       <div id="remote"></div>
+    </section>
+
+    <section id="archivedSection" hidden>
+      <div id="archivedTitle" class="section-title">Auto-archived</div>
+      <div id="archived"></div>
     </section>
 
     <div id="empty" class="note" hidden>No matching tabs.</div>

@@ -184,6 +184,26 @@ async function launch(options = {}) {
         throw new Error("profile folder never appeared");
       });
     },
+    // Writes an auto-archived tab the way archive-core.js's archiveTab
+    // does: <profile>/_archive/<year>/<month>/<day>/<plain bookmark>, the
+    // day `daysAgo` local calendar days back.
+    async addArchivedTab(title, url, daysAgo = 0) {
+      const profileId = await b.profileFolderId();
+      await sw.evaluate(
+        async ({ profileId, title, url, daysAgo }) => {
+          const sub = async (parentId, t) =>
+            (await chrome.bookmarks.getChildren(parentId)).find((k) => !k.url && k.title === t) ||
+            (await chrome.bookmarks.create({ parentId, title: t }));
+          const now = new Date();
+          const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo);
+          const pad = (n) => String(n).padStart(2, "0");
+          let folder = await sub(profileId, "_archive");
+          for (const t of [String(d.getFullYear()), pad(d.getMonth() + 1), pad(d.getDate())]) folder = await sub(folder.id, t);
+          await chrome.bookmarks.create({ parentId: folder.id, title, url });
+        },
+        { profileId, title, url, daysAgo }
+      );
+    },
     // Writes a fake OTHER device's open tab into the synced tree, exactly
     // the way sync-core.js writes one: <profile>/<url folder>/{_url, <device>}.
     // Retried: sync's own reconcile may be reorganizing that same folder

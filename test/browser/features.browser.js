@@ -46,11 +46,15 @@ describe("new tab page extras", { skip: SKIP }, () => {
     await r.close();
   });
 
-  test("options card: two groups, seven settings, defaults as documented", async () => {
+  test("options card: two groups, nine settings, defaults as documented", async () => {
     const opt = await b.openPage("options.html");
     await sleep(500);
-    const card = await opt.locator(".card").last().evaluate((c) => Array.from(c.querySelectorAll(".section-title, label")).map((n) => (n.querySelector("input") ? (n.querySelector("input").checked ? "x" : "-") : "#") + n.textContent.trim().split(" ")[0]));
-    assert.deepEqual(card, ["#Show", "xTabs", "xTabs", "xTabs", "-Bookmarks", "#Look", "xSeconds", "x24-hour", "-Put", "-Matrix"]);
+    const mark = (input) => (input.type === "number" ? `=${input.value}:` : input.checked ? "x" : "-");
+    const card = await opt.locator(".card").last().evaluate((c, markSrc) => {
+      const mark = eval(markSrc);
+      return Array.from(c.querySelectorAll(".section-title, label")).map((n) => (n.querySelector("input") ? mark(n.querySelector("input")) : "#") + n.textContent.trim().split(" ")[0]);
+    }, mark.toString());
+    assert.deepEqual(card, ["#Show", "xTabs", "xTabs", "xTabs", "xTabs", "=7:Auto-archived", "-Bookmarks", "#Look", "xSeconds", "x24-hour", "-Put", "-Matrix"]);
     await opt.close();
   });
 

@@ -5,7 +5,7 @@
 // visual check — the same browser setup as the browser tests
 // (test/browser/helpers.js: the built package, a fake web), with a
 // believable session: two windows, tab groups (one folded), a pinned tab,
-// another device, a bookmarks bar.
+// another device, a few auto-archived tabs, a bookmarks bar.
 //
 //   npm run screenshots -- [outDir]          (default: ./screenshots)
 //
@@ -56,6 +56,9 @@ const SITES = {
   }, urls.slice(9));
   await b.addRemoteTab("Phone", "Train timetable Milan → Rome", "https://trains.example/", 5);
   await b.addRemoteTab("Phone", "Hacker News", "https://news.example/", 30);
+  await b.addArchivedTab("Best mechanical keyboards of 2026 — Review", "https://review.example/keyboards", 0);
+  await b.addArchivedTab("How bookmarks sync works — Blog", "https://blog.example/bookmark-sync", 2);
+  await b.addArchivedTab("Flight deals — Travel", "https://travel.example/flights", 2);
   const barId = await b.bookmarksBarId();
   await b.bg(async (barId) => {
     for (const [t, u] of [["GitHub", "https://github.example/"], ["Mail", "https://mail.example/"], ["News", "https://news.example/"]]) {

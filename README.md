@@ -259,6 +259,11 @@ own: the time and date, a search box, and everything you have open.
 - **Your other devices' tabs** — what's open on each of your other devices
   on the same profile, read from the same synced bookmarks as everything
   else. Ones that are also open here are marked "open here".
+- **Recently auto-archived tabs** — the tabs [auto-archive](#auto-archive-idle-tabs)
+  closed over the last 7 days (how many is a setting; 1 = today only), by
+  day, newest first, at the bottom of the page. One click opens it again
+  right there. Tabs archived on your other devices show up too, once the
+  bookmarks have synced; one you've already reopened isn't listed.
 - **Close from the list** — hovering one of this device's tabs shows a
   **✕** at the end of its row; **Delete** does the same for the tab the
   keyboard is on. It's an ordinary close, so it syncs like any other.
@@ -275,8 +280,8 @@ own: the time and date, a search box, and everything you have open.
 - **Two columns on a wide window** — tabs fill them in reading order, one
   on the left and the next on its right.
 - **Choose what's listed** — the options page's *New tab page* card turns
-  each section (this window, your other windows, your other devices) on or
-  off.
+  each section (this window, your other windows, your other devices,
+  recently archived) on or off.
 - **Optional bookmarks bar** (off by default, same card) — a copy of your
   browser's bookmarks bar centred across the top of the page, faded until
   you point at it, so you can keep the browser's own bar hidden. Folders open menus (nested ones to the side),

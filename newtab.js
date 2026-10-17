@@ -5,10 +5,12 @@
 // manifest.json's chrome_url_overrides.newtab): a clock, a search box,
 // this device's open tabs by window in the browser's own tab-strip order
 // (tab groups where they sit, folded when they're folded in the
-// browser), and the tabs open on the user's other devices. All the data
+// browser), the tabs open on the user's other devices, and the tabs
+// auto-archived over the last few days (archivedDays). All the data
 // assembly lives in newtab-core.js (served by background.js's
-// NEWTAB_LOCAL/NEWTAB_REMOTE messages, see its header comment for why it
-// isn't done here); this file only renders it and reacts to clicks/keys.
+// NEWTAB_LOCAL/NEWTAB_REMOTE/NEWTAB_ARCHIVED messages, see its header
+// comment for why it isn't done here); this file only renders it and
+// reacts to clicks/keys.
 //
 // Every node is built with createElement/textContent, never innerHTML:
 // tab titles and URLs are arbitrary text controlled by whatever page is
@@ -58,11 +60,15 @@
   const localEl = document.getElementById("local");
   const remoteEl = document.getElementById("remote");
   const remoteSectionEl = document.getElementById("remoteSection");
+  const archivedEl = document.getElementById("archived");
+  const archivedSectionEl = document.getElementById("archivedSection");
+  const archivedTitleEl = document.getElementById("archivedTitle");
   const emptyEl = document.getElementById("empty");
 
   let selfTab = null;
   let localData = { windows: [] };
   let remoteData = { paused: false, devices: [] };
+  let archivedData = { paused: false, days: [] };
   // Which sections show (and the page's other settings) — see
   // newtab-settings.js; set from the options page's "New tab page" card.
   let sections = { ...NewtabSettings.DEFAULTS };
@@ -137,8 +143,8 @@
   // while you type, and a tab inside a folded group has one too. A remote
   // tab that's also listed here reuses the local tab's number (it's the
   // same tab a click would switch to); only the others get numbers of
-  // their own, after the local ones. Numbers follow positions, so they
-  // shift when tabs open/close/move.
+  // their own, after the local ones; recently archived tabs come last.
+  // Numbers follow positions, so they shift when tabs open/close/move.
   function numberTabs(windows) {
     const local = new Map(); // local tab id → number
     let n = 0;
@@ -154,7 +160,11 @@
         }
       }
     }
-    return { local, remote, max: n };
+    const archived = new Map(); // archive bookmark id → number
+    if (sections.archived) {
+      for (const day of archivedData.days) for (const t of day.tabs) archived.set(t.id, ++n);
+    }
+    return { local, remote, archived, max: n };
   }
 
   // A query of digits only is a tab number: it matches every tab whose
@@ -167,7 +177,7 @@
     const terms = raw.toLowerCase().split(/\s+/).filter(Boolean);
     let digits = null;
     if (/^\d+$/.test(raw)) {
-      const all = [...numbers.local.values(), ...numbers.remote.values()];
+      const all = [...numbers.local.values(), ...numbers.remote.values(), ...numbers.archived.values()];
       if (all.some((num) => String(num).startsWith(raw))) digits = raw;
     }
     return {
@@ -283,6 +293,7 @@
       // the tab list steps aside for the one web row.
       localEl.replaceChildren();
       remoteSectionEl.hidden = true;
+      archivedSectionEl.hidden = true;
       emptyEl.hidden = true;
       renderWeb(false);
       markSelected({ active: true, digits: null });
@@ -370,7 +381,29 @@
     remoteSectionEl.hidden = remoteVisible === 0 && !(sections.otherDevices && remoteData.paused && !query.active);
     visible += remoteVisible;
 
-    const nothingShown = !sections.thisWindow && !sections.otherWindows && !sections.otherDevices;
+    // Recently auto-archived tabs, newest day first — a click opens one
+    // again right here, in this tab. Nothing is shown while sync is
+    // paused (newtab-core.js doesn't read the archive then); the
+    // other-devices section already says sync is paused.
+    archivedEl.replaceChildren();
+    let archivedVisible = 0;
+    if (sections.archived) {
+      for (const day of archivedData.days) {
+        const tabs = day.tabs.filter((t) => query.hit(numbers.archived.get(t.id), t.title, t.url));
+        if (tabs.length === 0) continue;
+        const grid = el("div", "tab-grid");
+        for (const t of tabs) {
+          grid.append(itemRow(t, `a:${t.id}`, numbers.archived.get(t.id), hostOf(t.url), () => openHere(t.url), false));
+        }
+        archivedEl.append(el("div", "sub-title", dayLabel(day.date)), grid);
+        archivedVisible += tabs.length;
+      }
+    }
+    archivedTitleEl.textContent = `Auto-archived · ${archivedSpan()}`;
+    archivedSectionEl.hidden = archivedVisible === 0;
+    visible += archivedVisible;
+
+    const nothingShown = !sections.thisWindow && !sections.otherWindows && !sections.otherDevices && !sections.archived;
     emptyEl.textContent = nothingShown
       ? "Every tab section is turned off — choose what this page shows in SyncMyTabs's settings."
       : "No matching tabs.";
@@ -384,6 +417,30 @@
       const again = document.querySelector(`[data-key="${CSS.escape(focusedKey)}"]`);
       if (again) again.focus();
     }
+  }
+
+  // "Today", "Yesterday", else the date in the browser's language — for
+  // an archive day folder's "YYYY-MM-DD" (this device's local calendar).
+  function dayLabel(key) {
+    const [y, m, d] = key.split("-").map(Number);
+    const date = new Date(y, m - 1, d);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const ago = Math.round((today - date) / 86400000);
+    if (ago === 0) return "Today";
+    if (ago === 1) return "Yesterday";
+    let text;
+    try {
+      text = date.toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long" });
+    } catch (e) {
+      text = key;
+    }
+    return text.charAt(0).toLocaleUpperCase(locale) + text.slice(1);
+  }
+
+  function archivedSpan() {
+    const n = Math.floor(Number(sections.archivedDays));
+    return n === 1 ? "today" : `last ${n >= 1 ? n : NewtabSettings.DEFAULTS.archivedDays} days`;
   }
 
   // While searching, what Enter would open is highlighted: the exact
@@ -644,6 +701,16 @@
     render();
   }
 
+  // Same: not asked for while the section is off.
+  async function loadArchived() {
+    if (!sections.archived) return;
+    try {
+      const data = await browser.runtime.sendMessage({ type: "NEWTAB_ARCHIVED", days: sections.archivedDays });
+      if (data && Array.isArray(data.days)) archivedData = data;
+    } catch (e) {}
+    render();
+  }
+
   function debounce(fn, ms) {
     let timer = null;
     return () => {
@@ -654,9 +721,14 @@
 
   // Only while this page is actually visible — a background new tab
   // has no reason to keep re-reading the bookmark tree. The remote half
-  // is debounced harder: every device's heartbeat is a bookmark change.
+  // (other devices + archived tabs, both read from bookmarks) is debounced
+  // harder: every device's heartbeat is a bookmark change.
   const scheduleLocal = debounce(() => !document.hidden && loadLocal(), 150);
-  const scheduleRemote = debounce(() => !document.hidden && loadRemote(), 1000);
+  const scheduleRemote = debounce(() => {
+    if (document.hidden) return;
+    loadRemote();
+    loadArchived();
+  }, 1000);
 
   for (const ev of ["onCreated", "onRemoved", "onMoved", "onActivated", "onAttached", "onDetached"]) {
     browser.tabs[ev].addListener(scheduleLocal);
@@ -682,12 +754,14 @@
     sections = settings;
     render();
     loadRemote();
+    loadArchived();
   });
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       loadLocal();
       loadRemote();
+      loadArchived();
     }
   });
 
@@ -727,5 +801,6 @@
     document.body.classList.toggle("searching", document.activeElement === searchEl);
     await loadLocal();
     loadRemote();
+    loadArchived();
   })();
 })();

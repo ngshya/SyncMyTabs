@@ -10,7 +10,7 @@
 // sync-core.js maintains. The page itself stays a thin DOM layer that
 // only renders this and calls tabs.update/windows.update on click.
 //
-// Routed through background.js messages (NEWTAB_LOCAL/NEWTAB_REMOTE)
+// Routed through background.js messages (NEWTAB_LOCAL/NEWTAB_REMOTE/…)
 // rather than the page building its own engine: the remote half goes
 // through readProfileEntries, which self-heals duplicate folders with
 // real bookmark writes — a second sync-core.js engine instance living
@@ -32,7 +32,8 @@
 // and nowhere else.
 //
 // Also reads the browser's own bookmarks bar (getBookmarksBar) for the
-// page's optional copy of it — read-only.
+// page's optional copy of it, and the profile's auto-archive folder
+// (getArchivedData) for its "recently archived" section — both read-only.
 //
 // CONTRACT with sync-core.js: this module reuses exactly
 // syncEngine.realUrlOfTab() / .isSyncEnabled() / .getActiveProfile() /
@@ -232,6 +233,122 @@ function createNewtabEngine(env, syncEngine) {
     return { paused: false, profile, devices };
   }
 
+  // ---- recently auto-archived tabs ----
+
+  // archive-core.js's ARCHIVE_ROOT_TITLE, repeated here rather than read
+  // from it so this module keeps depending on syncEngine alone (scoped
+  // inside this function, so no clash with archive-core.js's global in
+  // the shared background scope); test/newtab-core.test.js checks the two
+  // still agree.
+  const ARCHIVE_FOLDER_TITLE = "_archive";
+  const DEFAULT_ARCHIVED_DAYS = 7;
+  const MAX_ARCHIVED_DAYS = 365;
+
+  function pad2(n) {
+    return String(n).padStart(2, "0");
+  }
+
+  async function subfolders(parentId) {
+    return (await env.bookmarks.getChildren(parentId)).filter((c) => !c.url && c.type !== "separator");
+  }
+
+  // The tabs archive-core.js auto-archived over the last `days` calendar
+  // days (today counts as one: 1 = today only), for the page's "recently
+  // archived" section — read straight from the profile's
+  // _archive/<year>/<month>/<day>/ folders (see archiveTab in
+  // archive-core.js), so it covers what every device on this profile
+  // archived, once bookmark sync has carried it here. Days come from the
+  // folder names, not each bookmark's dateAdded, which a bookmark-sync
+  // tool may reset to the time it synced; dateAdded (then position) only
+  // orders the tabs within a day. Only the folders inside the window are
+  // ever listed, so a years-long archive costs no more than a week of it.
+  //
+  // Read-only: no folder is created or merged — duplicate _archive/year/
+  // month/day folders (two devices creating the same one before syncing)
+  // are simply all read. A URL archived more than once appears once, on
+  // its latest day; one that's open again on this device is left out (it
+  // has been recovered already). Skipped while sync is paused, for the
+  // same reason as getRemoteData (getOrCreateProfileFolder can write).
+  async function getArchivedData(days) {
+    if (!(await syncEngine.isSyncEnabled())) return { paused: true, days: [] };
+    let n = Math.floor(Number(days));
+    if (!(n >= 1)) n = DEFAULT_ARCHIVED_DAYS;
+    n = Math.min(n, MAX_ARCHIVED_DAYS);
+
+    const today = new Date(Date.now());
+    const first = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (n - 1));
+    const firstKey = `${first.getFullYear()}-${pad2(first.getMonth() + 1)}-${pad2(first.getDate())}`;
+
+    const profile = await syncEngine.getActiveProfile();
+    const profileFolder = await syncEngine.getOrCreateProfileFolder(profile);
+    const byDay = new Map(); // "YYYY-MM-DD" → [bookmark, …]
+    for (const root of await subfolders(profileFolder.id)) {
+      if (root.title !== ARCHIVE_FOLDER_TITLE) continue;
+      for (const year of await subfolders(root.id)) {
+        if (!/^\d{4}$/.test(year.title) || year.title < firstKey.slice(0, 4)) continue;
+        for (const month of await subfolders(year.id)) {
+          if (!/^\d{2}$/.test(month.title) || `${year.title}-${month.title}` < firstKey.slice(0, 7)) continue;
+          for (const day of await subfolders(month.id)) {
+            const key = `${year.title}-${month.title}-${day.title}`;
+            if (!/^\d{2}$/.test(day.title) || key < firstKey) continue;
+            const marks = (await env.bookmarks.getChildren(day.id)).filter((c) => c.url && /^https?:\/\//.test(c.url));
+            if (!byDay.has(key)) byDay.set(key, []);
+            byDay.get(key).push(...marks);
+          }
+        }
+      }
+    }
+
+    const local = await localTabIndex();
+    const seen = new Set();
+    const out = [];
+    for (const key of Array.from(byDay.keys()).sort().reverse()) {
+      // Newest first: by dateAdded, ties (or no dateAdded at all) by
+      // position — archive-core.js appends, so later is newer. sort() is
+      // stable, so reversing first is enough for the ties.
+      const marks = byDay
+        .get(key)
+        .slice()
+        .reverse()
+        .sort((a, b) => (b.dateAdded || 0) - (a.dateAdded || 0));
+      const tabs = [];
+      for (const m of marks) {
+        if (seen.has(m.url)) continue;
+        seen.add(m.url);
+        if (local.byUrl.has(m.url)) continue;
+        tabs.push({
+          id: m.id,
+          url: m.url,
+          title: m.title || m.url,
+          t: m.dateAdded || null,
+          favIconUrl: local.byHost.get(hostOf(m.url)) || null,
+        });
+      }
+      if (tabs.length) out.push({ date: key, tabs });
+    }
+    return { paused: false, days: out };
+  }
+
+  // This device's open tabs by real URL, plus the first loaded favicon per
+  // URL and per site (same safeFaviconUrl rule) — for an archived or
+  // bookmarked page, which has no tab of its own to take an icon from.
+  async function localTabIndex() {
+    const byUrl = new Map();
+    const iconByUrl = new Map();
+    const byHost = new Map();
+    for (const t of await env.tabs.query({})) {
+      if (isNewTabPage(t)) continue;
+      const u = syncEngine.realUrlOfTab(t);
+      if (!byUrl.has(u)) byUrl.set(u, t);
+      const icon = safeFaviconUrl(t.favIconUrl);
+      if (!icon) continue;
+      if (!iconByUrl.has(u)) iconByUrl.set(u, icon);
+      const host = hostOf(u);
+      if (host && !byHost.has(host)) byHost.set(host, icon);
+    }
+    return { byUrl, iconByUrl, byHost };
+  }
+
   // ---- bookmarks bar ----
 
   // The browser's own bookmarks-bar folder, never a hardcoded id alone
@@ -267,16 +384,7 @@ function createNewtabEngine(env, syncEngine) {
     const [bar] = await env.bookmarks.getSubTree(barId);
     if (!bar) return { bar: null };
 
-    const iconByUrl = new Map();
-    const iconByHost = new Map();
-    for (const t of await env.tabs.query({})) {
-      const icon = safeFaviconUrl(t.favIconUrl);
-      if (!icon) continue;
-      const u = syncEngine.realUrlOfTab(t);
-      if (!iconByUrl.has(u)) iconByUrl.set(u, icon);
-      const host = hostOf(u);
-      if (host && !iconByHost.has(host)) iconByHost.set(host, icon);
-    }
+    const { iconByUrl, byHost: iconByHost } = await localTabIndex();
 
     function view(node) {
       if (node.type === "separator") return { kind: "separator", id: node.id };
@@ -323,13 +431,16 @@ function createNewtabEngine(env, syncEngine) {
     if (message && message.type === "NEWTAB_LOCAL") return getLocalData();
     if (message && message.type === "NEWTAB_REMOTE") return getRemoteData();
     if (message && message.type === "NEWTAB_BOOKMARKS") return getBookmarksBar();
+    if (message && message.type === "NEWTAB_ARCHIVED") return getArchivedData(message.days);
     return null;
   }
 
   return {
+    ARCHIVE_FOLDER_TITLE,
     isNewTabPage,
     getLocalData,
     getRemoteData,
+    getArchivedData,
     getBookmarksBar,
     handleMessage,
   };

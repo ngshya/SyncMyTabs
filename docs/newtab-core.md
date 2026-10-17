@@ -81,7 +81,7 @@ profile.
 - **Every tab is numbered, for keyboard-only use.** Numbers run over the
   whole unfiltered list in display order (this window, other windows,
   then remote-only tabs — a remote tab also open here reuses the local
-  tab's number), so they don't change while typing. A digits-only query
+  tab's number — then archived ones), so they don't change while typing. A digits-only query
   matches numbers by prefix and selects the exact one for Enter; with no
   such number it falls back to text search. Positional, so they shift as
   tabs open/close/move. See `numberTabs`/`buildQuery` in `newtab.js`.
@@ -92,9 +92,18 @@ profile.
   width; a group's tabs are marked by a thin bar in its colour rather
   than an indent, so every grid's columns line up. Up/Down move by row
   (`rowNeighbour` in `newtab.js`), Left/Right through reading order.
+- **Recently auto-archived tabs** (`archived`, on by default; the last
+  `archivedDays` calendar days, default 7, today counting as one) — last
+  section, by day, newest first; a click reopens one in place. Read-only
+  from `<profile>/_archive/<year>/<month>/<day>/` (archive-core.js's
+  tree; the folder title is repeated in `newtab-core.js`, a test keeps
+  the two equal), so it covers every device on the profile. Days come
+  from the folder names, not `dateAdded` (bookmark-sync tools may reset
+  it); a URL archived twice shows once, one open again here not at all;
+  skipped while sync is paused. See `getArchivedData` in `newtab-core.js`.
 - **Which sections show is a setting** — `newtabSections` in
-  `storage.local` (`thisWindow`/`otherWindows`/`otherDevices`, all on by
-  default), set from the options page's "New tab page" card
+  `storage.local` (`thisWindow`/`otherWindows`/`otherDevices`/`archived`,
+  all on by default, plus the number `archivedDays`), set from the options page's "New tab page" card
   (`newtab-options.js`, which keeps its own copy of the key and
   defaults). Applied live through `storage.onChanged`. Hidden sections
   get no numbers, and with "other devices" off the remote half isn't
@@ -104,7 +113,8 @@ profile.
   card's labels, as the global `NewtabSettings` (`load`/`save`/`onChange`/
   `merge`). Loaded by `newtab.html` and `options.html`; every other file
   reads settings through it, none keeps its own copy. A new setting is one
-  line in its `OPTIONS` plus the code that uses it.
+  line in its `OPTIONS` plus the code that uses it (a boolean default is a
+  checkbox on the options card, a number one a number field).
 - **Web search from the same box** (`newtab-search.js` + the "web search"
   section of `newtab.js`). Enter still opens the selected tab; with no tab
   matching — or with Shift+Enter — the web row runs: an address is opened

@@ -16,10 +16,14 @@ const NewtabSettings = (function () {
   const KEY = "newtabSections";
 
   // [key, default, label, group] — the order is the options card's order.
+  // A boolean default is a checkbox; a number one, a number input (whole
+  // numbers ≥ 1 — see newtab-options.js; readers clamp it themselves too).
   const OPTIONS = [
     ["thisWindow", true, "Tabs in the current window", "Show"],
     ["otherWindows", true, "Tabs in your other windows", "Show"],
     ["otherDevices", true, "Tabs on your other devices", "Show"],
+    ["archived", true, "Tabs auto-archived recently, to get them back with a click", "Show"],
+    ["archivedDays", 7, "Auto-archived tabs: how many days back (1 = today only)", "Show"],
     ["bookmarksBar", false, "Bookmarks bar at the top (a copy of the browser's, so you can keep its own hidden)", "Show"],
     ["clockSeconds", true, "Seconds on the clock", "Look & feel"],
     ["clock24h", true, "24-hour clock (off: the browser language's own format, e.g. AM/PM)", "Look & feel"],
