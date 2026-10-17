@@ -106,17 +106,12 @@
     .group-header .count { font-weight: 400; color: var(--muted); }
     .chevron { margin-left: auto; color: var(--muted); font-size: 11px; transition: transform 0.12s; }
     .group.collapsed .chevron { transform: rotate(-90deg); }
-    /* Each group sits between two thin lines, so it reads as one block
-       apart from the ungrouped tabs around it; back-to-back groups share
-       the line between them. */
-    .group {
-      margin: 8px 0;
-      padding: 2px 0 4px;
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-    }
-    .group + .group { margin-top: -9px; }
-    .group .group-header { margin-top: 2px; }
+    /* Breathing room above and below each group, so it reads as one block
+       apart from the ungrouped tabs around it (the colour bar on its tabs
+       already says which tabs belong to it). Vertical margins collapse, so
+       back-to-back groups get the same gap, not double. */
+    .group { margin: 16px 0; }
+    .group .group-header { margin-top: 0; }
     .group.collapsed .group-tabs { display: none; }
     /* Group membership is a thin bar in the group's colour on each of its
        tabs, not an indent — so a group's tabs line up with the ungrouped

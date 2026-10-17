@@ -254,8 +254,8 @@ own: the time and date, a search box, and everything you have open.
 - **Your open tabs, every window** — in the same order as your tab strip,
   browser tab groups (Chrome/Brave) right where they sit, folded if
   they're folded in the browser (click a group's name to fold/unfold it
-  on the page only). Each group sits between two thin lines, so it stands
-  apart from the tabs around it. Pinned tabs are marked as such.
+  on the page only). Each group has some space above and below it, so it
+  stands apart from the tabs around it. Pinned tabs are marked as such.
 - **Your other devices' tabs** — what's open on each of your other devices
   on the same profile, read from the same synced bookmarks as everything
   else. Ones that are also open here are marked "open here".
