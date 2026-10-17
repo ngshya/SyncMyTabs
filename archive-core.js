@@ -25,10 +25,10 @@
 //
 // CONTRACT with sync-core.js: this module reuses exactly
 // syncEngine.getActiveProfile() / .getOrCreateProfileFolder() /
-// .mergeFolderInto() / .isSyncEnabled() / .realUrlOfTab() and nothing
-// else — a session editing only this file's own activity-tracking/
-// archive logic does not need to read sync-core.js in full, only those
-// five signatures.
+// .mergeFolderInto() / .isSyncEnabled() / .realUrlOfTab() /
+// .isHttpUrl() and nothing else — a session editing only this file's
+// own activity-tracking/archive logic does not need to read
+// sync-core.js in full, only those six signatures.
 //
 // See docs/archive-core.md for the full invariants (the day/hour/minute
 // threshold fields, bookmark tree shape, activity-tracking persistence,
@@ -271,8 +271,19 @@ function createArchiveEngine(env, syncEngine) {
     if (!(await syncEngine.isSyncEnabled())) return; // master pause covers this too
 
     const allTabs = await env.tabs.query({});
+    // http(s) only — same rule sync-core.js's snapshotOwnTabs applies to
+    // what it syncs. Anything else (a new tab page, this extension's own
+    // newtab.html/options.html, chrome://settings, …) would otherwise be
+    // "archived" as a bookmark pointing at a browser-internal or
+    // extension-internal page: junk in _archive, not a page anyone wants
+    // to fish back out later. A lazy-restore placeholder still counts,
+    // through realUrlOfTab, as the real page it stands for.
     const eligible = allTabs.filter(
-      (t) => !t.pinned && !isGrouped(t) && (!t.status || t.status === "complete")
+      (t) =>
+        !t.pinned &&
+        !isGrouped(t) &&
+        (!t.status || t.status === "complete") &&
+        syncEngine.isHttpUrl(syncEngine.realUrlOfTab(t))
     );
 
     // Tracking runs regardless of the toggle (see readActivityMap's own

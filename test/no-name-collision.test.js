@@ -43,9 +43,10 @@ const FILES = [
   "groups-core.js",
   "archive-core.js",
   "order-core.js",
+  "newtab-core.js",
 ];
 
-test("background.js, sync-core.js, groups-core.js, archive-core.js, and order-core.js declare no colliding top-level names", () => {
+test("background.js and every *-core.js module declare no colliding top-level names", () => {
   const declsByFile = new Map(
     FILES.map((f) => [f, topLevelDeclarations(path.join(__dirname, "..", f))])
   );

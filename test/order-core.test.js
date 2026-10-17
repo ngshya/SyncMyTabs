@@ -319,3 +319,41 @@ test("each window is reordered independently", async () => {
     assert.equal(secondWindowTabs.length, 2, "second window untouched in tab count");
   });
 });
+
+test("new tab pages sort last (not by recency), and a settled window isn't re-moved on the next pass", async () => {
+  await withFakeClock(1_700_000_000_000, async (advance) => {
+    const world = new SimWorld();
+    const a = world.addDevice({ deviceName: "A", storage: { tabOrderEnabled: true } });
+    const ae = archiveEngineFor(a);
+    const oe = orderEngineFor(a, ae);
+
+    await a.openTab("https://old.example/");
+    advance(MINUTE_MS);
+    await a.openTab("https://new.example/");
+    advance(MINUTE_MS);
+    // The MOST recently activated tab — would jump to the front if it
+    // were sorted by recency like a real tab.
+    await a.openTab("chrome://newtab/");
+
+    advance(10 * MINUTE_MS);
+    await oe.reconcileOrder();
+    assert.deepEqual(await windowUrls(a), [
+      "https://new.example/",
+      "https://old.example/",
+      "chrome://newtab/",
+    ]);
+
+    // Already settled: the next pass must not issue a single move() —
+    // which it would if the new tab page were left out of the "is this
+    // window already in order?" comparison instead of placed at the end.
+    let moves = 0;
+    const realMove = a.tabsApi.move.bind(a.tabsApi);
+    a.tabsApi.move = async (...args) => {
+      moves += 1;
+      return realMove(...args);
+    };
+    advance(10 * MINUTE_MS);
+    await oe.reconcileOrder();
+    assert.equal(moves, 0);
+  });
+});

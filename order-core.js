@@ -19,10 +19,11 @@
 // no-op elsewhere.
 //
 // CONTRACT: reuses exactly syncEngine.isSyncEnabled() (the master
-// pause switch) and archiveEngine.getActivityMap() (per-tab
+// pause switch), syncEngine.isNewTabPage() (new tab pages sort last,
+// see reorderWindow) and archiveEngine.getActivityMap() (per-tab
 // last-active timestamps, `{ [tabId]: timestamp }`) — a session
 // editing only this file's own layout logic does not need to read
-// sync-core.js or archive-core.js in full, only those two signatures.
+// sync-core.js or archive-core.js in full, only those three signatures.
 //
 // See docs/order-core.md for the full invariants (the idle-before-
 // reordering trigger, the manual-move pause, the groups-pin-to-start
@@ -154,7 +155,20 @@ function createOrderEngine(env, syncEngine, archiveEngine) {
     const eligibleGrouped = new Set(
       tabs.filter((t) => !t.pinned && isGrouped(t)).map((t) => t.id)
     );
-    const ungrouped = tabs.filter((t) => !t.pinned && !isGrouped(t));
+    // New tab pages (native, or this extension's own newtab.html) aren't
+    // a "real" tab yet — sorting one by recency would yank a just-opened
+    // blank tab right up next to the groups, ahead of everything the
+    // user actually has open. They go at the very end instead, in their
+    // own current order. Still part of desiredOrder (not just skipped),
+    // so the "already settled?" check below compares like with like —
+    // leaving them out would make every pass look unsettled and re-move
+    // the whole window each time.
+    const ungrouped = tabs.filter(
+      (t) => !t.pinned && !isGrouped(t) && !syncEngine.isNewTabPage(t)
+    );
+    const newTabPages = tabs
+      .filter((t) => !t.pinned && !isGrouped(t) && syncEngine.isNewTabPage(t))
+      .sort((a, b) => a.index - b.index);
 
     // A tab with no recorded activity yet (just opened, activity map
     // not written for it yet) sorts as if active RIGHT NOW — not to the
@@ -170,6 +184,7 @@ function createOrderEngine(env, syncEngine, archiveEngine) {
       }
     }
     for (const t of ungrouped) desiredOrder.push(t.id);
+    for (const t of newTabPages) desiredOrder.push(t.id);
 
     // Already exactly right? Skip entirely — avoids issuing no-op
     // move() calls (and toggling the reorder guard above) on every
@@ -192,7 +207,7 @@ function createOrderEngine(env, syncEngine, archiveEngine) {
       } catch (e) {}
       nextIndex += memberCount;
     }
-    for (const t of ungrouped) {
+    for (const t of [...ungrouped, ...newTabPages]) {
       try {
         await env.tabs.move(t.id, { index: nextIndex });
       } catch (e) {}

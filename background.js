@@ -64,6 +64,14 @@
 // tab anywhere has been activated for a while (a proxy for "away, or
 // reading something long"), and pauses itself for a while after
 // detecting a real manual drag. See order-core.js's own header comment.
+//
+// newtab-core.js is the data side of the custom new tab page
+// (newtab.html, via manifest.json's chrome_url_overrides): this
+// device's tabs across every window grouped by tab group, plus the tabs
+// open on the user's other devices. Served to the page through the
+// NEWTAB_LOCAL/NEWTAB_REMOTE messages below, so the one engine in this
+// background script stays the only writer to the bookmark tree — see
+// newtab-core.js's own header comment.
 // ============================================================
 
 // Cross-browser API access: use the promise-based `browser.*` namespace
@@ -78,7 +86,8 @@ if (typeof importScripts === "function") {
     "sync-core.js",
     "groups-core.js",
     "archive-core.js",
-    "order-core.js"
+    "order-core.js",
+    "newtab-core.js"
   );
 }
 
@@ -86,18 +95,19 @@ const engine = createSyncEngine(browser);
 const groupsEngine = createGroupsEngine(browser, engine);
 const archiveEngine = createArchiveEngine(browser, engine);
 const orderEngine = createOrderEngine(browser, engine, archiveEngine);
+const newtabEngine = createNewtabEngine(browser, engine);
 
-// NOTE: sync-core.js, groups-core.js, archive-core.js, AND order-core.js
-// are loaded into this SAME script via importScripts (Chrome) /
-// sequential <script> tags (Firefox) — all five share ONE top-level
-// `let`/`const` lexical scope, so declaring a top-level const/let here
-// (or in groups-core.js/archive-core.js/order-core.js) with the SAME
+// NOTE: sync-core.js, groups-core.js, archive-core.js, order-core.js,
+// AND newtab-core.js are loaded into this SAME script via importScripts
+// (Chrome) / sequential <script> tags (Firefox) — all six share ONE
+// top-level `let`/`const` lexical scope, so declaring a top-level
+// const/let here (or in any of those modules) with the SAME
 // NAME as one of another file's own top-level bindings (e.g.
 // sync-core.js's internal DEFAULT_PROFILE, DEFAULT_INTERVAL_MINUTES)
 // throws a SyntaxError ("already been declared") that silently
 // prevents this ENTIRE script from running — no listeners get
 // registered at all. Always read such values off
-// `engine.*`/`groupsEngine.*`/`archiveEngine.*`/`orderEngine.*` instead
+// `engine.*`/`groupsEngine.*`/`archiveEngine.*`/`orderEngine.*`/`newtabEngine.*` instead
 // of re-declaring a same-named local, and give any background.js-only
 // constant a name that can't collide (see test/no-name-collision.test.js).
 const FALLBACK_INTERVAL_MINUTES = 1;
@@ -505,6 +515,23 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await orderEngine.reorderNow();
       sendResponse({ ok: true });
     })();
+    return true;
+  }
+
+  // ---- Custom new tab page (newtab-core.js) ----
+  // Two separate messages on purpose: the local half is just one
+  // tabs.query and renders instantly; the remote half walks the whole
+  // profile's bookmark tree (readProfileEntries), so the page renders
+  // local tabs first and fills the "other devices" section in when this
+  // one answers, instead of the whole page waiting on the slower one.
+
+  if (message?.type === "NEWTAB_LOCAL") {
+    newtabEngine.getLocalData().then((data) => sendResponse(data));
+    return true;
+  }
+
+  if (message?.type === "NEWTAB_REMOTE") {
+    newtabEngine.getRemoteData().then((data) => sendResponse(data));
     return true;
   }
 });

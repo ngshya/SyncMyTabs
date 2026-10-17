@@ -453,3 +453,34 @@ test("an all-zero stored threshold falls back to the 1-minute safety floor, neve
     assert.deepEqual(a.openUrls(), [], "archived once past the 1-minute floor");
   });
 });
+
+test("a non-http tab (new tab page, extension page) is never archived, however idle", async () => {
+  await withFakeClock(1_700_000_000_000, async (advance) => {
+    const world = new SimWorld();
+    const a = world.addDevice({
+      deviceName: "A",
+      storage: { archiveEnabled: true, archiveIdleDays: 3 },
+    });
+    const ae = archiveEngineFor(a);
+
+    await a.openTab("chrome://newtab/");
+    await a.openTab(a.env.runtime.getURL("newtab.html"));
+    await a.openTab("https://example.com/stale", "Stale Page");
+    await runReconcile(a, ae); // baseline activity for all three
+
+    advance(30 * DAY_MS);
+    await runReconcile(a, ae);
+
+    const stillOpen = (await a.tabsApi.query({})).map((t) => t.url);
+    assert.deepEqual(
+      stillOpen.sort(),
+      ["chrome://newtab/", a.env.runtime.getURL("newtab.html")].sort(),
+      "only the http(s) tab was closed"
+    );
+    assert.deepEqual(
+      await archivedEntries(a, ae),
+      [{ title: "Stale Page", url: "https://example.com/stale" }],
+      "no bookmark pointing at a browser- or extension-internal page"
+    );
+  });
+});

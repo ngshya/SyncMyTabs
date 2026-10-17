@@ -23,7 +23,10 @@ broad host permission and a content script for its tab-group leashing module
 > (off by default) keeps each window's tab strip laid out with browser tab
 > groups first (Chrome/Brave, alphabetical by title) and every other tab
 > most-recently-active first, only reordering once the browser has been idle
-> for a while.
+> for a while. The extension also replaces the new tab page with a minimal
+> view of exactly that same data — a clock, the user's open tabs (and tab
+> groups) on this device, and the tabs open on their other devices from the
+> same synced bookmark folder — so they can jump straight to any of them.
 
 ## Permission justifications
 
@@ -63,8 +66,8 @@ broad host permission and a content script for its tab-group leashing module
 > on/off and ungroup-undeclared-tabs preferences, the auto-archive module's
 > own on/off and idle-threshold preferences plus its per-tab last-active-time
 > bookkeeping, the tab-order module's own on/off, idle-before-reordering, and
-> manual-move-pause preferences, and the last-activity timestamp shown in the
-> popup. All of this is stored locally via chrome.storage.local and never
+> manual-move-pause preferences, which tab groups are folded on the new tab
+> page, and the last-activity timestamp shown in the popup. All of this is stored locally via chrome.storage.local and never
 > transmitted.
 
 ### `alarms`
@@ -85,6 +88,18 @@ broad host permission and a content script for its tab-group leashing module
 > group is completely unaffected — link-leash-content.js only attaches its
 > click listeners after confirming with the background page that the current
 > tab is actually grouped.
+
+## New tab page override
+
+> `chrome_url_overrides.newtab` replaces the new tab page with
+> `newtab.html`, a packaged extension page (no remote code): a clock and
+> date, a search box, this device's open tabs grouped by window and tab
+> group, and the tabs open on the user's other devices read from the
+> extension's own synced bookmark folder. It's a view onto the extension's
+> single purpose — the user's synced tabs — and uses only the permissions
+> above (`tabs`, `tabGroups`, `bookmarks`, `storage`); clicking an entry
+> switches to that tab. Favicons shown are only each tab's own icon, never
+> fetched from any third-party service; nothing is transmitted off-device.
 
 ## Content scripts
 

@@ -1,6 +1,6 @@
 # Privacy Policy — SyncMyTabs
 
-_Last updated: 2026-08-29_
+_Last updated: 2026-10-17_
 
 SyncMyTabs is a browser extension that syncs your open tabs across your own
 devices, organized by profile, using **bookmarks as the transport**. This policy
@@ -27,6 +27,7 @@ explains exactly what the extension accesses and what happens to that data.
 | **Tab activation times** (optional module) | To track when each of your tabs was last actually looked at, so the auto-archive module (on by default) can tell which ones have gone idle past your configured threshold | Local extension storage (`chrome.storage.local`) only |
 | **Archived tab bookmarks** (optional module) | When auto-archive closes an idle tab, its title and URL are saved first as a plain bookmark, so nothing is lost | Written into the same local bookmarks tree, under the active profile |
 | **Tab and tab-group positions** (optional module, off by default) | To lay out a window with tab groups first (Chrome/Brave, alphabetical by title) and every other tab most-recently-active first, reusing the same tab-activation tracking above | Nothing is stored beyond your existing local activity/preference data — reordering only repositions tabs already open in your own browser window |
+| **Open tabs and other devices' open tabs, shown on the new tab page** | The extension's new tab page lists your open tabs (titles, addresses, each tab's own favicon) and the tabs open on your other devices, read from the same synced bookmark folder, so you can jump to one | Shown locally only; nothing stored beyond which tab groups you've folded on that page. Favicons are never fetched from a third-party service |
 
 ## How syncing actually works
 
