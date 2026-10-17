@@ -40,3 +40,16 @@ test("STORE_LISTING.md: the summary is at most 132 characters", () => {
   assert.ok(summary);
   assert.ok(summary.length <= 132, `${summary.length} characters`);
 });
+
+// Version 4.18.0 was rejected ("Spam and Placement in the Store": excessive
+// keywords) for listing the web-search services by name in the
+// description. Describe features generically; no runs of product names.
+test("STORE_LISTING.md: the description names no search services (keyword-spam rejection)", () => {
+  const md = read("STORE_LISTING.md");
+  const start = md.indexOf("## Description");
+  const block = md.slice(md.indexOf("```", start) + 3, md.indexOf("```", md.indexOf("```", start) + 3));
+  const { SEARCH_ENGINES } = require("../newtab-search.js");
+  const named = SEARCH_ENGINES.map((e) => e.name).filter((name) => new RegExp(`\\b${name}\\b`).test(block));
+  assert.deepEqual(named, []);
+  assert.ok(!/\bYouTube\b/.test(block));
+});
