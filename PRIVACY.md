@@ -20,7 +20,7 @@ explains exactly what the extension accesses and what happens to that data.
 | Data | Why it's accessed | Where it goes |
 |---|---|---|
 | **Open tab URLs and titles** | To save the active profile's open tabs and to reopen them when mirrored in from another device | Written only into your local bookmarks (see below) |
-| **Bookmarks** | Bookmarks are the sync transport: the extension reads/writes a single `SyncMyTabs/…` folder tree | Stays in your browser's bookmark store |
+| **Bookmarks** | Bookmarks are the sync transport: the extension reads/writes a single `SyncMyTabs/…` folder tree. If you turn on the new tab page's bookmarks bar, it also reads (never changes) your browser's bookmarks bar to show a copy of it there | Stays in your browser's bookmark store |
 | **Device name and settings** (device name, profile list, sync interval, cleanup preference, last-activity timestamp) | To configure how this device behaves | Local extension storage (`chrome.storage.local`) only |
 | **Tab group titles and leashing rules** (optional module, Chrome/Brave only — see below) | To keep a browser tab group's declared tabs present, and keep links clicked inside it from wandering outside its declared pages | Written into the same local bookmarks tree, under the active profile |
 | **Clicked link URLs** (optional module) | Only on a tab that's inside a configured tab group: the clicked link's own href and click modifiers (ctrl/cmd/shift/middle-click), to decide whether to navigate in place, open alongside, or open a fresh ungrouped tab | Sent locally to the extension's own background page only — never off-device |

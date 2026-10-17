@@ -277,6 +277,14 @@ own: the time and date, a search box, and everything you have open.
 - **Choose what's listed** — the options page's *New tab page* card turns
   each section (this window, your other windows, your other devices) on or
   off.
+- **Optional bookmarks bar** (off by default, same card) — a copy of your
+  browser's bookmarks bar across the top of the page, so you can keep the
+  browser's own bar hidden. Folders open menus (nested ones to the side),
+  whatever doesn't fit goes under **»**. A click opens the bookmark in this
+  tab, Ctrl/Cmd-click or middle-click in a new tab, Shift-click in a new
+  window; the arrow keys work too. It's read-only: edit your bookmarks in
+  the browser as usual, the bar follows. Icons show for sites you have open;
+  the rest get a letter (no favicon is ever fetched from anywhere).
 - The date and time are in your browser's language.
 - Favicons are only ever the tab's own icon — no third-party favicon
   service, nothing leaves your device.

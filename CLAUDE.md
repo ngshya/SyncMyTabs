@@ -66,6 +66,7 @@ Firefox.** Keep this in mind in every change:
 | `theme.css` / `theme.js` | Shared dark/light/system theme system, loaded by both `popup.html` and `options.html` — see "Popup vs. options page" below |
 | `newtab.html` / `newtab.js` | The **custom new tab page** (`chrome_url_overrides.newtab` in the manifest) — clock/date, a sticky type-to-search box, this device's tabs by window in tab-strip order, and the tabs open on other devices; tabs flow in two columns (reading order) on wide windows; every tab is numbered for keyboard-only jumps; clicking one switches to it and closes the new tab page. DOM-only — all data comes from `newtab-core.js` via the `NEWTAB_LOCAL`/`NEWTAB_REMOTE` messages. |
 | `newtab-options.js` | The new tab page's own card on the options page (which tab sections it shows, `newtabSections` in storage) — loaded by `options.html` after `options.js` and builds its card itself, so `options.js` knows nothing about the new tab page. |
+| `newtab-bookmarks.js` | The new tab page's optional copy of the browser's bookmarks bar (off by default, `newtabSections.bookmarksBar`) — its own file, data (`NEWTAB_BOOKMARKS` → `newtab-core.js`'s read-only `getBookmarksBar`) and listeners; shares only the `--bm-h` CSS variable with the page. |
 | `lazy.html` / `lazy.js` | Lazy-restore placeholder page — by default loads the real URL only on an explicit click (not just on becoming visible), so autoplay media (YouTube, etc.) never starts just from switching tabs; `lazyRequireClick: false` in storage restores the old load-on-visible behavior |
 | `browser-polyfill.min.js` | Vendored Mozilla WebExtension polyfill so `browser.*` is promise-based on Chrome too |
 | `icons/` | Extension icons (16 / 48 / 128 px, plus `*-off` for the paused state) |
@@ -250,7 +251,7 @@ extensions), and `context.serviceWorkers()[0].evaluate(...)` runs
    `sync-core.js`, not `background.js` — see "Testing" above.
 3. **Syntax-check** any JS you touched:
    ```bash
-   node --check background.js && node --check sync-core.js && node --check groups-core.js && node --check archive-core.js && node --check order-core.js && node --check newtab-core.js && node --check popup.js && node --check options.js && node --check newtab.js && node --check newtab-options.js
+   node --check background.js && node --check sync-core.js && node --check groups-core.js && node --check archive-core.js && node --check order-core.js && node --check newtab-core.js && node --check popup.js && node --check options.js && node --check newtab.js && node --check newtab-options.js && node --check newtab-bookmarks.js
    ```
 4. **Run the test suite** (`npm test`) — see "Testing" above. Add/update
    tests for any reconcile-logic change.
@@ -434,7 +435,9 @@ groups where they sit, folded when folded in the browser), and the tabs
 open on the user's other devices on the same profile, under a search
 bar that stays pinned while the list scrolls; on a wide window tabs
 flow in two columns, left then right. Which of those three tab sections
-show is a setting (a "New tab page" card on the options page). The date
+show is a setting (a "New tab page" card on the options page), as is an
+optional copy of the browser's bookmarks bar along the top
+(`newtab-bookmarks.js`, off by default). The date
 and time follow the browser's UI language. Every tab is numbered: typing a number narrows to it,
 Enter opens it, no mouse needed. A click switches to the tab — focusing
 its window — then closes the new tab page behind it; a tab only open on

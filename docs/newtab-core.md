@@ -34,8 +34,9 @@ profile.
   settings card on the options page is built by `newtab-options.js`,
   which `options.html` loads with one `<script>` tag — `options.js`
   knows nothing about it. `test/newtab-isolation.test.js` enforces all
-  three. Removing the feature comes down to deleting its four files
-  (`newtab-core.js`, `newtab.html`, `newtab.js`, `newtab-options.js`)
+  three. Removing the feature comes down to deleting its five files
+  (`newtab-core.js`, `newtab.html`, `newtab.js`, `newtab-options.js`,
+  `newtab-bookmarks.js`)
   plus its wiring lines (`importScripts`, the engine `const`, that
   listener, the manifest's override and `background.scripts` entry,
   `options.html`'s script tag, `release.yml`'s file list and syntax
@@ -100,6 +101,20 @@ profile.
   defaults). Applied live through `storage.onChanged`. Hidden sections
   get no numbers, and with "other devices" off the remote half isn't
   even requested, so nothing walks the bookmark tree for it.
+- **Optional bookmarks bar** (`newtabSections.bookmarksBar`, off by
+  default): a copy of the browser's own bar along the top, in
+  `newtab-bookmarks.js` — a file of its own with its own data
+  (`NEWTAB_BOOKMARKS` → `getBookmarksBar` in `newtab-core.js`) and
+  listeners, sharing only the `--bm-h` CSS variable (its height, so the
+  sticky search bar sits right below it). The bar folder is found by
+  `folderType: "bookmarks-bar"` or the known per-browser ids, never one
+  hardcoded id (`findBookmarksBarId`). Read-only. Bookmarklets are left
+  out (an extension page can't run them); icons follow the favicon rule
+  above (an open tab's own icon for that page or site, else a letter).
+  It only re-renders when the bar's data actually changed — bookmark
+  events fire constantly (sync heartbeats), and a redraw would close an
+  open menu. Keys it handles stop at the bar, so `newtab.js`'s page-wide
+  keyboard handling never sees them.
 - **Date and time follow the browser's UI language** —
   `i18n.getUILanguage()`, not the page's default locale, falling back to
   the default only if Intl rejects the tag. The page's own labels stay
